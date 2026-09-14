@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 
 from .environment import load_bootstrap_environment
-from sqlalchemy import JSON, Float, Integer, String, create_engine, delete, event, select
+from sqlalchemy import JSON, Float, Integer, String, create_engine, delete, event, func, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +55,57 @@ class Task(Base):
     owner: Mapped[str] = mapped_column(String(80), default='')
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     created: Mapped[float] = mapped_column(Float, default=time.time)
+
+
+ACTIVE_TASK_STATUSES = frozenset({'queued', 'running', 'waiting'})
+
+
+class TaskCapacityError(RuntimeError):
+    """Raised before an anonymous demo can grow its active queue past the limit."""
+
+
+def _public_task_limit():
+    if os.getenv('STORYLOOM_DEMO_MODE', 'local').strip().lower() != 'public':
+        return None
+    try:
+        value = int(os.getenv('PUBLIC_MAX_ACTIVE_TASKS', '32'))
+    except (TypeError, ValueError):
+        value = 32
+    return max(1, min(value, 1000))
+
+
+def _task_status(task):
+    return task.status or 'queued'
+
+
+@event.listens_for(Session, 'before_flush')
+def enforce_public_task_capacity(db, _flush_context, _instances):
+    limit = _public_task_limit()
+    if limit is None:
+        return
+
+    delta = sum(1 for task in db.new if isinstance(task, Task) and _task_status(task) in ACTIVE_TASK_STATUSES)
+    for task in db.dirty:
+        if not isinstance(task, Task):
+            continue
+        history = inspect(task).attrs.status.history
+        if not history.has_changes():
+            continue
+        old_status = history.deleted[-1] if history.deleted else None
+        delta += int(_task_status(task) in ACTIVE_TASK_STATUSES) - int(old_status in ACTIVE_TASK_STATUSES)
+    delta -= sum(1 for task in db.deleted if isinstance(task, Task) and _task_status(task) in ACTIVE_TASK_STATUSES)
+    if delta <= 0:
+        return
+
+    connection = db.connection()
+    if connection.dialect.name == 'postgresql':
+        # Serialize admissions across the API and worker without adding another service.
+        connection.execute(text('SELECT pg_advisory_xact_lock(782347190321)'))
+    active = connection.execute(
+        select(func.count()).select_from(Task.__table__).where(Task.__table__.c.status.in_(ACTIVE_TASK_STATUSES))
+    ).scalar_one()
+    if active + delta > limit:
+        raise TaskCapacityError(f'当前生成队列已满（最多 {limit} 个任务），请稍后再试。')
 
 def uid(prefix):
     return f'{prefix}_{uuid.uuid4().hex[:16]}'

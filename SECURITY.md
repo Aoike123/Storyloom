@@ -24,9 +24,11 @@ or 8000 directly, bypass the reverse proxy, or run a public pool without
 conservative `PUBLIC_POOL_{LLM,IMAGE,VIDEO}_DAILY_BUDGET_CNY` limits.
 
 The anonymous workspace is shared: visitors can see and change common works.
-There is no CAPTCHA, per-IP throttling, abuse detection, or content moderation
-boundary yet. Add those controls and tenant isolation before treating this as a
-general production service.
+The supplied per-IP minute buckets, active-task cap, and container ceilings are
+availability guardrails for a small single-server demo, not a security boundary.
+There is no CAPTCHA, distributed abuse detection, upstream DDoS protection, or
+content moderation boundary yet. Add those controls and tenant isolation before
+treating this as a general production service.
 
 Never commit `.env.local`, files below `data/`, application logs, database
 files, uploaded media, or real provider credentials. If a credential is ever

@@ -99,7 +99,7 @@ pnpm --dir web build
 
 ### 公网演示部署
 
-仓库提供面向单台 Linux 服务器的 Docker Compose 生产栈，包含自动 HTTPS、匿名模型配置前置页、公共使用池、BYOK 临时加密会话、PostgreSQL、独立 Worker、健康检查、日志轮转和备份脚本。准备域名与服务器后，请按 [部署指南](docs/deployment.md) 配置 `.env.production` 并运行 `bash scripts/deploy.sh`。
+仓库提供面向单台 Linux 服务器的 Docker Compose 生产栈，包含自动 HTTPS、匿名模型配置前置页、公共使用池、BYOK 临时加密会话、PostgreSQL、独立 Worker、健康检查、请求与队列限流、容器资源上限、日志轮转和备份脚本。准备域名与服务器后，请按 [部署指南](docs/deployment.md) 配置 `.env.production` 并运行 `bash scripts/deploy.sh`。
 
 这套配置可直接提供公开访问的参赛演示，但所有访客仍共用作品空间。正式运营前仍需补齐身份权限、租户隔离、限流和内容审核。
 

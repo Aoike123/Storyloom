@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from .authors import router as author_router
 from .catalog import router as catalog_router
 from .creative import router as creative_router
-from .db import DATA, Record, Session, Task, init_db, record_dict, task_dict
+from .db import DATA, Record, Session, Task, TaskCapacityError, init_db, record_dict, task_dict
 from .director import router as director_router
 from .local_config import save_config
 from .model_access import (
@@ -25,6 +25,7 @@ from .preproduction import router as preproduction_router
 from .production import reader as reader_router
 from .production import router as production_router
 from .providers import settings
+from .public_limits import request_retry_after
 from .video_files import StorageError
 from .video_storage import router as storage_router
 from .zhihu_stories import router as story_router
@@ -65,8 +66,24 @@ async def storage_error(_request: Request, exc: StorageError):
     return JSONResponse({"detail": str(exc)}, status_code=422)
 
 
+@app.exception_handler(TaskCapacityError)
+async def task_capacity_error(_request: Request, exc: TaskCapacityError):
+    return JSONResponse(
+        {"detail": str(exc)},
+        status_code=503,
+        headers={"Cache-Control": "no-store", "Retry-After": "30"},
+    )
+
+
 @app.middleware("http")
 async def local_only(request: Request, call_next):
+    retry_after = request_retry_after(request)
+    if retry_after is not None:
+        return JSONResponse(
+            {"detail": "请求太频繁，请稍后再试。"},
+            status_code=429,
+            headers={"Cache-Control": "no-store", "Retry-After": str(retry_after)},
+        )
     try:
         access_id = resolve_access_token(request.headers[ACCESS_HEADER]) if ACCESS_HEADER in request.headers else ""
     except ModelAccessError as exc:

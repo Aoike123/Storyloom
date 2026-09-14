@@ -18,8 +18,10 @@ tasks store only its opaque id. Switching modes affects newly submitted tasks;
 already-running tasks keep the session with which they were created.
 
 This is intentionally a public demo, not a tenant-isolated SaaS platform. Works,
-progress, and media are shared across visitors. The first version has no CAPTCHA,
-per-IP throttling, or abuse scoring, so keep the daily pool budget conservative.
+progress, and media are shared across visitors. The stack includes lightweight
+per-IP request limits, a global active-task cap, and container resource ceilings,
+but it has no CAPTCHA, distributed abuse scoring, or upstream DDoS protection.
+Keep the daily pool budget conservative.
 
 ## 1. Prepare the server and DNS
 
@@ -78,6 +80,20 @@ reservation caps; an authentication, payment, or permission response (HTTP
 Shanghai day. Their dashboards remain the source of truth for recharge amounts.
 
 Set `PUBLIC_POOL_ENABLED=false` at any time to offer BYOK only.
+
+For a 2 vCPU / 2 GiB demo host, the supplied defaults allow 180 read requests
+and 20 write requests per client IP per minute, and at most 32 queued, running,
+or waiting generation tasks globally. `/api/health` is exempt. Adjust
+`PUBLIC_READ_REQUESTS_PER_MINUTE`, `PUBLIC_WRITE_REQUESTS_PER_MINUTE`, and
+`PUBLIC_MAX_ACTIVE_TASKS` in `.env.production` only after observing real usage.
+The request limiter is deliberately local to the single API container; use a
+CDN/WAF or shared rate-limit service before scaling to multiple API replicas.
+
+The Compose file also caps memory, CPU, and process counts per container so one
+runaway service is less likely to take down the host. These defaults are tuned
+for the documented small server. Generated media still consumes the system disk
+and outbound bandwidth, so monitor both and move media to object storage/CDN
+before inviting sustained traffic.
 
 If Docker Hub is unreachable from a mainland China server, set
 `DOCKER_HUB_PREFIX=m.daocloud.io/docker.io/library/` in `.env.production`.

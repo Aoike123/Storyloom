@@ -20,6 +20,9 @@ x-app-environment: &app-environment
   PUBLIC_POOL_VIDEO_RESERVE_CNY: "${PUBLIC_POOL_VIDEO_RESERVE_CNY:-6.00}"
   PUBLIC_POOL_VERIFY_DEEPSEEK_BALANCE: "${PUBLIC_POOL_VERIFY_DEEPSEEK_BALANCE:-true}"
   PUBLIC_POOL_MIN_DEEPSEEK_CNY: "${PUBLIC_POOL_MIN_DEEPSEEK_CNY:-0.05}"
+  PUBLIC_READ_REQUESTS_PER_MINUTE: "${PUBLIC_READ_REQUESTS_PER_MINUTE:-180}"
+  PUBLIC_WRITE_REQUESTS_PER_MINUTE: "${PUBLIC_WRITE_REQUESTS_PER_MINUTE:-20}"
+  PUBLIC_MAX_ACTIVE_TASKS: "${PUBLIC_MAX_ACTIVE_TASKS:-32}"
   LLM_API_KEY: "${LLM_API_KEY:-}"
   IMAGE_API_KEY: "${IMAGE_API_KEY:-}"
   VIDEO_API_KEY: "${VIDEO_API_KEY:-}"
@@ -34,6 +37,9 @@ services:
   db:
     image: "${DOCKER_HUB_PREFIX:-}postgres:17-alpine"
     restart: unless-stopped
+    mem_limit: 384m
+    cpus: "0.50"
+    pids_limit: 150
     environment:
       POSTGRES_USER: storyloom
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
@@ -56,6 +62,9 @@ services:
       args: *build-args
     restart: unless-stopped
     init: true
+    mem_limit: 384m
+    cpus: "0.75"
+    pids_limit: 200
     environment: *app-environment
     volumes:
       - story_data:/app/data
@@ -85,6 +94,9 @@ services:
     entrypoint: ["python", "-m", "backend.worker"]
     restart: unless-stopped
     init: true
+    mem_limit: 640m
+    cpus: "1.25"
+    pids_limit: 256
     environment: *app-environment
     volumes:
       - story_data:/app/data
@@ -113,6 +125,9 @@ services:
       args: *build-args
     restart: unless-stopped
     init: true
+    mem_limit: 256m
+    cpus: "0.50"
+    pids_limit: 160
     depends_on:
       api:
         condition: service_healthy
@@ -133,6 +148,9 @@ services:
   caddy:
     image: "${DOCKER_HUB_PREFIX:-}caddy:2-alpine"
     restart: unless-stopped
+    mem_limit: 128m
+    cpus: "0.50"
+    pids_limit: 100
     environment:
       SITE_ADDRESS: "${SITE_ADDRESS:?SITE_ADDRESS is required}"
     ports:

@@ -3,7 +3,7 @@ import time
 import threading
 import httpx
 from sqlalchemy import select, update, or_, and_
-from .db import Record,Task,Session,uid,init_db,DATA
+from .db import Record,Task,Session,TaskCapacityError,uid,init_db,DATA
 from .providers import submit_video,poll_video,ProviderError
 from .image_provider import generate_image,generate_from_references,save_image,local_frame_data
 from .video_storage import register_artifact, attach_artifact, verify_file
@@ -220,6 +220,8 @@ def process_one(owner):
     try:
         from .model_access import access_scope
         with access_scope(access_id):run_task(task_id,owner)
+    except TaskCapacityError as exc:
+        patch(task_id,owner,status='waiting',lease=time.time()+30,message=str(exc)[:900])
     except HTTPException as exc:patch(task_id,owner,status='needs_review',message=str(exc.detail)[:900])
     except ProviderError as exc:patch(task_id,owner,status='needs_review',message=str(exc)[:900])
     except Exception as exc:
