@@ -10,7 +10,7 @@ export function hasActiveProgress(work: any) {
 }
 
 export function shouldPollProgress(connection: string, tracking: boolean) {
-  return tracking && connection !== 'live';
+  return tracking && connection === 'fallback';
 }
 
 export function mergeTask(prior: ProgressTask | null | undefined, incoming: ProgressTask | null | undefined) {
@@ -52,7 +52,8 @@ export function mergeProgress(current:any, incoming:any) {
 }
 
 export function progressStructure(work: any) {
-  return JSON.stringify([work?.run_id,work?.stage, ...[work?.task, work?.recommend_task_status, ...(work?.jobs || [])].filter(Boolean).map(task => [task.id, task.status])]);
+  return JSON.stringify([work?.run_id,work?.stage, ...[work?.task, work?.recommend_task_status, ...(work?.jobs || [])]
+    .filter(Boolean).map(task => [task.id, activeStatuses.includes(task.status) ? 'active' : task.status])]);
 }
 
 export const authorStageIds=['style','preparing','assets_review','storyboarding','rendering','film_review','published'];

@@ -13,13 +13,24 @@ const {viewedAuthorStage}=context.exports;
 const {mergeProgress}=context.exports;
 const {authorDisplayStage}=context.exports;
 const {hasActiveProgress,shouldPollProgress}=context.exports;
+const {progressStructure}=context.exports;
 
 test('live progress uses one event stream without redundant workspace polling',()=>{
   const work={jobs:[],task:null,recommend_task_status:{id:'styles',status:'running'}};
   assert.equal(hasActiveProgress(work),true);
   assert.equal(shouldPollProgress('live',true),false);
+  assert.equal(shouldPollProgress('connecting',true),false);
+  assert.equal(shouldPollProgress('idle',true),false);
   assert.equal(shouldPollProgress('fallback',true),true);
   assert.equal(hasActiveProgress({...work,recommend_task_status:{id:'styles',status:'needs_review'}}),false);
+});
+
+test('busy status changes stay on the event stream while terminal results request one full refresh',()=>{
+  const queued={run_id:'round',stage:'style',jobs:[],task:null,recommend_task_status:{id:'styles',status:'queued'}};
+  const running={...queued,recommend_task_status:{id:'styles',status:'running'}};
+  const completed={...queued,recommend_task_status:{id:'styles',status:'completed'}};
+  assert.equal(progressStructure(queued),progressStructure(running));
+  assert.notEqual(progressStructure(running),progressStructure(completed));
 });
 
 test('a delayed full-page response cannot erase a newly completed preview or a new task', () => {

@@ -39,8 +39,9 @@ export default function useProjectProgress(work: any, enabled: boolean, setWork:
           }
         } catch {stream?.close(); setConnection('fallback');}
       };
-      // A failed EventSource is closed explicitly; the workspace poll takes over.
-      stream.onerror = () => {if (alive) {stream?.close(); setConnection('fallback');}};
+      // EventSource retries its lightweight stream itself; a slow full-workspace
+      // poll is only a safety net while that reconnection is pending.
+      stream.onerror = () => {if (alive) setConnection('fallback');};
     }
     connect();
     document.addEventListener('visibilitychange', connect);

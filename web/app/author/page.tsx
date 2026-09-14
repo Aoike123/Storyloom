@@ -43,35 +43,27 @@ export default function Author(){
  useEffect(()=>{if(!accessReady)return;let live=true;api('/projects').then(d=>{if(live){setWorks(d);const params=new URLSearchParams(window.location.search);if(!params.get('story')&&!params.get('work')&&d.length){setSelected(d[0].id);window.history.replaceState(null,'','/author?work='+encodeURIComponent(d[0].id));}}}).catch(e=>{if(live){setMessage(e.message);setMessageError(true);}});return()=>{live=false;};},[accessReady]);
  useEffect(()=>{
   if(!selected)return;
-  let live=true,pending=false,tracking=true;
-  let timer:ReturnType<typeof setTimeout>|undefined,controller:AbortController|undefined;
-  const schedule=()=>{
-   clearTimeout(timer);
-   if(live&&shouldPollProgress(streamConnection,tracking)&&!document.hidden)timer=setTimeout(load,5000);
-  };
+  let live=true,controller:AbortController|undefined;
   const load=async()=>{
-   if(!live||pending||document.hidden)return;
-   pending=true;
+   if(!live)return;
    controller=new AbortController();
    const signal=controller.signal;
    try{
     const d=await api('/projects/'+encodeURIComponent(selected),undefined,signal);
     if(!live||signal.aborted)return;
     setWork((current:any)=>mergeWorkspace(current,d));setSyncError('');setUpdated(new Date().toLocaleTimeString('zh-CN',{hour12:false}));
-    tracking=hasActiveProgress(d);
    }catch(e){
-    if(live&&!signal.aborted){tracking=false;setSyncError((e as Error).message);}
-   }finally{pending=false;schedule();}
-  };
-  const visibilityChanged=()=>{
-   clearTimeout(timer);
-   if(document.hidden)controller?.abort();
-   else if(tracking)void load();
+    if(live&&!signal.aborted)setSyncError((e as Error).message);
+   }
   };
   void load();
-  document.addEventListener('visibilitychange',visibilityChanged);
-  return()=>{live=false;clearTimeout(timer);controller?.abort();document.removeEventListener('visibilitychange',visibilityChanged);};
- },[selected,refresh,streamConnection]);
+  return()=>{live=false;controller?.abort();};
+ },[selected,refresh]);
+ useEffect(()=>{
+  if(!selected||!shouldPollProgress(streamConnection,progressActive))return;
+  const timer=window.setInterval(()=>{if(!document.hidden)refreshWorkspace();},30000);
+  return()=>window.clearInterval(timer);
+ },[selected,progressActive,streamConnection,refreshWorkspace]);
  useEffect(()=>{const read=()=>setViewedStep(new URLSearchParams(window.location.search).get('step'));read();window.addEventListener('popstate',read);return()=>window.removeEventListener('popstate',read);},[]);
  useEffect(()=>{if(work){setArt(work.art||'');setTone(work.tone||'');}},[work?.id,work?.run_id]);
  useEffect(()=>{setConfirmed(false);setIndex(0);},[work?.stage,work?.creative?.version,viewedStep,selected]);
