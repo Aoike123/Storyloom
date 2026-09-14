@@ -19,11 +19,11 @@ type Props = {
 
 export default function ReaderHero({items, loading, activeId, onActiveChange, onOpen}: Props) {
   const [pointerInside, setPointerInside] = useState(false);
-  const [focusInside, setFocusInside] = useState(false);
+  const [keyboardFocusInside, setKeyboardFocusInside] = useState(false);
   const [pageVisible, setPageVisible] = useState(true);
   const current = Math.max(0, items.findIndex(item => item.id === activeId));
   const nextId = items.length > 1 ? items[wrapIndex(current + 1, items.length)].id : '';
-  const autoPaused = pointerInside || focusInside || !pageVisible;
+  const autoPaused = pointerInside || keyboardFocusInside || !pageVisible;
 
   function activate(id: string) {
     if (id !== activeId) onActiveChange(id);
@@ -60,8 +60,8 @@ export default function ReaderHero({items, loading, activeId, onActiveChange, on
       </div> : items.length ? <>
         <ol className="reader-cover-deck" aria-label="循环翻看故事封面" aria-roledescription="轮播图" data-count={items.length}
           onMouseEnter={() => setPointerInside(true)} onMouseLeave={() => setPointerInside(false)}
-          onFocusCapture={() => setFocusInside(true)} onBlurCapture={event => {
-            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocusInside(false);
+          onFocusCapture={event => setKeyboardFocusInside(event.target instanceof HTMLElement && event.target.matches(':focus-visible'))} onBlurCapture={event => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setKeyboardFocusInside(false);
           }}>
           {items.map((item, index) => {
             const playable = canWatch(item);
@@ -83,7 +83,12 @@ export default function ReaderHero({items, loading, activeId, onActiveChange, on
                 aria-label={(playable ? '观看漫剧：' : '原文与制作：') + (item.title || '未提供标题') + (playable ? '' : '（待生成漫剧）')}
                 aria-current={offset === 0 ? 'true' : undefined}
                 onClick={event => {
-                  if (offset !== 0) {event.preventDefault(); activate(item.id); return;}
+                  if (offset !== 0) {
+                    event.preventDefault();
+                    activate(item.id);
+                    if (event.detail > 0) event.currentTarget.blur();
+                    return;
+                  }
                   if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
                     if (playable) event.preventDefault();
                     onOpen(item, focusKey);
