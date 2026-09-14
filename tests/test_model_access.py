@@ -29,6 +29,7 @@ def test_byok_is_encrypted_locked_and_inherited(client, monkeypatch):
         cfg = model_config()
         assert cfg["LLM_API_KEY"] == OWN_KEYS["deepseek"]
         assert cfg["LLM_BASE_URL"] == "https://api.deepseek.com"
+        assert cfg["LLM_MODEL"] == "deepseek-v4-flash"
         assert cfg["IMAGE_MODEL"] == "Tongyi-MAI/Z-Image-Turbo"
         assert cfg["VIDEO_MODEL"] == "MiniMax-H3-Max"
         assert cfg["VIDEO_ENDPOINT"] == "https://api.minimax.cn/v2/video_generation"
