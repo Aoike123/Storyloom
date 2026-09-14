@@ -45,7 +45,9 @@ export function mergeProgress(current:any, incoming:any) {
   if (!current || current.id!==incoming.id || (current.run_id || null)!==(incoming.run_id || null)
       || (current.progress_at || 0)>(incoming.progress_at || 0)) return current;
   const tasks=new Map<string,ProgressTask>((current.jobs || []).map((task:ProgressTask)=>[task.id,task]));
-  return {...current,progress_at:incoming.progress_at,
+  const stage=incoming.stage ?? current.stage;
+  const displayStage=['producing','compositing'].includes(stage) ? current.display_stage : stage;
+  return {...current,stage,display_stage:displayStage,progress_at:incoming.progress_at,
     task:mergeTask(current.task,incoming.task),
     recommend_task_status:mergeTask(current.recommend_task_status,incoming.recommend_task_status),
     jobs:(incoming.jobs || []).map((task:ProgressTask)=>mergeTask(tasks.get(task.id),task)),

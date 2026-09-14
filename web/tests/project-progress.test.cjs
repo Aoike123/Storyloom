@@ -104,3 +104,11 @@ test('progress events from a different round cannot attach its assets or metadat
   const event={id:'work',run_id:'old',progress_at:30,jobs:[{id:'old'}],outputs:[{id:'old'}],creative:{items:['old']}};
   assert.equal(mergeProgress(current,event),current);
 });
+
+test('terminal progress advances the visible workflow stage without another workspace request',()=>{
+  const current={id:'work',run_id:'round',stage:'preparing',display_stage:'preparing',progress_at:10,jobs:[],outputs:[]};
+  const event={id:'work',run_id:'round',stage:'assets_review',progress_at:20,jobs:[],outputs:[]};
+  const merged=mergeProgress(current,event);
+  assert.equal(merged.stage,'assets_review');
+  assert.equal(merged.display_stage,'assets_review');
+});
