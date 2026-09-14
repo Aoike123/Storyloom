@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Review And Assemble Result",
+  "allOf": [
+    {"$ref": "../../../schemas/common/result-envelope.schema.json"}
+  ],
+  "properties": {
+    "skill": {"const": "review-and-assemble"},
+    "data": {
+      "type": "object",
+      "required": [
+        "reviews",
+        "selected_takes",
+        "timeline",
+        "quality_control",
+        "export_manifest"
+      ],
+      "properties": {
+        "reviews": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "media_asset_id", "segment_id", "decision", "reason_codes"],
+            "properties": {
+              "id": {"type": "string"},
+              "media_asset_id": {"type": "string"},
+              "segment_id": {"type": "string"},
+              "decision": {
+                "enum": ["selected", "rejected", "revision-needed", "unreviewed"]
+              },
+              "reason_codes": {
+                "type": "array",
+                "items": {"type": "string"},
+                "uniqueItems": true
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "selected_takes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["segment_id", "media_asset_id", "role"],
+            "properties": {
+              "segment_id": {"type": "string"},
+              "media_asset_id": {"type": "string"},
+              "role": {"enum": ["primary", "alternate"]}
+            },
+            "additionalProperties": false
+          }
+        },
+        "timeline": {
+          "type": "object",
+          "required": ["frame_rate", "tracks", "duration_seconds"],
+          "properties": {
+            "frame_rate": {"type": "number", "exclusiveMinimum": 0},
+            "duration_seconds": {"type": "number", "minimum": 0},
+            "tracks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "kind", "items"],
+                "properties": {
+                  "id": {"type": "string"},
+                  "kind": {"enum": ["video", "audio"]},
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "media_asset_id",
+                        "timeline_start",
+                        "source_in",
+                        "source_out"
+                      ],
+                      "properties": {
+                        "id": {"type": "string"},
+                        "media_asset_id": {"type": "string"},
+                        "timeline_start": {"type": "number", "minimum": 0},
+                        "source_in": {"type": "number", "minimum": 0},
+                        "source_out": {"type": "number", "exclusiveMinimum": 0}
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "quality_control": {
+          "type": "object",
+          "required": ["passed", "checks"],
+          "properties": {
+            "passed": {"type": "boolean"},
+            "checks": {"type": "array", "items": {"type": "object"}}
+          },
+          "additionalProperties": false
+        },
+        "export_manifest": {
+          "type": "object",
+          "required": ["ready", "files", "settings"],
+          "properties": {
+            "ready": {"type": "boolean"},
+            "files": {"type": "array", "items": {"type": "object"}},
+            "settings": {"type": "object"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "unevaluatedProperties": false
+}

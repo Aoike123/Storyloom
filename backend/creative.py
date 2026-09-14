@@ -1,0 +1,593 @@
+"""Result-oriented art direction; professional settings stay behind the review UI."""
+import time,json,re,hashlib
+from typing import Literal
+from fastapi import APIRouter,HTTPException
+from pydantic import BaseModel,Field,ValidationError
+from sqlalchemy import select
+from .db import Session,Record,Task,uid,record_dict,task_dict
+from .providers import chat_json,settings,ProviderError,ModelOutputError
+from . import preproduction as prep, director as director, consistency as visual, production
+from . import asset_sheets
+from .skill_runtime import call_node
+router=APIRouter(prefix='/api/creative',tags=['creative'])
+BUSY=('queued','running','waiting')
+
+def get_project(db,pid):return prep.project(db,pid)
+def get_run(db,pid):
+    r=db.get(Record,'creative_'+pid)
+    if not r:raise HTTPException(409,'先选择画风和剧情风格。')
+    return r
+
+def save_run(pid,**data):
+    with Session.begin() as db:
+        r=get_run(db,pid);r.data={**r.data,**data};r.version+=1
+
+def no_active(db,pid):
+    if any(t.payload.get('creative_id')==pid or t.payload.get('project_id')==pid or t.payload.get('director_id')==pid or t.payload.get('preproduction_id')==pid for t in db.scalars(select(Task).where(Task.status.in_(BUSY)))):raise HTTPException(409,'制作仍在进行，请等待完成后修改。')
+
+class Style(BaseModel):
+    art:str=Field(min_length=2,max_length=500)
+    tone:str=Field(min_length=2,max_length=300)
+    confirm_paid:bool=False
+
+def paid(body):
+    if not body.confirm_paid or not settings()['paid_enabled']:raise HTTPException(422,'请确认本次制作调用模型产生的费用。')
+
+@router.post('/{pid}/design')
+def design(pid:str,body:Style):
+    paid(body)
+    with Session.begin() as db:
+        p=get_project(db,pid);no_active(db,pid)
+        if not p.data.get('treatment'):raise HTTPException(409,'请先完成导演阐述。')
+        original=db.get(Task,p.data['task_id'])
+        old=db.get(Record,'creative_'+pid)
+        if old:raise HTTPException(409,'已有设计，请在图片上提出修改意见；整体换风格请归档后重做。')
+        t=Task(id=uid('art'),kind='art_design',payload={'mode':'live','creative_id':pid,'source':original.payload['source'],'treatment':p.data['treatment'],'art':body.art,'tone':body.tone,'asset_schema':asset_sheets.VERSION,'skill_pipeline':'node-skills-v1'})
+        db.add(Record(id='creative_'+pid,kind='creative_run',data={'art':body.art,'tone':body.tone,'stage':'designing','items':[],'watch':t.id}))
+        db.add(t);db.flush();return task_dict(t)
+
+
+def redesign(db,pid,body):
+    """Replace the initial asset plan while preserving previous images and prompts."""
+    paid(body);p=get_project(db,pid);no_active(db,pid);run=get_run(db,pid)
+    if run.data['stage']!='assets_review':raise HTTPException(409,'仅可在初次人物与场景确认阶段重做设定图。')
+    original=db.get(Task,p.data['task_id'])
+    task=Task(id=uid('art'),kind='art_design',payload={'mode':'live','creative_id':pid,
+        'source':original.payload['source'],'treatment':p.data['treatment'],'art':body.art,'tone':body.tone,
+        'asset_schema':asset_sheets.VERSION,'skill_pipeline':'node-skills-v1','replaces_assets':[i['task_id'] for i in run.data['items']]})
+    prep.invalidate_downstream_references(db,pid,'基础人物、服装与场景已整体重做',task.id)
+    history=[*run.data.get('design_history',[]),{k:v for k,v in run.data.items() if k!='design_history'}]
+    run.data={'art':body.art,'tone':body.tone,'stage':'designing','items':[],'watch':task.id,'design_history':history}
+    run.version+=1;db.add(task)
+
+def source_refs(reference,passages):
+    """Expand explicit citations only; never guess or discard an unknown reference."""
+    refs=[]
+    for part in re.split(r'[,，、;；]',reference):
+        match=re.fullmatch(r'\s*(P[0-9]{3,})(?:\s*[-–—~～至]\s*(P[0-9]{3,}))?\s*',part)
+        if not match:raise ProviderError('原文依据格式无效，请使用 P001、P003 或 P001-P003。')
+        first,last=match.group(1),match.group(2) or match.group(1)
+        for ref in (first,last):
+            if ref not in passages:raise ProviderError(f'原文依据编号 {ref} 不存在。')
+        start,end=int(first[1:]),int(last[1:])
+        if start>end or end-start>=len(passages):raise ProviderError('原文依据范围无效。')
+        for number in range(start,end+1):
+            ref=f'P{number:03}'
+            if ref not in passages:raise ProviderError(f'原文依据编号 {ref} 不存在。')
+            if ref not in refs:refs.append(ref)
+    return refs
+
+
+def validate_design(raw,passages,version=None):
+    if version!=asset_sheets.VERSION:raise ProviderError('旧版叙述式设计不能继续生图，请在素材区按身份、服装分离的新流程重做。')
+    plan=validate_spec(asset_sheets.AssetSheetPlan,raw)
+    bindings=[]
+    for item in plan.items:
+        try:bindings.append(source_refs(item.source_ref,passages))
+        except ProviderError as exc:raise ProviderError(f'「{item.name}」{exc}设计已保留，未继续生图。') from None
+    return plan,bindings
+
+
+def validate_spec(schema,raw):
+    try:return schema.model_validate(raw)
+    except ValidationError as exc:
+        details='；'.join('.'.join(str(x) for x in e['loc'])+'：'+e['msg'] for e in exc.errors(include_input=False,include_url=False)[:4])
+        raise ProviderError('静态视觉规格校验未通过，结果已保存，未继续生图。'+details) from None
+
+
+def saved_design(run,task_id):
+    # Legacy drafts were stored on the run; its watch identifies their only design task.
+    if run.data.get('raw_design_task_id',run.data.get('watch'))==task_id:
+        raw=run.data.get('raw_design')
+        if raw is not None:return raw
+        identity=run.data.get('identity_plan');materials=run.data.get('wardrobe_scene_plan')
+        if identity is not None:
+            identity=validate_spec(asset_sheets.IdentityPlan,identity)
+            if materials is None:
+                costumes=run.data.get('costume_plan');scenes=run.data.get('scene_plan')
+                if costumes is not None and scenes is not None:
+                    costumes=validate_spec(asset_sheets.CostumePlan,costumes)
+                    scenes=validate_spec(asset_sheets.ScenePlan,scenes)
+                    materials={'items':[i.model_dump() for i in costumes.costumes]+[i.model_dump() for i in scenes.scenes]}
+            if materials is None:return None
+            materials=validate_spec(asset_sheets.WardrobeScenePlan,materials)
+            return {'visual_style':identity.visual_style.model_dump(),
+                    'items':[p.model_dump() for p in identity.characters]+[i.model_dump() for i in materials.items]}
+    return None
+
+
+def resume_saved_design(db,pid):
+    run=db.get(Record,'creative_'+pid)
+    if not run or run.data.get('stage')!='designing':return
+    task=db.get(Task,run.data.get('watch',''))
+    if not task or task.kind!='art_design' or task.status not in ('failed','needs_review'):return
+    if task.payload.get('creative_id')!=pid:raise HTTPException(409,'美术设计任务与当前作品不一致，不能恢复。')
+    try:
+        raw=saved_design(run,task.id)
+        if raw is None:raise HTTPException(409,'没有完整的已保存设计结果，请先核实原模型调用，不能自动重复提交。')
+        validate_design(raw,director.source_passages(task.payload['source']['content']),task.payload.get('asset_schema'))
+    except ProviderError as exc:raise HTTPException(409,str(exc)) from None
+    run.data={**run.data,'raw_design':raw,'raw_design_task_id':task.id}
+    task.status='queued';task.lease=0;task.owner=''
+    task.message='已恢复保存的美术设计，继续核对原文并准备图片'
+
+
+def resume_saved_storyboard(db,pid):
+    run=db.get(Record,'creative_'+pid)
+    if not run or run.data.get('stage')!='storyboarding':return
+    watch=db.get(Task,run.data.get('watch',''))
+    child=db.get(Task,watch.payload.get('child','')) if watch and watch.kind=='creative_watch' else None
+    project=db.get(Record,pid)
+    if not watch or watch.status not in ('failed','needs_review') or not child or child.kind!='director' or child.status not in ('failed','needs_review'):
+        return
+    if child.payload.get('project_id')!=pid or not project or project.data.get('task_id')!=child.id:
+        raise HTTPException(409,'分镜任务与当前作品不一致，不能恢复。')
+    raw=(project.data.get('board_diagnostics') or {}).get('raw')
+    if raw is None:raise HTTPException(409,'没有完整的已保存分镜结果，不能自动重复提交模型。')
+    try:
+        current=prep.ready(db,pid)
+        if current['stamp']!=child.payload.get('preproduction',{}).get('stamp'):
+            raise HTTPException(409,'已确认素材发生变化，保存的分镜不能继续使用。')
+        board=director.Board.model_validate(raw)
+        repaired,changes=prep.repair_board_assets(board,current)
+        prep.validate_board(repaired,current)
+    except ValidationError as exc:
+        raise HTTPException(409,'已保存分镜的格式仍不完整，不能自动重复提交模型。') from None
+    except HTTPException as exc:
+        raise HTTPException(409,str(exc.detail)) from None
+    child.payload={**child.payload,'saved_board':raw}
+    child.status='queued';child.lease=0;child.owner='';child.message='已恢复保存的分镜，正在校正素材绑定并继续专业提示词节点'
+    watch.status='queued';watch.lease=0;watch.owner='';watch.message='已恢复保存的分镜，等待文本预审'
+    project.data={**project.data,'board_recovery':{'task_id':child.id,'changes':changes}}
+    db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'saved_storyboard_resumed','task_id':child.id,'changes':changes}))
+
+
+def run_design(task_id,payload):
+    passages=director.source_passages(payload['source']['content'])
+    with Session() as db:
+        r=get_run(db,payload['creative_id'])
+        if r.data.get('watch')!=task_id:raise ProviderError('美术设计任务已更新，旧结果不再使用。')
+        if r.data.get('items'):return
+        raw=saved_design(r,task_id)
+        checkpoints=dict(r.data)
+    if raw is None:
+        if payload.get('asset_schema')!=asset_sheets.VERSION:
+            raise ProviderError('旧版设计任务不能继续生成叙述式素材，请按新流程重做。')
+        def checkpoint(key,value):
+            with Session.begin() as db:
+                r=get_run(db,payload['creative_id'])
+                if r.data.get('watch')!=task_id:raise ProviderError('美术设计任务已更新，旧结果不再使用。')
+                r.data={**r.data,key:value,'raw_design_task_id':task_id}
+        context={'source_passages':passages,'excerpt_scope':payload['treatment'].get('excerpt_scope','')}
+        identity=checkpoints.get('identity_plan')
+        if identity is None:
+            style=checkpoints.get('style_plan')
+            if style is None:
+                style,_=call_node(chat_json,'style_spec',{'art_preference':payload['art'],'schema':asset_sheets.StylePlan.model_json_schema()},task_id)
+                checkpoint('style_plan',style)
+            style=validate_spec(asset_sheets.StylePlan,style)
+            people=checkpoints.get('character_plan')
+            if people is None:
+                people,_=call_node(chat_json,'identity_spec',{**context,'visual_style':style.visual_style.model_dump(),'schema':asset_sheets.CharacterPlan.model_json_schema()},task_id)
+                checkpoint('character_plan',people)
+            people=validate_spec(asset_sheets.CharacterPlan,people)
+            identity={'visual_style':style.visual_style.model_dump(),'characters':[p.model_dump() for p in people.characters]}
+            checkpoint('identity_plan',identity)
+        identity=validate_spec(asset_sheets.IdentityPlan,identity)
+        for person in identity.characters:source_refs(person.source_ref,passages)
+        materials=checkpoints.get('wardrobe_scene_plan')
+        if materials is None:
+            costumes=checkpoints.get('costume_plan')
+            if costumes is None:
+                costumes,_=call_node(chat_json,'costume_spec',{**context,'visual_style':identity.visual_style.model_dump(),
+                    'locked_characters':[p.model_dump() for p in identity.characters],'schema':asset_sheets.CostumePlan.model_json_schema()},task_id)
+                checkpoint('costume_plan',costumes)
+            costumes=validate_spec(asset_sheets.CostumePlan,costumes)
+            scenes=checkpoints.get('scene_plan')
+            if scenes is None:
+                schema=asset_sheets.ScenePlan.model_json_schema()
+                schema['properties']['scenes']['maxItems']=asset_sheets.MAX_MATERIALS-len(costumes.costumes)
+                scenes,_=call_node(chat_json,'scene_spec',{**context,'visual_style':identity.visual_style.model_dump(),'schema':schema},task_id)
+                checkpoint('scene_plan',scenes)
+            scenes=validate_spec(asset_sheets.ScenePlan,scenes)
+            materials={'items':[i.model_dump() for i in costumes.costumes]+[i.model_dump() for i in scenes.scenes]}
+            checkpoint('wardrobe_scene_plan',materials)
+        materials=validate_spec(asset_sheets.WardrobeScenePlan,materials)
+        raw={'visual_style':identity.visual_style.model_dump(),'items':[p.model_dump() for p in identity.characters]+[i.model_dump() for i in materials.items]}
+        checkpoint('raw_design',raw)
+    plan,bindings=validate_design(raw,passages,payload.get('asset_schema'))
+    prompts,prompt_fallbacks=write_asset_prompts(task_id,payload,plan) if payload.get('skill_pipeline') else ({},set())
+    with Session.begin() as db:
+        current=db.get(Task,task_id)
+        if current.status!='running':return
+        get_project(db,payload['creative_id']);r=get_run(db,payload['creative_id'])
+        if r.data.get('watch')!=task_id:raise ProviderError('美术设计任务已更新，旧结果不再使用。')
+        if r.data.get('items'):return
+        items=[]
+        for index,(item,refs) in enumerate(zip(plan.items,bindings)):
+            prompt=prompts.get(index) or asset_sheets.compose_prompt(plan.visual_style,item)
+            metadata={'asset_schema':asset_sheets.VERSION,'asset_kind':asset_sheets.KINDS[item.role],
+                'asset_role':item.role,'asset_spec':item.model_dump(),'visual_style':plan.visual_style.model_dump(),
+                'character_key':getattr(item,'character_id',getattr(item,'character_ref',None)),
+                'costume_key':getattr(item,'costume_id',None),
+                'prompt_source':'validated_render_contract' if index in prompt_fallbacks else 'asset_prompts'}
+            if prompts and index not in prompt_fallbacks:
+                from .skill_runtime import public
+                metadata['node_skill']=public(current.payload['node_skill_pins']['asset_prompts'])
+            t=Task(id=uid('image'),kind='image',payload={'mode':'live','creative_id':payload['creative_id'],'title':item.name,'prompt':prompt,**metadata})
+            saved={**item.model_dump(),'design':asset_sheets.description(item),'prompt':prompt,**metadata}
+            db.add(t);items.append({**saved,'source_refs':refs,'source_quote':'\n'.join(passages[ref] for ref in refs),'task_id':t.id})
+        r=get_run(db,payload['creative_id']);r.data={**r.data,'visual_style':plan.visual_style.model_dump(),
+            'visual_language':asset_sheets.style_prompt(plan.visual_style),'asset_schema':asset_sheets.VERSION,'items':items,'looks':[],'stage':'assets_review'}
+        current.result={**current.result,'replaced_assets':payload.get('replaces_assets',[]),
+                        'prompt_fallbacks':sorted(prompt_fallbacks)}
+        owner=current.owner
+    from .task_activity import Activity,preview
+    Activity(task_id,owner,'人物身份、服装与场景规格','model',new_call=False).save(
+        'ready','人物身份、服装与场景规格已通过校验',preview(json.dumps(raw,ensure_ascii=False)),force=True)
+
+
+def write_asset_prompts(task_id,payload,plan):
+    """Dedicated prompt-writing node; sees only approved static contracts, never prose."""
+    from .environment import model_config
+    cfg=model_config();prompts={};fallbacks=set()
+    with Session() as db:cached=dict(get_run(db,payload['creative_id']).data.get('image_prompt_batches',{}))
+    # Small batches keep the actual output inside the configured model context.
+    for start in range(0,len(plan.items),asset_sheets.PROMPT_BATCH_SIZE):
+        assets=[{'asset_index':i,'role':plan.items[i].role,
+                 'render_contract':asset_sheets.compose_prompt(plan.visual_style,plan.items[i])}
+                for i in range(start,min(start+asset_sheets.PROMPT_BATCH_SIZE,len(plan.items)))]
+        key=str(start)
+        target={'provider':cfg.get('IMAGE_PROVIDER'),'model':cfg.get('IMAGE_MODEL'),'image_size':'1024x1024'}
+        request_hash=hashlib.sha256(json.dumps([assets,target],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+        prior=cached.get(key)
+        if prior and prior.get('request_sha256')!=request_hash:
+            raise ProviderError('已保存的提示词与当前素材规格或模型配置不一致，请创建新修订，未重复提交。')
+        fallback_reason=prior.get('fallback_reason') if prior else None
+        raw=prior.get('response') if prior else None
+        if raw is None and fallback_reason is None:
+            schema=asset_sheets.AssetPromptBatch.model_json_schema()
+            schema['properties']['items'].update(minItems=len(assets),maxItems=len(assets))
+            try:
+                raw,_=call_node(chat_json,'asset_prompts',{'assets':assets,
+                    'target':target,
+                    'schema':schema},task_id)
+            except ModelOutputError as exc:
+                raw={};fallback_reason=str(exc)
+            with Session.begin() as db:
+                run=get_run(db,payload['creative_id'])
+                if run.data.get('watch')!=task_id:raise ProviderError('提示词任务已更新。')
+                entry={'request_sha256':request_hash,'response':raw}
+                if fallback_reason:entry['fallback_reason']=fallback_reason
+                cached={**cached,key:entry};run.data={**run.data,'image_prompt_batches':cached}
+        batch=None
+        if fallback_reason is None:
+            try:batch=validate_spec(asset_sheets.AssetPromptBatch,raw)
+            except ProviderError as exc:fallback_reason=str(exc)
+        batch_fallbacks=[]
+        for asset in assets:
+            matches=[item.prompt for item in batch.items if item.asset_index==asset['asset_index']] if batch else []
+            if len(matches)==1:
+                prompts[asset['asset_index']]=matches[0]
+            else:
+                prompts[asset['asset_index']]=asset['render_contract']
+                fallbacks.add(asset['asset_index'])
+                batch_fallbacks.append(asset['asset_index'])
+        if batch_fallbacks and (not prior or prior.get('fallback_indices')!=batch_fallbacks or fallback_reason and prior.get('fallback_reason')!=fallback_reason):
+            with Session.begin() as db:
+                run=get_run(db,payload['creative_id'])
+                if run.data.get('watch')!=task_id:raise ProviderError('提示词任务已更新。')
+                entry={**cached[key],'fallback_indices':batch_fallbacks}
+                if fallback_reason:entry['fallback_reason']=fallback_reason
+                cached={**cached,key:entry};run.data={**run.data,'image_prompt_batches':cached}
+    return prompts,fallbacks
+
+
+def write_revised_asset_prompt(task_id,style,item):
+    """Compile one revised static specification into a fresh text-to-image prompt."""
+    from .environment import model_config
+    cfg=model_config()
+    assets=[{'asset_index':0,'role':item.role,'render_contract':asset_sheets.compose_prompt(style,item)}]
+    schema=asset_sheets.AssetPromptBatch.model_json_schema()
+    schema['properties']['items'].update(minItems=1,maxItems=1)
+    raw,_=call_node(chat_json,'asset_prompts',{'assets':assets,
+        'target':{'provider':cfg.get('IMAGE_PROVIDER'),'model':cfg.get('IMAGE_MODEL'),'image_size':'1024x1024'},
+        'schema':schema},task_id)
+    batch=validate_spec(asset_sheets.AssetPromptBatch,raw)
+    if len(batch.items)!=1 or batch.items[0].asset_index!=0:
+        raise ProviderError('重做提示词没有准确对应当前素材，已保存结果，未提交生图。')
+    return batch.items[0].prompt
+
+def image_asset(db,tid):
+    t=db.get(Task,tid);a=db.get(Record,t.result.get('asset_id','')) if t else None
+    if t and t.status in ('failed','needs_review'):
+        from .image_errors import task_error,error_message
+        error=task_error(t)
+        reason=error_message(error) if error else t.message
+        raise HTTPException(409,f'「{t.payload.get("title") or "图片"}」尚未完成：{reason}')
+    if not t or t.status!='completed' or not a:raise HTTPException(409,'图片尚未完成，请等待或处理失败任务。')
+    return a
+
+def approve_images(db,ids,automatic=False):
+    for aid in ids:
+        a=db.get(Record,aid)
+        if not a:raise HTTPException(409,'图片不存在。')
+        if a.data.get('status')!='approved':a.data={**a.data,'status':'approved'};a.version+=1
+        db.add(Record(id=uid('audit'),kind='audit',data={'target':aid,'action':'workflow_image_accepted' if automatic else 'creative_image_approved','note':'工作流依据已锁定参考图继续制作；未宣称人工视觉审核' if automatic else '用户在图片审核页确认满意'}))
+
+def current_trials(pid):
+    result=prep.get(pid)
+    with Session() as db:
+        replaced={t.payload.get('revision_of') for t in db.scalars(select(Task)) if t.payload.get('preproduction_id')==pid and t.payload.get('revision_of')}
+    result['trials']=[t for t in result['trials'] if t['task']['id'] not in replaced]
+    return result
+
+@router.get('/{pid}')
+def workspace(pid:str):
+    with Session() as db:
+        get_project(db,pid);r=db.get(Record,'creative_'+pid)
+        if not r:return None
+        items=[]
+        for i in r.data.get('items',[]):
+            t=db.get(Task,i['task_id']);a=db.get(Record,t.result.get('asset_id','')) if t else None
+            items.append({**i,'task':task_dict(t) if t else None,'asset':record_dict(a) if a else None})
+        watch=db.get(Task,r.data.get('watch',''))
+        result={**record_dict(r),'items':items,'task':task_dict(watch) if watch else None}
+    result['trials']=current_trials(pid)['trials'] if r.data['stage']!='designing' else []
+    result['production']=production.workspace(pid)
+    return result
+
+class Continue(BaseModel):
+    stage:str
+    confirm_review:bool=False
+    confirm_paid:bool=False
+
+@router.post('/{pid}/continue')
+def advance(pid:str,body:Continue,automatic:bool=False):
+    paid(body)
+    if not body.confirm_review:raise HTTPException(422,'请先查看本页全部图片，确认满意后继续。')
+    with Session() as db:
+        p=get_project(db,pid);r=get_run(db,pid);stage=r.data['stage'];data=dict(r.data)
+        if stage!=body.stage:raise HTTPException(409,'流程已更新，请刷新。')
+        no_active(db,pid)
+    if stage=='assets_review':
+        if data.get('production_split'):raise HTTPException(409,'此作品已使用直接参考图分镜流程，请通过制作页的独立节点继续。')
+        with Session.begin() as db:
+            from .asset_workflow import queue_fittings
+            assets={};ids=[]
+            for i in data['items']:
+                a=image_asset(db,i['task_id']);ids.append(a.id);assets[i['task_id']]=a
+            approve_images(db,ids,automatic)
+            queue_fittings(db,get_run(db,pid),pid,assets)
+    elif stage=='fittings_review':
+        with Session.begin() as db:
+            from .asset_workflow import validate_dependencies
+            assets={};ids=[]
+            for look in data.get('looks',[]):
+                task=db.get(Task,look['task_id']);validate_dependencies(db,task.payload)
+                a=image_asset(db,look['task_id']);ids.append(a.id)
+                assets[a.id]={'role':'character','name':look['name'],'notes':'固定身份与独立服装的已绑定定装参考图',
+                    'identity_asset_id':look['identity_asset_id'],'costume_asset_id':look['costume_asset_id']}
+            for item in data['items']:
+                if item['role']=='scene':
+                    a=image_asset(db,item['task_id']);assets[a.id]={'role':'scene','name':item['name'],'notes':item['design']}
+            if not ids:raise HTTPException(409,'定装合成尚未完成。')
+            approve_images(db,ids,automatic)
+        current=prep.get(pid)['config']
+        prep.save(pid,prep.Setup(expected_version=current['version'] if current else 0,style=data['visual_language'],assets=assets))
+        if data.get('production_split'):
+            prep.approve_references(pid,prep.get(pid)['stamp'])
+            save_run(pid,stage='composites_ready')
+            return {'stage':'composites_ready'}
+        token=prep.get(pid)['stamp'];chars=[a for a,v in assets.items() if v['role']=='character'];scenes=[a for a,v in assets.items() if v['role']=='scene']
+        pairs=list(dict.fromkeys([(a,scenes[0]) for a in chars]+[(chars[0],s) for s in scenes]))
+        for a,s in pairs:prep.trial(pid,prep.Trial(stamp=token,assets=[a,s],prompt='已完成定装的人物与场景试拍，沿用已绑定的人物身份和服装，不重新设计。',confirm_paid=True))
+        save_run(pid,stage='trials_review')
+    elif stage=='trials_review':
+        finish_composites(pid,automatic)
+        start_storyboard_stage(pid)
+    elif stage in ('samples_review','frames_review'):
+        run=production.workspace(pid);shots=run['shots'];v=visual.get_config(pid);sample_ids=v['config']['samples']
+        target=[s for s in shots if stage=='frames_review' or s['shot']['id'] in sample_ids]
+        with Session.begin() as db:
+            ids=[image_asset(db,s['image_task']['id']).id for s in target if s['image_task']]
+            if len(ids)!=len(target):raise HTTPException(409,'还有画面未生成。')
+            approve_images(db,ids,automatic)
+        if stage=='samples_review':
+            visual.approve_samples(pid,visual.Gate(stamp=v['stamp'],confirm=True,note='自动工作流通过参考资产版本检查；不代表人工视觉检查' if automatic else '管理员看过三镜画面，确认人物与场景连续性满意'))
+            for s in shots:
+                if not s['image_task']:director.frame(pid,s['shot']['id'],director.Frame(version=run['version'],confirm_paid=True))
+            save_run(pid,stage='frames_review')
+        else:
+            for s in shots:production.generate_video(pid,s['shot']['id'],production.Command(version=run['version'],confirm_paid=True))
+            save_run(pid,stage='videos_review')
+    else:raise HTTPException(409,'当前阶段不能继续。')
+    return {'stage':get_status(pid)}
+
+
+def finish_composites(pid,automatic=False):
+    with Session() as db:direct_references=get_run(db,pid).data.get('production_split',False)
+    if direct_references:
+        prep.approve_references(pid,prep.get(pid)['stamp'])
+        save_run(pid,stage='composites_ready')
+        return
+    trials=current_trials(pid);ids=[]
+    with Session.begin() as db:
+        for t in trials['trials']:ids.append(image_asset(db,t['task']['id']).id)
+        approve_images(db,ids,automatic)
+    prep.approve(pid,prep.Approve(stamp=trials['stamp'],asset_ids=ids,note='自动工作流已验证参考资产覆盖和版本；视觉效果留待作者审片' if automatic else '管理员已确认全部人物场景试拍满意，开始自动分镜制作',confirm=True))
+    save_run(pid,stage='composites_ready')
+
+
+def prepare_reference_inputs(pid):
+    """Bind the reviewed base sheets directly; no fitting or trial request is submitted."""
+    with Session.begin() as db:
+        run=get_run(db,pid);data=dict(run.data)
+        if data.get('asset_schema')!=asset_sheets.VERSION:raise HTTPException(409,'请先将基础素材更新为独立人物身份、服装和场景图。')
+        rows={item['task_id']:image_asset(db,item['task_id']) for item in data['items']}
+        people={item['character_id']:rows[item['task_id']].id for item in data['items'] if item['role']=='character'}
+        assets={}
+        for item in data['items']:
+            asset=rows[item['task_id']]
+            spec={'role':item['role'],'name':item['name'],'notes':str(item.get('design') or item.get('facts') or '使用这张已确认的基础参考图')[:1500]}
+            if item['role']=='character':spec.update(identity_asset_id=asset.id,requires_costume=True)
+            elif item['role']=='costume':
+                identity=people.get(item.get('character_ref'))
+                if not identity:raise HTTPException(409,'服装缺少对应的人物身份图，请先检查基础素材。')
+                spec['identity_asset_id']=identity
+            assets[asset.id]=spec
+        approve_images(db,[row.id for row in rows.values()],automatic=False)
+        source_assets={task_id:{'asset_id':asset.id,'asset_version':asset.version} for task_id,asset in rows.items()}
+    current=prep.get(pid)['config']
+    prep.save(pid,prep.Setup(expected_version=current['version'] if current else 0,style=data['visual_language'],assets=assets,source_assets=source_assets))
+    prep.approve_references(pid,prep.get(pid)['stamp'])
+    save_run(pid,stage='references_ready',reference_inputs='base_sheets')
+
+
+def start_storyboard_stage(pid):
+    with Session() as db:version=db.get(Record,pid).version
+    child=director.start_storyboard(pid,director.BoardStart(version=version,confirm_paid=True))
+    with Session.begin() as db:
+        w=Task(id=uid('watch'),kind='creative_watch',payload={'mode':'live','creative_id':pid,'child':child['task']['id'],'step':'board'})
+        db.add(w);r=get_run(db,pid);r.data={**r.data,'stage':'storyboarding','watch':w.id}
+
+def get_status(pid):
+    with Session() as db:return get_run(db,pid).data['stage']
+
+def run_watch(task_id,payload):
+    pid=payload['creative_id']
+    with Session() as db:
+        get_project(db,pid);child=db.get(Task,payload['child'])
+        if child.status in BUSY:return False
+        if child.status!='completed':raise ProviderError('自动分镜未完成，请查看导演诊断。已有图片保留。')
+        p=db.get(Record,pid)
+        if not p.data.get('review',{}).get('approved'):raise ProviderError('分镜专业预审发现问题，已停止后续生成；请在高级详情查看问题。')
+        version=p.version;board=director.Board.model_validate(p.data['board'])
+    # Format and semantic text checks succeeded; this is not an image review.
+    approved=director.approve(pid,director.Approve(version=version,confirm=True,note='系统分镜结构与模型文本预审通过；后续图片仍须管理员审核'))
+    pre=prep.get(pid)['config']
+    old=visual.get_config(pid)['config']
+    visual.save(pid,visual.Visual(expected_version=old['version'] if old else 0,director_version=approved['version'],style=pre['style'],bindings={s.id:s.assets for s in board.shots},states={s.id:s.continuity_in+' → '+s.continuity_out for s in board.shots},samples=[s.id for s in board.shots[:3]],approved=True))
+    with Session() as db:split=get_run(db,pid).data.get('production_split',False)
+    save_run(pid,stage='storyboard_ready')
+    if not split:start_reference_frames(pid)
+    return True
+
+def start_reference_frames(pid):
+    run=production.workspace(pid)
+    for shot in run['shots'][:3]:
+        if not shot['image_task']:director.frame(pid,shot['shot']['id'],director.Frame(version=run['version'],confirm_paid=True))
+    save_run(pid,stage='samples_review')
+
+class Feedback(BaseModel):
+    task_id:str
+    text:str=Field(min_length=2,max_length=1500)
+    confirm_paid:bool=False
+@router.post('/{pid}/feedback')
+def feedback(pid:str,body:Feedback):
+    paid(body)
+    with Session.begin() as db:
+        get_project(db,pid);r=get_run(db,pid);no_active(db,pid)
+        if r.data['stage']=='published':raise HTTPException(409,'已发布作品请归档并新建版本修改。')
+        old=db.get(Task,body.task_id)
+        if not old or old.kind not in ('image','video') or not any(old.payload.get(k)==pid for k in ('creative_id','director_id','preproduction_id')):raise HTTPException(422,'不是当前作品的素材。')
+        if old.status not in ('completed','failed','needs_review'):raise HTTPException(409,'任务仍在运行。')
+        # Upstream changes require rebuilding downstream versions.
+        if old.payload.get('creative_id')==pid and r.data['stage']!='assets_review':raise HTTPException(409,'角色设定已用于后续制作；整体改换请归档重做，避免污染已审场景。')
+        if old.payload.get('creative_id')==pid and old.id not in {item['task_id'] for item in r.data['items']}:
+            raise HTTPException(409,'该图片已有更新版本，请刷新后修改当前图片。')
+        t=Task(id=uid('revise'),kind='creative_revision',payload={'mode':'live','creative_id':pid,'target':old.id,'feedback':body.text})
+        db.add(t);db.add(Record(id=uid('audit'),kind='audit',data={'target':old.id,'action':'creative_feedback','note':body.text,'task_id':t.id}));r.data={**r.data,'watch':t.id};r.version+=1;db.flush();return task_dict(t)
+
+class Revision(BaseModel):
+    prompt:str=Field(min_length=5,max_length=5000)
+
+def run_revision(task_id,p):
+    with Session() as db:
+        get_project(db,p['creative_id']);old=db.get(Task,p['target'])
+        if not old:raise ProviderError('需要重做的素材不存在。')
+        old_payload=dict(old.payload);kind=old.kind
+    updated_spec=None
+    if kind=='image' and old_payload.get('creative_id') and not old_payload.get('director_id'):
+        if old_payload.get('asset_schema')!=asset_sheets.VERSION or not old_payload.get('asset_spec'):
+            raise ProviderError('旧版人物与服装尚未分离，请先重做本轮素材。')
+        original_spec=old_payload['asset_spec'];schema=asset_sheets.MODELS[original_spec['role']]
+        raw,_=call_node(chat_json,{'character':'identity_revision','costume':'costume_revision','scene':'scene_revision'}[original_spec['role']],
+            {'existing_spec':original_spec,'feedback':p['feedback'],'schema':schema.model_json_schema()},task_id)
+        updated_spec=validate_spec(schema,raw)
+        values=updated_spec.model_dump()
+        for key in ('role','name','source_ref','facts','character_id','character_ref','costume_id'):
+            if values.get(key)!=original_spec.get(key):raise ProviderError('修改不能更换人物身份、服装归属或原文依据。')
+        prompt=write_revised_asset_prompt(task_id,old_payload['visual_style'],updated_spec)
+    else:
+        revision_node='video_revision' if kind=='video' else 'shot_revision'
+        raw,_=call_node(chat_json,revision_node,
+            {'original':old_payload['prompt'],'feedback':p['feedback'],'schema':Revision.model_json_schema()},task_id)
+        prompt=Revision.model_validate(raw).prompt
+    with Session.begin() as db:
+        current=db.get(Task,task_id)
+        if current.status!='running':return
+        get_project(db,p['creative_id']);r=get_run(db,p['creative_id'])
+        payload={**old_payload,'prompt':prompt,'revision_of':p['target'],'feedback':p['feedback'],
+            'revision_instruction':p['feedback'],'regeneration_mode':'full_prompt'}
+        if updated_spec is not None:
+            # Author feedback on a base asset always starts a new text-to-image request.
+            # Reference inputs from any historical edit must never leak into the new task.
+            for key in ('reference_media','reference_ids','reference_assets','image_model','image_inference_steps',
+                        'style_reference','reference_roles','edit_mode','edit_instruction','rendering_style'):
+                payload.pop(key,None)
+            from .skill_runtime import public
+            payload.update(asset_spec=updated_spec.model_dump(),input_mode='text_to_image',
+                node_skill=public(current.payload['node_skill_pins']['asset_prompts']))
+        else:
+            from .skill_runtime import public
+            payload['node_skill']=public(current.payload['node_skill_pins'][revision_node])
+            if kind=='video' and isinstance(payload.get('input_snapshot'),dict):
+                payload['input_snapshot']={**payload['input_snapshot'],'prompt':prompt}
+        t=Task(id=uid(kind),kind=kind,payload=payload);db.add(t)
+        if updated_spec is not None:
+            prep.invalidate_downstream_references(db,p['creative_id'],'基础素材已按意见重做',t.id)
+        changes={**updated_spec.model_dump(),'design':asset_sheets.description(updated_spec),'asset_spec':updated_spec.model_dump(),'prompt':prompt} if updated_spec is not None else {}
+        items=[{**i,**changes,'task_id':t.id} if i['task_id']==p['target'] else i for i in r.data['items']]
+        stage=r.data['stage']
+        if kind=='image' and old_payload.get('director_id'):
+            c=visual.config(db,p['creative_id']);stage='samples_review' if old_payload['shot_id'] in c.data['samples'] else 'frames_review'
+        r.data={**r.data,'items':items,'stage':stage};r.version+=1
+        current.result={'task_id':t.id}
+
+class Publish(BaseModel):
+    confirm:bool=False
+@router.post('/{pid}/publish')
+def publish(pid:str,body:Publish):
+    if not body.confirm:raise HTTPException(422,'请看过成片后确认发布。')
+    run=production.workspace(pid)
+    for s in run['shots']:
+        if not s['clip']:raise HTTPException(409,'还有视频未完成。')
+    for s in run['shots']:
+        if not s['clip'].get('locked'):production.approve_clip(pid,s['shot']['id'],production.Trim(version=run['version'],start=0,end=min(s['shot']['edit_seconds'],s['clip']['duration']),confirm_visual=True))
+    result=production.publish(pid,production.Publish(version=run['version'],confirm=True));save_run(pid,stage='published')
+    from .skill_runtime import public,snapshot
+    with Session.begin() as db:
+        key='review_skill_'+result['id']
+        if not db.get(Record,key):db.add(Record(id=key,kind='audit',data={'target':result['id'],'action':'author_film_review','node_skill':public(snapshot('film_review'))}))
+    return result

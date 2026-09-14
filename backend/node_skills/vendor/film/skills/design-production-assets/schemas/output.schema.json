@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Design Production Assets Result",
+  "allOf": [
+    {
+      "$ref": "../../../schemas/common/result-envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "skill": {
+      "const": "design-production-assets"
+    },
+    "data": {
+      "type": "object",
+      "required": ["characters", "locations", "props", "coverage"],
+      "properties": {
+        "characters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/asset"
+          }
+        },
+        "locations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/asset"
+          }
+        },
+        "props": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/asset"
+          }
+        },
+        "coverage": {
+          "type": "object",
+          "required": ["referenced_ids", "covered_ids", "missing_ids"],
+          "properties": {
+            "referenced_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "covered_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "missing_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "asset": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "source_ids",
+        "identity_anchors",
+        "allowed_variation"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "source_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "identity_anchors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowed_variation": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "variants": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "unevaluatedProperties": false
+}

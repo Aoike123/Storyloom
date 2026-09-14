@@ -1,0 +1,18 @@
+'use client';
+import {useEffect,useState} from 'react';
+
+export default function ModelConfig({onSaved}:{onSaved:()=>Promise<void>}){
+ const [values,setValues]=useState<Record<string,string>>({IMAGE_PROVIDER:'siliconflow',IMAGE_ENDPOINT:'https://api.siliconflow.cn/v1/images/generations',IMAGE_MODEL:'Tongyi-MAI/Z-Image-Turbo',IMAGE_API_KEY:'',LLM_PROVIDER:'deepseek',LLM_ENDPOINT:'https://api.deepseek.com/chat/completions',LLM_MODEL:'',LLM_API_KEY:'',VIDEO_PROVIDER:'minimax',VIDEO_ENDPOINT:'https://api.minimax.cn/v2/video_generation',VIDEO_MODEL:'MiniMax-H3-Max',VIDEO_API_KEY:'',ALLOW_PAID_CALLS:'false'});
+ const [busy,setBusy]=useState(false),[message,setMessage]=useState('');
+ useEffect(()=>{fetch('/api/settings').then(r=>r.json()).then(d=>{setValues(v=>({...v,...d.editable,LLM_ENDPOINT:d.editable?.LLM_ENDPOINT||(d.editable?.LLM_BASE_URL?d.editable.LLM_BASE_URL.replace(/\/$/,'')+'/chat/completions':v.LLM_ENDPOINT),VIDEO_PROVIDER:d.video_configured?d.editable.VIDEO_PROVIDER:v.VIDEO_PROVIDER,VIDEO_ENDPOINT:d.video_configured?d.editable.VIDEO_ENDPOINT:v.VIDEO_ENDPOINT,VIDEO_MODEL:d.video_configured?d.editable.VIDEO_MODEL:v.VIDEO_MODEL,IMAGE_PROVIDER:d.editable?.IMAGE_PROVIDER||v.IMAGE_PROVIDER,IMAGE_ENDPOINT:d.editable?.IMAGE_ENDPOINT||v.IMAGE_ENDPOINT,IMAGE_MODEL:d.editable?.IMAGE_MODEL||v.IMAGE_MODEL}));}).catch(()=>setMessage('无法读取配置'));},[]);
+ const field=(key:string,label:string,secret=false)=><label key={key} style={{display:'block',margin:'14px 0'}}>{label}<input className="text-input" style={{width:'100%',marginTop:6}} type={secret?'password':'text'} autoComplete="off" value={values[key]} placeholder={secret?'留空保留已有 Key':undefined} onChange={e=>setValues({...values,[key]:e.target.value})}/></label>;
+ return <form className="config-guide" onSubmit={async e=>{e.preventDefault();setBusy(true);setMessage('');try{const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:{...values,LLM_BASE_URL:values.LLM_ENDPOINT.replace(/\/chat\/completions\/?$/,'')}})});const d=await r.json();if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:'保存失败');setValues(v=>({...v,LLM_API_KEY:'',VIDEO_API_KEY:'',IMAGE_API_KEY:''}));await onSaved();setMessage('已保存到本机。尚未调用模型，不代表连接已验证。');}catch(e){setMessage((e as Error).message);}finally{setBusy(false);}}}>
+ <h2>填写模型 API</h2><p>密钥保存到本机 .env.local，不回显到页面。保存不会产生模型费用。</p>
+ {field('LLM_ENDPOINT','DeepSeek 完整接口地址')}{field('LLM_MODEL','DeepSeek 模型 ID')}{field('LLM_API_KEY','DeepSeek API Key',true)}
+ <h3>生图模型 · 硅基流动</h3><p>Z-Image-Turbo 通过硅基流动调用，请使用该平台的 Key。接口地址须与账号所在区域一致。</p>{field('IMAGE_ENDPOINT','生图完整接口地址')}{field('IMAGE_MODEL','生图模型 ID')}{field('IMAGE_API_KEY','生图 API Key',true)}
+ <p>按意见修改会重新编写完整提示词并调用上述生图模型；定装与场景组合仍使用项目内固定的参考图合成流程。</p>
+ <h3>视频模型 · MiniMax H3 Max</h3><p>请选择与 Key 所属账号一致的区域，使用按量付费 API Key。</p><button type="button" className="button secondary" onClick={()=>setValues({...values,VIDEO_PROVIDER:'minimax',VIDEO_ENDPOINT:'https://api.minimax.cn/v2/video_generation',VIDEO_MODEL:'MiniMax-H3-Max'})}>使用国内平台配置</button><button type="button" className="button secondary" onClick={()=>setValues({...values,VIDEO_PROVIDER:'minimax',VIDEO_ENDPOINT:'https://api.minimax.io/v2/video_generation',VIDEO_MODEL:'MiniMax-H3-Max'})}>使用国际平台配置</button>{field('VIDEO_ENDPOINT','视频完整接口地址')}{field('VIDEO_MODEL','视频模型 ID')}{field('VIDEO_API_KEY','MiniMax API Key',true)}
+ <label className="checkbox"><input type="checkbox" checked={values.ALLOW_PAID_CALLS==='true'} onChange={e=>setValues({...values,ALLOW_PAID_CALLS:String(e.target.checked)})}/>允许付费调用</label>
+ <button className="button primary" disabled={busy}>{busy?'保存中…':'保存配置'}</button><p role="status">{message}</p>
+ </form>;
+}

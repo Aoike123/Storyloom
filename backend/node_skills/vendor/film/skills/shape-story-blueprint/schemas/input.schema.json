@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Shape Story Blueprint Request",
+  "allOf": [
+    {
+      "$ref": "../../../schemas/common/request-envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "payload": {
+      "type": "object",
+      "required": ["screenplay_structure"],
+      "properties": {
+        "screenplay_structure": {
+          "type": "object"
+        },
+        "creative_constraints": {
+          "type": "object"
+        },
+        "scope": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "enum": ["project", "scene", "beat"]
+            },
+            "ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            }
+          },
+          "required": ["mode"],
+          "additionalProperties": false
+        },
+        "board": {
+          "type": "object",
+          "properties": {
+            "rows": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            },
+            "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            }
+          },
+          "required": ["rows", "columns"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "unevaluatedProperties": false
+}

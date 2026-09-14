@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Shape Story Blueprint Result",
+  "allOf": [
+    {
+      "$ref": "../../../schemas/common/result-envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "skill": {
+      "const": "shape-story-blueprint"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "creative_brief",
+        "story_nodes",
+        "planning_board",
+        "continuity_notes"
+      ],
+      "properties": {
+        "creative_brief": {
+          "type": "object"
+        },
+        "story_nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "purpose", "source_ids"],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "purpose": {
+                "type": "string"
+              },
+              "source_ids": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "planning_board": {
+          "type": "object",
+          "required": ["rows", "columns", "cells"],
+          "properties": {
+            "rows": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "columns": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "cells": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "continuity_notes": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "unevaluatedProperties": false
+}

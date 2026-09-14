@@ -1,0 +1,106 @@
+import pytest
+from PIL import Image
+from sqlalchemy import select
+from backend.db import Session,Record,Task,DATA
+from backend import creative as c,director as d,preproduction as pp,production as prod,worker
+from test_director import board,TEXT
+from asset_spec_fixtures import design_response,character
+
+@pytest.fixture
+def creative(client,monkeypatch):
+    cfg=lambda:{'paid_enabled':True,'llm_configured':True,'image_configured':True,'video_configured':True,'editable':{'VIDEO_PROVIDER':'minimax'}}
+    for mod in (c,d,pp,prod):monkeypatch.setattr(mod,'settings',cfg)
+    treatment={k:'设计依据' for k in ['premise','dramatic_question','protagonist_goal','excerpt_scope','visual_strategy','information_strategy']}
+    treatment.update(rules=[{'rule':'规则','quote':TEXT,'consequence':'后果'}],boundaries=['未知'])
+    with Session.begin() as db:
+        db.add(Record(id='source',kind='story_source',data={'title':'原作','labels':['脑洞'],'content':TEXT,'content_hash':'x'}))
+        db.add(Task(id='origin',kind='director',status='completed',payload={'source':{'content':TEXT,'title':'原作'}}))
+        db.add(Record(id='pid',kind='director',data={'task_id':'origin','source_id':'source','brief':'短场景','status':'awaiting_preproduction','treatment':treatment,'requires_preproduction':True}))
+    monkeypatch.setattr(c,'chat_json',design_response)
+    monkeypatch.setattr(worker,'generate_image',lambda *a,**k:'https://example.test/image')
+    monkeypatch.setattr(worker,'generate_from_references',lambda *a,**k:'https://example.test/image')
+    def save(url,tid):
+        Image.new('RGB',(256,256)).save(DATA/'media'/f'{tid}.png')
+        return f'/media/{tid}.png'
+    monkeypatch.setattr(worker,'save_image',save)
+    return client
+
+def drain():
+    for _ in range(30):
+        if not worker.process_one('creative-test'):break
+
+def advance(client,stage):return client.post('/api/creative/pid/continue',json={'stage':stage,'confirm_review':True,'confirm_paid':True})
+
+def test_result_driven_production_keeps_image_gates(creative,monkeypatch):
+    client=creative
+    assert client.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'温馨','confirm_paid':True}).status_code==200
+    drain();data=client.get('/api/creative/pid').json()
+    assert len(data['items'])==3 and all(i['asset'] for i in data['items'])
+    assert client.post('/api/creative/pid/continue',json={'stage':'assets_review','confirm_paid':True}).status_code==422
+    assert advance(client,'assets_review').status_code==200
+    drain();assert client.get('/api/creative/pid').json()['stage']=='fittings_review'
+    assert advance(client,'fittings_review').status_code==200
+    drain();assert client.get('/api/creative/pid').json()['stage']=='trials_review'
+    prep=pp.get('pid')['config'];b=board()
+    for shot in b['shots']:shot['assets']=list(prep['assets'])
+    answers=iter([b,{'shots':[{k:s[k] for k in ('id','first_frame','motion_prompt')} for s in b['shots']]},{'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'}])
+    monkeypatch.setattr(d,'chat_json',lambda *a:(next(answers),{}))
+    assert advance(client,'trials_review').status_code==200
+    drain();data=client.get('/api/creative/pid').json()
+    assert data['stage']=='samples_review'
+    with Session() as db:assert not list(db.scalars(select(Task).where(Task.kind=='video')))
+    assert advance(client,'samples_review').status_code==200
+    drain();assert advance(client,'frames_review').status_code==200
+    data=client.get('/api/creative/pid').json()
+    assert data['stage']=='videos_review'
+    assert len([s for s in data['production']['shots'] if s['video_task']])==4
+
+def test_natural_language_revision_retains_old_image(creative,monkeypatch):
+    client=creative
+    client.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'温馨','confirm_paid':True});drain()
+    item=client.get('/api/creative/pid').json()['items'][0]
+    with Session.begin() as db:
+        db.add(Record(id='prep_pid',kind='preproduction',data={'versions':{},'assets':{}}))
+        db.add(Record(id='visual_pid',kind='visual_config',data={'approved':True,'bindings':{}}))
+    changed=character();changed['appearance']['hair_shape']='耳上直短发，偏左分缝'
+    monkeypatch.setattr(c,'chat_json',lambda system,payload,*a:({'items':[{'asset_index':0,'prompt':payload['assets'][0]['render_contract']}]} if payload['schema']['title']=='AssetPromptBatch' else changed,{}))
+    r=client.post('/api/creative/pid/feedback',json={'task_id':item['task']['id'],'text':'头发短一些','confirm_paid':True})
+    assert r.status_code==200;drain()
+    new=client.get('/api/creative/pid').json()['items'][0]
+    assert new['task']['id']!=item['task']['id']
+    with Session() as db:
+        assert db.get(Record,'prep_pid').data.get('invalidated_at')
+        assert db.get(Record,'visual_pid').data.get('approved') is False
+        assert db.get(Record,item['asset']['id']) is not None
+        payload=db.get(Task,new['task']['id']).payload
+        assert payload['input_mode']=='text_to_image' and 'reference_media' not in payload
+        assert db.get(Record,new['asset']['id']).data['status']=='pending'
+
+
+def test_video_feedback_rewrites_complete_prompt_and_submits_a_new_task(creative,monkeypatch):
+    client=creative
+    client.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'温馨','confirm_paid':True});drain()
+    with Session.begin() as db:
+        db.add(Task(id='old-video',kind='video',status='completed',payload={
+            'mode':'live','director_id':'pid','title':'镜头 S01','prompt':'原视频完整提示词',
+            'input_mode':'reference_images','reference_media':['/media/approved-shot.png'],
+            'input_snapshot':{'prompt':'原视频完整提示词','asset_bindings':[]}},
+            result={'media':'/media/old-video.mp4'}))
+    def revise(system,payload,*args):
+        assert payload['original']=='原视频完整提示词'
+        assert payload['feedback']=='镜头推进慢一些'
+        return {'prompt':'依据已批准参考图片重新生成：镜头缓慢推进，人物动作与结束状态保持连续。'},{}
+    monkeypatch.setattr(c,'chat_json',revise)
+    response=client.post('/api/creative/pid/feedback',json={
+        'task_id':'old-video','text':'镜头推进慢一些','confirm_paid':True})
+    assert response.status_code==200
+    assert worker.process_one('video-revision-test')
+    with Session() as db:
+        parent=db.get(Task,response.json()['id']);new=db.get(Task,parent.result['task_id'])
+        assert parent.status=='completed' and new.kind=='video' and new.status=='queued'
+        assert new.payload['revision_of']=='old-video'
+        assert new.payload['reference_media']==['/media/approved-shot.png']
+        assert new.payload['prompt']==new.payload['input_snapshot']['prompt']
+        assert new.payload['regeneration_mode']=='full_prompt'
+        assert new.payload['node_skill']['node']=='video_revision'
+        assert '/media/old-video.mp4' not in str(new.payload)

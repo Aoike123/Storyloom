@@ -1,0 +1,11 @@
+.node-skills-panel{margin:16px 0 24px;border:1px solid #d8e3cc;border-radius:8px;padding:13px 16px;background:#f8fbf3;color:#597747;font-size:12px}
+.node-skills-panel>summary,.node-skill-trace>summary{cursor:pointer;font-weight:500}
+.node-skills-panel>p{font-size:11px;color:#859577;line-height:1.8}
+.node-skills-table{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px;margin-top:13px}
+.node-skills-table article{padding:12px;border:1px solid #e1e8d9;border-radius:6px;background:#fff;min-width:0}
+.node-skills-table article>a{display:block;font-weight:500;color:#486839}.node-skills-table span{display:block;font-size:10px;color:#8b987d;margin-top:6px}
+.node-skills-table small{display:block;font-size:10px;margin-top:6px;overflow-wrap:anywhere;color:#75856c}
+.node-skill-trace{margin-top:15px;padding-top:10px;border-top:1px solid #dce6d2;font-size:11px;color:#718862}
+.node-skill-trace>div{margin-top:10px;padding:9px 11px;background:#f4f8ec;border-radius:5px}
+.node-skill-trace strong{font-weight:500;color:#587546}.node-skill-trace span{float:right;margin-left:12px;font-size:10px}
+.node-skill-trace small{display:block;font-size:10px;margin-top:5px;overflow-wrap:anywhere;color:#8b9b7c}

@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Compile Generation Prompts Request",
+  "allOf": [
+    {
+      "$ref": "../../../schemas/common/request-envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "payload": {
+      "type": "object",
+      "required": [
+        "story_blueprint",
+        "production_assets",
+        "shot_plan",
+        "targets"
+      ],
+      "properties": {
+        "story_blueprint": {
+          "type": "object"
+        },
+        "production_assets": {
+          "type": "object"
+        },
+        "shot_plan": {
+          "type": "object"
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": ["storyboard", "image", "video"]
+          },
+          "uniqueItems": true
+        },
+        "provider_capability_profiles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "provider_id",
+              "model_id",
+              "media_type",
+              "capabilities",
+              "constraints"
+            ],
+            "properties": {
+              "provider_id": {
+                "type": "string"
+              },
+              "model_id": {
+                "type": "string"
+              },
+              "media_type": {
+                "enum": ["image", "video", "audio"]
+              },
+              "capabilities": {
+                "type": "object",
+                "properties": {
+                  "text_to_image": {"type": "boolean"},
+                  "text_to_video": {"type": "boolean"},
+                  "image_to_video": {"type": "boolean"},
+                  "first_frame": {"type": "boolean"},
+                  "last_frame": {"type": "boolean"},
+                  "multi_reference": {"type": "boolean"},
+                  "character_reference": {"type": "boolean"},
+                  "audio_generation": {"type": "boolean"}
+                },
+                "additionalProperties": false
+              },
+              "constraints": {
+                "type": "object",
+                "properties": {
+                  "max_reference_images": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "supported_durations": {
+                    "type": "array",
+                    "items": {"type": "number", "exclusiveMinimum": 0},
+                    "uniqueItems": true
+                  },
+                  "supported_aspect_ratios": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "uniqueItems": true
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "unevaluatedProperties": false
+}

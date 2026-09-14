@@ -1,0 +1,575 @@
+{
+  "version": "1.4.2",
+  "nodes": {
+    "style_options": {
+      "title": "风格提案提示词",
+      "mode": "llm",
+      "schema": "Options",
+      "inputs": [
+        "source",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "replicate",
+          "skill": "prompt-images",
+          "sections": [
+            "Writing prompts",
+            "Style transfer"
+          ]
+        }
+      ],
+      "adapter": "adapters/style-options/SKILL.md"
+    },
+    "story_treatment": {
+      "title": "剧情改编与原文依据",
+      "mode": "llm",
+      "schema": "Treatment",
+      "inputs": [
+        "source",
+        "source_passages",
+        "brief",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "structure-screenplay",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        },
+        {
+          "bundle": "film",
+          "skill": "shape-story-blueprint",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        }
+      ],
+      "adapter": "adapters/story-treatment/SKILL.md"
+    },
+    "style_spec": {
+      "title": "专业画风参数",
+      "mode": "llm",
+      "schema": "StylePlan",
+      "inputs": [
+        "art_preference",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "replicate",
+          "skill": "prompt-images",
+          "sections": [
+            "Writing prompts",
+            "Style transfer"
+          ]
+        }
+      ],
+      "adapter": "adapters/style-spec/SKILL.md",
+      "local_sections": [
+        "风格规格"
+      ]
+    },
+    "identity_spec": {
+      "title": "唯一人物身份规格",
+      "mode": "llm",
+      "schema": "CharacterPlan",
+      "inputs": [
+        "source_passages",
+        "excerpt_scope",
+        "visual_style",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "design-production-assets",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        }
+      ],
+      "adapter": "adapters/identity-spec/SKILL.md",
+      "local_sections": [
+        "人物规格",
+        "数据与渲染分离"
+      ]
+    },
+    "costume_spec": {
+      "title": "独立服装规格",
+      "mode": "llm",
+      "schema": "CostumePlan",
+      "inputs": [
+        "source_passages",
+        "excerpt_scope",
+        "locked_characters",
+        "visual_style",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "design-production-assets",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        },
+        {
+          "bundle": "replicate",
+          "skill": "prompt-images",
+          "sections": [
+            "Character consistency",
+            "Writing prompts"
+          ]
+        }
+      ],
+      "adapter": "adapters/costume-spec/SKILL.md",
+      "local_sections": [
+        "独立服装规格",
+        "数据与渲染分离"
+      ]
+    },
+    "scene_spec": {
+      "title": "物理场景规格",
+      "mode": "llm",
+      "schema": "ScenePlan",
+      "inputs": [
+        "source_passages",
+        "excerpt_scope",
+        "visual_style",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "design-production-assets",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        },
+        {
+          "bundle": "replicate",
+          "skill": "prompt-images",
+          "sections": [
+            "Photographic language"
+          ]
+        }
+      ],
+      "adapter": "adapters/scene-spec/SKILL.md",
+      "local_sections": [
+        "场景规格",
+        "数据与渲染分离"
+      ]
+    },
+    "asset_prompts": {
+      "title": "资产生图提示词编写",
+      "mode": "llm",
+      "schema": "AssetPromptBatch",
+      "inputs": [
+        "assets",
+        "target",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "replicate",
+          "skill": "prompt-images",
+          "sections": [
+            "Writing prompts",
+            "Style transfer",
+            "Character consistency"
+          ]
+        },
+        {
+          "bundle": "film",
+          "skill": "compile-generation-prompts",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        }
+      ],
+      "adapter": "adapters/asset-prompts/SKILL.md"
+    },
+    "storyboard": {
+      "title": "专业镜头规划",
+      "mode": "llm",
+      "schema": "Board",
+      "inputs": [
+        "source",
+        "source_passages",
+        "treatment",
+        "brief",
+        "preproduction",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "plan-camera-shots",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        }
+      ],
+      "adapter": "adapters/storyboard/SKILL.md"
+    },
+    "shot_prompts": {
+      "title": "分镜图像与视频提示词编译",
+      "mode": "llm",
+      "schema": "ShotPromptBatch",
+      "inputs": [
+        "board",
+        "preproduction",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "compile-generation-prompts",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        },
+        {
+          "bundle": "replicate",
+          "skill": "prompt-images",
+          "sections": [
+            "Writing prompts",
+            "Style transfer"
+          ]
+        }
+      ],
+      "adapter": "adapters/shot-prompts/SKILL.md"
+    },
+    "storyboard_review": {
+      "title": "分镜连续性与可制作性预审",
+      "mode": "llm",
+      "schema": "Review",
+      "inputs": [
+        "source",
+        "treatment",
+        "board",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "plan-camera-shots",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        }
+      ],
+      "adapter": "adapters/storyboard-review/SKILL.md"
+    },
+    "identity_revision": {
+      "title": "人物身份属性修订",
+      "mode": "llm",
+      "schema": "CharacterSheet",
+      "inputs": [
+        "existing_spec",
+        "feedback",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "design-production-assets",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        },
+        {
+          "bundle": "replicate",
+          "skill": "prompt-images",
+          "sections": [
+            "Character consistency"
+          ]
+        }
+      ],
+      "adapter": "adapters/identity-revision/SKILL.md",
+      "local_sections": [
+        "人物规格",
+        "数据与渲染分离",
+        "修改任务"
+      ]
+    },
+    "costume_revision": {
+      "title": "独立服装属性修订",
+      "mode": "llm",
+      "schema": "CostumeSheet",
+      "inputs": [
+        "existing_spec",
+        "feedback",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "design-production-assets",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        },
+        {
+          "bundle": "replicate",
+          "skill": "prompt-images",
+          "sections": [
+            "Character consistency",
+            "Writing prompts"
+          ]
+        }
+      ],
+      "adapter": "adapters/costume-revision/SKILL.md",
+      "local_sections": [
+        "独立服装规格",
+        "数据与渲染分离",
+        "修改任务"
+      ]
+    },
+    "scene_revision": {
+      "title": "物理场景属性修订",
+      "mode": "llm",
+      "schema": "SceneSheet",
+      "inputs": [
+        "existing_spec",
+        "feedback",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "design-production-assets",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        },
+        {
+          "bundle": "replicate",
+          "skill": "prompt-images",
+          "sections": [
+            "Photographic language",
+            "Writing prompts"
+          ]
+        }
+      ],
+      "adapter": "adapters/scene-revision/SKILL.md",
+      "local_sections": [
+        "场景规格",
+        "数据与渲染分离",
+        "修改任务"
+      ]
+    },
+    "shot_revision": {
+      "title": "镜头生成提示词修订",
+      "mode": "llm",
+      "schema": "Revision",
+      "inputs": [
+        "original",
+        "feedback",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "compile-generation-prompts",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        },
+        {
+          "bundle": "replicate",
+          "skill": "prompt-images",
+          "sections": [
+            "Character consistency",
+            "Writing prompts"
+          ]
+        }
+      ],
+      "adapter": "adapters/shot-revision/SKILL.md"
+    },
+    "video_revision": {
+      "title": "视频生成提示词修订",
+      "mode": "llm",
+      "schema": "Revision",
+      "inputs": [
+        "original",
+        "feedback",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "compile-generation-prompts",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        }
+      ],
+      "adapter": "adapters/video-revision/SKILL.md"
+    },
+    "reader_plan": {
+      "title": "读者分支剧情规划",
+      "mode": "llm",
+      "schema": "Plan",
+      "inputs": null,
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "shape-story-blueprint",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        }
+      ],
+      "adapter": "adapters/reader-plan/SKILL.md"
+    },
+    "reader_review": {
+      "title": "读者分支因果检查",
+      "mode": "llm",
+      "schema": null,
+      "inputs": [
+        "context",
+        "plan"
+      ],
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "shape-story-blueprint",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        }
+      ],
+      "adapter": "adapters/reader-review/SKILL.md"
+    },
+    "fitting": {
+      "title": "定装参考图合成提示词",
+      "mode": "template",
+      "inputs": null,
+      "schema": null,
+      "sources": [
+        {
+          "bundle": "replicate",
+          "skill": "prompt-images",
+          "sections": [
+            "Character consistency",
+            "Image editing"
+          ]
+        }
+      ],
+      "adapter": "adapters/fitting/SKILL.md"
+    },
+    "scene_trial": {
+      "title": "定装与场景参考组合提示词",
+      "mode": "template",
+      "inputs": null,
+      "schema": null,
+      "sources": [
+        {
+          "bundle": "replicate",
+          "skill": "prompt-images",
+          "sections": [
+            "Character consistency",
+            "Image editing"
+          ]
+        }
+      ],
+      "adapter": "adapters/scene-trial/SKILL.md"
+    },
+    "frame_render": {
+      "title": "镜头参考图生成请求编排",
+      "mode": "template",
+      "inputs": null,
+      "schema": null,
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "compile-generation-prompts",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        },
+        {
+          "bundle": "replicate",
+          "skill": "prompt-images",
+          "sections": [
+            "Character consistency",
+            "Image editing"
+          ]
+        }
+      ],
+      "adapter": "adapters/frame-render/SKILL.md"
+    },
+    "video_render": {
+      "title": "图片参考视频请求编排",
+      "mode": "template",
+      "inputs": null,
+      "schema": null,
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "compile-generation-prompts",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        }
+      ],
+      "adapter": "adapters/video-render/SKILL.md"
+    },
+    "film_review": {
+      "title": "成片人工验收",
+      "mode": "human",
+      "inputs": null,
+      "schema": null,
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "review-and-assemble",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        }
+      ],
+      "adapter": "adapters/film-review/SKILL.md"
+    },
+    "asset_review": {
+      "title": "基础素材人工验收",
+      "mode": "human",
+      "inputs": null,
+      "schema": null,
+      "adapter": "adapters/asset-review/SKILL.md",
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "design-production-assets",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        }
+      ]
+    }
+  }
+}

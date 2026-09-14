@@ -1,0 +1,37 @@
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+!*.env.example
+
+# Python environments, caches, and coverage
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+pytest-cache-files-*/
+.coverage
+htmlcov/
+
+# Runtime state, uploaded media, and generated deliverables
+data/
+tmp/
+output/
+artifacts/
+CURRENT_TASK_HANDOFF.md
+
+# Frontend dependencies and build output
+.pnpm-store/
+web/node_modules/
+web/.next/
+web/next-env.d.ts
+*.tsbuildinfo
+
+# Logs, archives, editors, and operating-system files
+*.log
+*.zip
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

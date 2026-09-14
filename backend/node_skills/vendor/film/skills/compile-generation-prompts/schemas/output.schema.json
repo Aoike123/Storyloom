@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Compile Generation Prompts Result",
+  "allOf": [
+    {
+      "$ref": "../../../schemas/common/result-envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "skill": {
+      "const": "compile-generation-prompts"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "shot_ir",
+        "storyboard_frames",
+        "image_requests",
+        "video_requests",
+        "provider_requests",
+        "quality_gate"
+      ],
+      "properties": {
+        "shot_ir": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["segment_id", "beat_ids", "asset_ids"],
+            "properties": {
+              "segment_id": {
+                "type": "string"
+              },
+              "beat_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "asset_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "storyboard_frames": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "image_requests": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "video_requests": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "provider_requests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "request_id",
+              "provider_id",
+              "model_id",
+              "media_type",
+              "generation_mode",
+              "prompt",
+              "asset_refs",
+              "reference_roles",
+              "parameters",
+              "compatible",
+              "issues"
+            ],
+            "properties": {
+              "request_id": {"type": "string"},
+              "provider_id": {"type": "string"},
+              "model_id": {"type": "string"},
+              "media_type": {"enum": ["image", "video", "audio"]},
+              "generation_mode": {
+                "enum": [
+                  "text-to-image",
+                  "text-to-video",
+                  "image-to-video",
+                  "first-last-frame-video",
+                  "multi-reference-video",
+                  "audio-generation"
+                ]
+              },
+              "prompt": {"type": "string"},
+              "asset_refs": {
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "reference_roles": {
+                "type": "object",
+                "properties": {
+                  "first_frame": {"type": "string"},
+                  "last_frame": {"type": "string"},
+                  "multi_reference": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                  }
+                },
+                "additionalProperties": false
+              },
+              "parameters": {"type": "object"},
+              "compatible": {"type": "boolean"},
+              "issues": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["code", "field", "message", "alternatives"],
+                  "properties": {
+                    "code": {"type": "string"},
+                    "field": {"type": "string"},
+                    "message": {"type": "string"},
+                    "alternatives": {
+                      "type": "array",
+                      "items": {"type": "string"}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "quality_gate": {
+          "type": "object",
+          "required": ["passed", "checks"],
+          "properties": {
+            "passed": {
+              "type": "boolean"
+            },
+            "checks": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "unevaluatedProperties": false
+}

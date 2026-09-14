@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Review And Assemble Request",
+  "allOf": [
+    {"$ref": "../../../schemas/common/request-envelope.schema.json"}
+  ],
+  "properties": {
+    "payload": {
+      "type": "object",
+      "required": ["generation_output", "shot_plan", "production_assets"],
+      "properties": {
+        "generation_output": {"type": "object"},
+        "shot_plan": {"type": "object"},
+        "production_assets": {"type": "object"},
+        "existing_reviews": {"type": "array", "items": {"type": "object"}},
+        "existing_timeline": {"type": "object"},
+        "editorial_policy": {
+          "type": "object",
+          "properties": {
+            "frame_rate": {"type": "number", "exclusiveMinimum": 0},
+            "resolution": {"type": "string"},
+            "allow_gaps": {"type": "boolean", "default": false}
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "unevaluatedProperties": false
+}

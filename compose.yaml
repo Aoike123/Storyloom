@@ -1,0 +1,13 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: story
+      POSTGRES_PASSWORD: story
+      POSTGRES_DB: story
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - story_db:/var/lib/postgresql/data
+volumes:
+  story_db:

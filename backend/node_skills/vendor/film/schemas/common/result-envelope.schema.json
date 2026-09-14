@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Film Production Skill Result",
+  "type": "object",
+  "required": [
+    "contract_version",
+    "request_id",
+    "skill",
+    "skill_version",
+    "status",
+    "data",
+    "diagnostics",
+    "lineage",
+    "handoff"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "1.0.0"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "skill": {
+      "type": "string",
+      "minLength": 1
+    },
+    "skill_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "status": {
+      "enum": ["completed", "partial", "failed", "blocked"]
+    },
+    "data": {
+      "type": "object"
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "./diagnostic.schema.json"
+      }
+    },
+    "lineage": {
+      "$ref": "./lineage.schema.json"
+    },
+    "handoff": {
+      "$ref": "./handoff.schema.json"
+    }
+  }
+}

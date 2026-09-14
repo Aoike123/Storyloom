@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Design Production Assets Request",
+  "allOf": [
+    {
+      "$ref": "../../../schemas/common/request-envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "payload": {
+      "type": "object",
+      "properties": {
+        "screenplay_structure": {
+          "type": "object"
+        },
+        "story_blueprint": {
+          "type": "object"
+        },
+        "existing_assets": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "requested_types": {
+          "type": "array",
+          "items": {
+            "enum": ["character", "location", "prop"]
+          },
+          "uniqueItems": true
+        }
+      },
+      "anyOf": [
+        {
+          "required": ["screenplay_structure"]
+        },
+        {
+          "required": ["story_blueprint"]
+        }
+      ],
+      "additionalProperties": false
+    }
+  },
+  "unevaluatedProperties": false
+}

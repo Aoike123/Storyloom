@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Structure Screenplay Request",
+  "allOf": [
+    {
+      "$ref": "../../../schemas/common/request-envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "payload": {
+      "type": "object",
+      "required": ["script_text"],
+      "properties": {
+        "script_text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_id": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "object",
+          "properties": {
+            "start": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "requested_stages": {
+          "type": "array",
+          "items": {
+            "enum": ["scenes", "units", "rhythm", "beats", "facts"]
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "unevaluatedProperties": false
+}

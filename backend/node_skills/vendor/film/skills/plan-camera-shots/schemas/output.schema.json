@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Plan Camera Shots Result",
+  "allOf": [
+    {
+      "$ref": "../../../schemas/common/result-envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "skill": {
+      "const": "plan-camera-shots"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "spatial_baselines",
+        "continuity_rules",
+        "segments",
+        "preflight"
+      ],
+      "properties": {
+        "spatial_baselines": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "continuity_rules": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "beat_ids",
+              "duration_seconds",
+              "framing",
+              "start_state",
+              "action",
+              "end_state"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "beat_ids": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string"
+                }
+              },
+              "duration_seconds": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "framing": {
+                "type": "string"
+              },
+              "start_state": {
+                "type": "object"
+              },
+              "action": {
+                "type": "object"
+              },
+              "end_state": {
+                "type": "object"
+              },
+              "asset_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "preflight": {
+          "type": "object",
+          "required": ["ready", "checks"],
+          "properties": {
+            "ready": {
+              "type": "boolean"
+            },
+            "checks": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "unevaluatedProperties": false
+}

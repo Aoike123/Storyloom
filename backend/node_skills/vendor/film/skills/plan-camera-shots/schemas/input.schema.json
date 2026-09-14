@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Plan Camera Shots Request",
+  "allOf": [
+    {
+      "$ref": "../../../schemas/common/request-envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "payload": {
+      "type": "object",
+      "required": ["beats"],
+      "properties": {
+        "beats": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "story_blueprint": {
+          "type": "object"
+        },
+        "production_assets": {
+          "type": "object"
+        },
+        "camera_constraints": {
+          "type": "object"
+        },
+        "duration_policy": {
+          "type": "object",
+          "required": ["mode"],
+          "properties": {
+            "mode": {
+              "enum": ["exact", "bounded", "editorial"]
+            },
+            "target_seconds": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "min_seconds": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "max_seconds": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "existing_plan": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "unevaluatedProperties": false
+}

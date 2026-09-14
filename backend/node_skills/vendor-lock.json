@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "sources": {
+    "film": {
+      "repo": "zhangzhangco/film-production-skills",
+      "commit": "47b2a6a432235e716fa2aa0d08eefae76fdb34fd",
+      "license": "MIT",
+      "skills": [
+        "structure-screenplay",
+        "shape-story-blueprint",
+        "design-production-assets",
+        "plan-camera-shots",
+        "compile-generation-prompts",
+        "review-and-assemble"
+      ],
+      "files": {
+        "LICENSE": "62ba29d49f68b4f2ebb215bfaaf372018673c9fd32f3d8e2fa94b85493148d6c",
+        "schemas/common/diagnostic.schema.json": "fa0a286d4cf059ce1e409c45998aec62e3f4b0922ad9625dbe62c6753b15302c",
+        "schemas/common/handoff.schema.json": "73266e5220ce6b6447400057191846a49393bf41195d72f4807fbf5cfd94945d",
+        "schemas/common/lineage.schema.json": "6f7cc5e4f4166b83fb5923293cb6893be3793ae86c9b643d16d2523345e44f09",
+        "schemas/common/request-envelope.schema.json": "5e6f208099bb8033fb15f072e3362d6c5f5fec722eb673517eba10be0efa78fb",
+        "schemas/common/result-envelope.schema.json": "14cc5fbcd0011d9619c07f57c462f5ab0d8f49c019976c13077ae864143a016a",
+        "skills/compile-generation-prompts/SKILL.md": "281b26f79175b79bb4f24309868ce8b2bc2a5b456cc4c8a3cbefec208dc18cd8",
+        "skills/compile-generation-prompts/references/field-guide.md": "c21f8f096e003a629ed8b643cd2d76309ed3aa5196eb5c3e71056e40579bf47d",
+        "skills/compile-generation-prompts/schemas/input.schema.json": "d131c732a1584c33c24c35955b481084633ca8c493073c483291505d2ed30d46",
+        "skills/compile-generation-prompts/schemas/output.schema.json": "f2db0e39eb13c3764a5175e02d4675ac9c617bd8f14f8e2708fae9c0f3922b68",
+        "skills/design-production-assets/SKILL.md": "fb53e892c5c3e1809a5cc3521b78822cae3f9b6b81449e4bf28464e15bf9eb0f",
+        "skills/design-production-assets/references/field-guide.md": "e5ff61d9339667e160be7baac483660a0f1f8dd630b4867743f1dd69614c92f6",
+        "skills/design-production-assets/schemas/input.schema.json": "21b835ced4b73f8c503c59274297d3b6bff607beb2c35a13ab69d36301059998",
+        "skills/design-production-assets/schemas/output.schema.json": "c161e7b68d1f989876622f79298430ab1b78bd2a8bdd4eb78b4822fb1822f98b",
+        "skills/plan-camera-shots/SKILL.md": "d498f8468fdd82ea0c41252d741534d15b66288cbca689bd9eeb34778176a7f3",
+        "skills/plan-camera-shots/references/field-guide.md": "0067a353d258d2528b0fe47c2e00aba2a38624510e28183db79287019ac1edc6",
+        "skills/plan-camera-shots/schemas/input.schema.json": "1d35e18b123fb081956bfb2a1c6f0fc213c785c087dcfc94d5947be1863e8ec8",
+        "skills/plan-camera-shots/schemas/output.schema.json": "73cb349cee321d608870bc9f32c0012dd292ad34d27f663b31be327df286ac36",
+        "skills/review-and-assemble/SKILL.md": "761e82aab0b69365d36d93195b7fa5857c75e071c5e1f45c9cfdbcedf50dca12",
+        "skills/review-and-assemble/references/field-guide.md": "8a649770a8fb22c9c511c58151d8cb3c90afb5f4f7ee4146410d1646f41ec7d3",
+        "skills/review-and-assemble/schemas/input.schema.json": "84cba8b55fe5354c064f631e14bdd75a6b1e8e6db548190e66b77108cc27eb37",
+        "skills/review-and-assemble/schemas/output.schema.json": "c0e770ecd93d51d6f321e853ab963b4326cb7238b8eed3c9282894551fed617e",
+        "skills/shape-story-blueprint/SKILL.md": "48df45b81c052770362e83534bdead77d537b585f56f2317049f5e5720f2a673",
+        "skills/shape-story-blueprint/references/field-guide.md": "1535de1cdb3eac9d54a307e6e4fbaf90343e07a0e3f7cdf1767bacf4b0d459ac",
+        "skills/shape-story-blueprint/schemas/input.schema.json": "185e84ba01188b18b677949d6a3253c8a1b4dc0fcc403ccc162fec209d912a0c",
+        "skills/shape-story-blueprint/schemas/output.schema.json": "8fb0b1c8bf61ef5755c13a4418d16742d926a034cee3f05839b644f261c822d5",
+        "skills/structure-screenplay/SKILL.md": "9bdaaa5a9c081b04bb321f65f616ba2cad3c180b96f8b4f93dd7b514b552bb1e",
+        "skills/structure-screenplay/references/field-guide.md": "a332edb15904455d0ae65f7969e3be07447af4f0fdfc82139ff6f5c0539ab605",
+        "skills/structure-screenplay/schemas/input.schema.json": "1054e02875416090860d0201810fd560f79562c1c6bfb373834982ba1a8b5d6f",
+        "skills/structure-screenplay/schemas/output.schema.json": "a9594cae80511e57afba2243f780455a8f833e3810c319a93ac1a8abc8e25545"
+      }
+    },
+    "replicate": {
+      "repo": "replicate/skills",
+      "commit": "2f36e415965ae63baa1c9f6635888092bcd771d3",
+      "license": "Apache-2.0",
+      "skills": [
+        "prompt-images"
+      ],
+      "files": {
+        "LICENSE": "f7fe9e559ee33341e61df0bc9c31b7bcf967a4350feeb9d8cbb48bf3ea5f8a6a",
+        "skills/prompt-images/SKILL.md": "fd20fc7552f7ca550776bd320de028ae0fd222a038cb14ebb2943b231099b3ae"
+      }
+    }
+  }
+}
