@@ -31,6 +31,7 @@ export default function StyleProgress({task, detailed = false, connection}: {tas
   const phase = live?.phase;
   const step = done ? 4 : phase === 'ready' || phase === 'validating' || phase === 'buffered' ? 3 : live?.options?.length ? 2 : phase ? 1 : 0;
   const message = task.message === '等待执行' && task.status === 'running' ? '模型请求已开始，正在等待内容返回' : task.message;
+  const waitingSummary = problem ? '这次尚未收到可展示的构思内容。' : done ? '本次模型未提供构思摘要，可直接查看下方方案。' : phase === 'connected' ? '模型已连接，正在等待第一段可展示的构思内容。' : phase === 'reasoning' ? '模型正在构思，首段可展示内容返回后会继续更新。' : '模型会先概括故事气质与画风方向，再逐个展开方案。';
 
   return <section className={'task-progress style-progress' + (problem ? ' has-problem' : '')} aria-label="风格构思进展">
     <div className="feedback-title"><span>{active ? <LoaderCircle size={15} className="feedback-spin"/> : problem ? <CircleAlert size={15}/> : done ? <Check size={15}/> : <Sparkles size={15}/>}推荐创作风格</span>
@@ -43,8 +44,7 @@ export default function StyleProgress({task, detailed = false, connection}: {tas
       <div className={'style-thinking' + (active ? ' is-live' : '')}>
         <div className="style-thinking-label"><Sparkles size={13}/><span>构思摘要</span><small>{active && live?.summary ? '正在更新' : done ? live?.summary ? '已保存' : '本次未提供' : problem ? '保留的草稿' : '等待模型返回'}</small></div>
         <StreamRegion active={active} streamKey={task.id} className="style-thinking-body" tabIndex={live?.summary ? 0 : undefined} aria-label="模型生成的构思摘要">
-          {live?.summary ? <p><StreamText text={live.summary} active={active} streamKey={task.id + ':summary'} instant={problem}/></p>
-            : <p className="style-thinking-empty">{problem ? '这次尚未收到可展示的构思内容。' : done ? '本次模型未提供构思摘要，可直接查看下方方案。' : '模型会先概括故事气质与画风方向，再逐个展开方案。返回的内容会显示在这里。'}</p>}
+          <p className={live?.summary ? '' : 'style-thinking-empty'}><StreamText text={live?.summary || waitingSummary} active={active} streamKey={task.id + (live?.summary ? ':summary' : ':waiting:' + (phase || task.status))} instant={problem || done}/></p>
         </StreamRegion>
       </div>
       <p className="style-stream-note">{done ? '方案已完成检查，选择喜欢的方向即可填入下方。' : problem ? '已收到的内容保留为草稿，尚不能作为完整方案使用。' : connection === 'fallback' ? '实时连接暂时中断，正在定期同步已保存的进展。' : phase === 'buffered' ? '本次模型一次性返回内容，正在完成检查。' : now - (live?.updated_at || task.created || now) > 20 ? '还在等待模型返回下一段内容，已收到的内容会保留。' : live?.options?.length ? '方案正在展开，检查完成后即可选择。' : '收到构思内容后会自动更新，可以随时离开再回来。'}</p>

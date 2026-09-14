@@ -205,7 +205,7 @@ def trial(pid:str,body:Trial):
         if run and run.data.get('direct_reference_inputs'):raise HTTPException(409,'当前流程不再创建试拍，直接使用基础参考图生成分镜。')
     if not body.confirm_paid:raise HTTPException(422,'请确认试拍生图费用。')
     cfg=settings()
-    if not cfg['paid_enabled'] or not cfg['image_configured']:raise HTTPException(422,'请配置生图接口。')
+    if not cfg.get('image_paid_enabled',cfg['paid_enabled']) or not cfg['image_configured']:raise HTTPException(422,'请配置生图接口。')
     with Session.begin() as db:
         project(db,pid);r,token=snapshot(db,pid)
         if token!=body.stamp:raise HTTPException(409,'设定已变更。')

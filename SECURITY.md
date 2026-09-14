@@ -19,9 +19,9 @@ in a public issue.
 The current demo intentionally has no account or tenant isolation. Its supplied
 public stack terminates HTTPS at Caddy, fixes provider transports and model ids
 in application code, encrypts short-lived BYOK sessions, and places operator
-keys behind a daily reservation budget. Do not publish ports 3000 or 8000
-directly, bypass the reverse proxy, or run a public pool without a conservative
-`PUBLIC_POOL_DAILY_BUDGET_CNY`.
+keys behind independent daily reservation budgets. Do not publish ports 3000
+or 8000 directly, bypass the reverse proxy, or run a public pool without
+conservative `PUBLIC_POOL_{LLM,IMAGE,VIDEO}_DAILY_BUDGET_CNY` limits.
 
 The anonymous workspace is shared: visitors can see and change common works.
 There is no CAPTCHA, per-IP throttling, abuse detection, or content moderation

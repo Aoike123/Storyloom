@@ -5,7 +5,7 @@ import httpx
 from .environment import model_config, env_file
 from .model_access import (
     ModelAccessError,
-    access_paid_state,
+    access_paid_states,
     authorize_call,
     mark_public_provider_unavailable,
     public_demo_mode,
@@ -22,14 +22,15 @@ class ModelOutputError(ProviderError):
 def settings():
     cfg=model_config()
     paid=cfg.get('ALLOW_PAID_CALLS','false').lower()=='true'
-    scoped=access_paid_state()
-    if scoped is not None:paid=scoped
+    scoped=access_paid_states()
+    if scoped is not None:paid=scoped['all']
     result={'llm_configured':all(cfg.get(k) for k in ['LLM_BASE_URL','LLM_MODEL','LLM_API_KEY']),
             'image_configured':cfg.get('IMAGE_PROVIDER')=='siliconflow' and all(cfg.get(k) for k in ['IMAGE_ENDPOINT','IMAGE_MODEL','IMAGE_API_KEY']),
             'image_model':cfg.get('IMAGE_MODEL',''),
             'video_configured':all(cfg.get(k) for k in ['VIDEO_ENDPOINT','VIDEO_MODEL','VIDEO_API_KEY']),
             'llm_model':cfg.get('LLM_MODEL',''), 'video_model':cfg.get('VIDEO_MODEL',''),
             'paid_enabled':paid,
+            **{f'{kind}_paid_enabled':scoped[kind] if scoped is not None else paid for kind in ('llm','image','video')},
             'config_file':env_file().name,'llm_fast_model':cfg.get('LLM_FAST_MODEL') or cfg.get('LLM_MODEL',''),
             'image_adapter':'硅基流动文生图',
             'video_adapter':('MiniMax H3 V2' if cfg.get('VIDEO_PROVIDER','ark')=='minimax' else '火山方舟 Tasks（待真实验证）')}
@@ -38,7 +39,7 @@ def settings():
 
 def reserve_call(kind, task_id, model=None):
     cfg=settings()
-    if not cfg['paid_enabled']: raise ProviderError('付费调用未开启，请在模型连接页开启后再尝试。')
+    if not cfg.get(f'{kind}_paid_enabled',cfg['paid_enabled']): raise ProviderError('该模型的付费调用未开启或共享额度不足，请在模型连接页检查后再尝试。')
     if not cfg[f'{kind}_configured']: raise ProviderError('尚未配置该模型的完整 API 信息。')
     try:access=authorize_call(kind)
     except ModelAccessError as exc:raise ProviderError(str(exc)) from None
@@ -98,7 +99,7 @@ def chat_json(system,payload,task_id,profile='default',*,on_event=None):
                     mark_public_provider_unavailable('llm',response.status_code)
                     raise ProviderError(f'语言模型返回 HTTP {response.status_code}；请核对模型权限与流式接口支持情况。')
                 on_event('connected','')
-                data=read_completion(response,on_event)
+                data=read_completion(response,on_event,timeout)
         else:
             response=httpx.post(target,**request)
             if response.status_code>=300:

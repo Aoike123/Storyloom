@@ -41,6 +41,13 @@ _RESERVES = {
     "image": ("PUBLIC_POOL_IMAGE_RESERVE_CNY", "0.50"),
     "video": ("PUBLIC_POOL_VIDEO_RESERVE_CNY", "6.00"),
 }
+_BUDGETS = {
+    "llm": ("PUBLIC_POOL_LLM_DAILY_BUDGET_CNY", "0"),
+    "image": ("PUBLIC_POOL_IMAGE_DAILY_BUDGET_CNY", "0"),
+    "video": ("PUBLIC_POOL_VIDEO_DAILY_BUDGET_CNY", "0"),
+}
+_PROVIDER_KEYS = {"llm": "LLM_API_KEY", "image": "IMAGE_API_KEY", "video": "VIDEO_API_KEY"}
+_PROVIDER_NAMES = {"llm": "DeepSeek", "image": "硅基流动", "video": "MiniMax"}
 
 
 class ModelAccessError(Exception):
@@ -219,16 +226,18 @@ def _pool_day(now: datetime | None = None) -> str:
     return (now or datetime.now(_SHANGHAI)).date().isoformat()
 
 
-def _pool_record_id(day: str) -> str:
-    return "public_pool_" + day.replace("-", "")
+def _pool_record_id(day: str, kind: str) -> str:
+    return f'public_pool_{day.replace("-", "")}_{kind}'
 
 
-def _pool_state(day: str) -> dict:
+def _pool_state(day: str, kind: str) -> dict:
     from .db import Record, Session
 
     with Session() as db:
-        row = db.get(Record, _pool_record_id(day))
-        return dict(row.data) if row and row.kind == POOL_KIND else {"day": day, "reserved_cny": "0.00", "blocked": {}}
+        row = db.get(Record, _pool_record_id(day, kind))
+        return dict(row.data) if row and row.kind == POOL_KIND else {
+            "day": day, "kind": kind, "reserved_cny": "0.00", "blocked": {},
+        }
 
 
 def _next_reset_at() -> float:
@@ -298,49 +307,90 @@ def public_pool_status(*, refresh: bool = True) -> dict:
     from .environment import base_model_config
 
     day = _pool_day()
-    state = _pool_state(day)
+    enabled = _enabled("PUBLIC_POOL_ENABLED")
+    values: dict[str, dict] = {}
     try:
-        limit = _decimal_env("PUBLIC_POOL_DAILY_BUDGET_CNY", "0")
-        reserves = {kind: _decimal_env(name, default) for kind, (name, default) in _RESERVES.items()}
-        used = Decimal(str(state.get("reserved_cny", "0"))).quantize(Decimal("0.01"))
+        for kind in _BUDGETS:
+            state = _pool_state(day, kind)
+            limit = _decimal_env(*_BUDGETS[kind])
+            reserve = _decimal_env(*_RESERVES[kind])
+            used = Decimal(str(state.get("reserved_cny", "0"))).quantize(Decimal("0.01"))
+            if used < 0:
+                raise InvalidOperation
+            values[kind] = {
+                "state": state,
+                "limit": limit,
+                "reserve": reserve,
+                "used": used,
+                "remaining": max(Decimal("0"), limit - used),
+            }
     except (ModelAccessError, InvalidOperation):
         return {
             "available": False, "reason": "共享池预算配置无效", "day": day,
-            "daily_limit_cny": "0.00", "used_cny": "0.00", "remaining_cny": "0.00",
             "next_reset_at": _next_reset_at(), "providers": [],
         }
-    remaining = max(Decimal("0"), limit - used)
+
     base = base_model_config()
-    keys_ready = all(base.get(key) for key in _KEY_FIELDS)
-    blocked = state.get("blocked", {}) if isinstance(state.get("blocked"), dict) else {}
-    deepseek = _deepseek_balance(base, refresh) if _enabled("PUBLIC_POOL_ENABLED") and keys_ready else {"state": "not_checked", "available": keys_ready}
-    checks = [
-        {"kind": "llm", "provider": "DeepSeek", "check": deepseek["state"], "available": bool(deepseek["available"]) and "llm" not in blocked},
-        {"kind": "image", "provider": "硅基流动", "check": "daily_budget", "available": bool(base.get("IMAGE_API_KEY")) and "image" not in blocked},
-        {"kind": "video", "provider": "MiniMax", "check": "daily_budget", "available": bool(base.get("VIDEO_API_KEY")) and "video" not in blocked},
-    ]
-    enabled = _enabled("PUBLIC_POOL_ENABLED")
-    smallest = min(reserves.values()) if reserves else Decimal("0.01")
-    available = enabled and keys_ready and limit > 0 and remaining >= smallest and all(item["available"] for item in checks)
+    llm_ready = bool(base.get(_PROVIDER_KEYS["llm"]))
+    deepseek = _deepseek_balance(base, refresh) if enabled and llm_ready else {
+        "state": "not_checked" if not enabled else "missing_key",
+        "available": llm_ready,
+    }
+    checks = []
+    for kind, item in values.items():
+        key_ready = bool(base.get(_PROVIDER_KEYS[kind]))
+        blocked = item["state"].get("blocked")
+        budget_ready = item["limit"] > 0 and item["reserve"] > 0 and item["remaining"] >= item["reserve"]
+        balance_ready = bool(deepseek["available"]) if kind == "llm" else True
+        available = enabled and key_ready and budget_ready and not blocked and balance_ready
+        if not enabled:
+            reason = "共享池未开启"
+            check = "disabled"
+        elif not key_ready:
+            reason = "共享 Key 未配置"
+            check = "missing_key"
+        elif blocked:
+            reason = "供应商 Key 今日已暂停"
+            check = "provider_error"
+        elif item["limit"] <= 0:
+            reason = "今日额度未配置"
+            check = "daily_budget"
+        elif item["reserve"] <= 0:
+            reason = "单次预留金额配置无效"
+            check = "daily_budget"
+        elif item["remaining"] < item["reserve"]:
+            reason = "今日额度不足"
+            check = "daily_budget"
+        elif kind == "llm" and not balance_ready:
+            reason = "暂时无法确认余额"
+            check = deepseek["state"]
+        else:
+            reason = "可用"
+            check = deepseek["state"] if kind == "llm" else "daily_budget"
+        checks.append({
+            "kind": kind,
+            "provider": _PROVIDER_NAMES[kind],
+            "check": check,
+            "available": available,
+            "reason": reason,
+            "daily_limit_cny": f'{item["limit"]:.2f}',
+            "reserve_cny": f'{item["reserve"]:.2f}',
+            "used_cny": f'{item["used"]:.2f}',
+            "remaining_cny": f'{item["remaining"]:.2f}',
+        })
+
+    available = bool(checks) and all(item["available"] for item in checks)
     if not enabled:
         reason = "共享体验池暂未开启"
-    elif not keys_ready:
-        reason = "共享体验池尚未配置完整"
-    elif limit <= 0 or remaining < smallest:
-        reason = "今日共享额度已用完"
-    elif blocked:
-        reason = "共享供应商额度不足，今日体验池已暂停"
-    elif not deepseek["available"]:
-        reason = "暂时无法确认共享文本模型余额"
+    elif not available:
+        unavailable = next(item for item in checks if not item["available"])
+        reason = f'{unavailable["provider"]}：{unavailable["reason"]}'
     else:
-        reason = "今日共享额度可用，先到先得"
+        reason = "三个共享 Key 今日额度均可用，先到先得"
     return {
         "available": available,
         "reason": reason,
         "day": day,
-        "daily_limit_cny": f"{limit:.2f}",
-        "used_cny": f"{min(used, limit):.2f}",
-        "remaining_cny": f"{remaining:.2f}",
         "next_reset_at": _next_reset_at(),
         "providers": checks,
     }
@@ -352,19 +402,21 @@ def _reserve_public_call(kind: str) -> dict:
     # This check includes the cached provider-balance result. The transaction
     # below repeats the monetary comparison while holding the worker lock.
     status = public_pool_status(refresh=False)
-    if not status["available"]:
-        raise ModelAccessError(status["reason"])
+    provider = next((item for item in status["providers"] if item["kind"] == kind), None)
+    if not provider or not provider["available"]:
+        raise ModelAccessError(provider["reason"] if provider else status["reason"])
     cost = _decimal_env(*_RESERVES[kind])
-    limit = _decimal_env("PUBLIC_POOL_DAILY_BUDGET_CNY", "0")
+    limit = _decimal_env(*_BUDGETS[kind])
     day = _pool_day()
     from .db import Record, Session
 
     with _pool_lock, Session.begin() as db:
-        row = db.get(Record, _pool_record_id(day))
-        data = dict(row.data) if row else {"day": day, "reserved_cny": "0.00", "blocked": {}}
-        blocked = data.get("blocked", {}) if isinstance(data.get("blocked"), dict) else {}
+        row = db.get(Record, _pool_record_id(day, kind))
+        data = dict(row.data) if row else {
+            "day": day, "kind": kind, "reserved_cny": "0.00", "blocked": {},
+        }
         used = Decimal(str(data.get("reserved_cny", "0")))
-        if kind in blocked:
+        if data.get("blocked"):
             raise ModelAccessError("该共享供应商今日已暂停，请改用自己的 Key。")
         if used + cost > limit:
             raise ModelAccessError("今日共享额度不足以开始这次调用，请改用自己的 Key。")
@@ -372,8 +424,8 @@ def _reserve_public_call(kind: str) -> dict:
         if row:
             row.data = data
         else:
-            db.add(Record(id=_pool_record_id(day), kind=POOL_KIND, data=data))
-    return {"mode": "public", "pool_day": day, "reserved_cny": f"{cost:.2f}"}
+            db.add(Record(id=_pool_record_id(day, kind), kind=POOL_KIND, data=data))
+    return {"mode": "public", "pool_day": day, "pool_kind": kind, "reserved_cny": f"{cost:.2f}"}
 
 
 def authorize_call(kind: str) -> dict:
@@ -391,32 +443,39 @@ def authorize_call(kind: str) -> dict:
 
 
 def access_paid_state() -> bool | None:
+    states = access_paid_states()
+    return states["all"] if states is not None else None
+
+
+def access_paid_states() -> dict[str, bool] | None:
     record = _access_record()
     if not record:
-        return False if public_demo_mode() else None
+        return {"all": False, **{kind: False for kind in _BUDGETS}} if public_demo_mode() else None
     if record.get("mode") == "own":
-        return True
+        return {"all": True, **{kind: True for kind in _BUDGETS}}
     if record.get("mode") == "public":
-        return bool(public_pool_status(refresh=False)["available"])
-    return False
+        status = public_pool_status(refresh=False)
+        by_kind = {item["kind"]: bool(item["available"]) for item in status["providers"]}
+        return {"all": bool(status["available"]), **{kind: by_kind.get(kind, False) for kind in _BUDGETS}}
+    return {"all": False, **{kind: False for kind in _BUDGETS}}
 
 
 def mark_public_provider_unavailable(kind: str, status_code: int) -> None:
-    if current_access_mode() != "public" or status_code not in (401, 402, 403):
+    if kind not in _BUDGETS or current_access_mode() != "public" or status_code not in (401, 402, 403):
         return
     day = _pool_day()
     from .db import Record, Session
 
     with _pool_lock, Session.begin() as db:
-        row = db.get(Record, _pool_record_id(day))
-        data = dict(row.data) if row else {"day": day, "reserved_cny": "0.00", "blocked": {}}
-        blocked = dict(data.get("blocked", {}))
-        blocked[kind] = {"at": time.time(), "status": status_code}
-        data["blocked"] = blocked
+        row = db.get(Record, _pool_record_id(day, kind))
+        data = dict(row.data) if row else {
+            "day": day, "kind": kind, "reserved_cny": "0.00", "blocked": {},
+        }
+        data["blocked"] = {"at": time.time(), "status": status_code}
         if row:
             row.data = data
         else:
-            db.add(Record(id=_pool_record_id(day), kind=POOL_KIND, data=data))
+            db.add(Record(id=_pool_record_id(day, kind), kind=POOL_KIND, data=data))
 
 
 def _create_session(body: SessionRequest) -> dict:

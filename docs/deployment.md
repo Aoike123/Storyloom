@@ -6,9 +6,9 @@ persistent named volumes. Only ports 80 and 443 are published.
 
 Visitors first open the model-access page and choose one of two modes:
 
-- **Shared pool** — uses the operator's three API keys while the daily internal
-  budget and provider checks are available. Reservations are first come, first
-  served. Once depleted, the option is disabled.
+- **Shared pool** — uses the operator's three API keys while each key's daily
+  internal budget and provider check are available. Each provider is metered
+  independently, and reservations are first come, first served.
 - **Bring your own keys** — accepts only DeepSeek, SiliconFlow, and MiniMax keys.
   Provider endpoints and model identifiers are fixed by the application.
 
@@ -60,19 +60,22 @@ The public deployment locks their transports and models to the product-tested
 combination in `backend/environment.py`; visitors cannot submit alternate URLs
 or model ids.
 
-Set `PUBLIC_POOL_DAILY_BUDGET_CNY` to the maximum amount Storyloom may reserve
-each Shanghai calendar day. The three `PUBLIC_POOL_*_RESERVE_CNY` values are
-conservative per-submission estimates, not provider invoices. Every attempted
-provider submission keeps its reservation, even if the provider later rejects
-it, so the local cap fails closed rather than overspending.
+Set `PUBLIC_POOL_LLM_DAILY_BUDGET_CNY`,
+`PUBLIC_POOL_IMAGE_DAILY_BUDGET_CNY`, and
+`PUBLIC_POOL_VIDEO_DAILY_BUDGET_CNY` to the maximum amounts Storyloom may
+reserve from the corresponding operator key each Shanghai calendar day. The
+three `PUBLIC_POOL_*_RESERVE_CNY` values are conservative per-submission
+estimates, not provider invoices. Every attempted provider submission keeps its
+reservation, even if the provider later rejects it, so each local cap fails
+closed rather than overspending from that key.
 
 DeepSeek exposes an official balance endpoint, so the pool verifies that account
 before it can be selected. SiliconFlow retired its `/user/info` balance endpoint
 on 2026-08-14 and MiniMax does not currently document an equivalent general
-balance API. Those two providers are guarded by the daily reservation cap; an
-authentication, payment, or permission response (HTTP 401/402/403) disables the
-shared pool for the remainder of that Shanghai day. Their dashboards remain the
-source of truth for recharge amounts.
+balance API. Those two providers are guarded by their independent daily
+reservation caps; an authentication, payment, or permission response (HTTP
+401/402/403) disables only that provider's shared key for the remainder of that
+Shanghai day. Their dashboards remain the source of truth for recharge amounts.
 
 Set `PUBLIC_POOL_ENABLED=false` at any time to offer BYOK only.
 

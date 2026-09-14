@@ -51,7 +51,7 @@ class Command(BaseModel):
 @router.post('/{pid}/shots/{sid}/video')
 def generate_video(pid:str,sid:str,body:Command):
     cfg=settings()
-    if not body.confirm_paid or not cfg['paid_enabled'] or not cfg['video_configured']:raise HTTPException(422,'请确认视频生成费用，并配置视频模型。')
+    if not body.confirm_paid or not cfg.get('video_paid_enabled',cfg['paid_enabled']) or not cfg['video_configured']:raise HTTPException(422,'请确认视频生成费用，并配置视频模型。')
     if cfg.get('editable',{}).get('VIDEO_PROVIDER')!='minimax':raise HTTPException(422,'当前图片参考视频流程使用 MiniMax H3。')
     with Session.begin() as db:
         p=project(db,pid)

@@ -4,13 +4,20 @@ import {useEffect, useState} from 'react';
 import {clearModelAccess, modelAccessHeaders, readModelAccess, saveModelAccess, type ModelAccessMode} from './model-access';
 
 type Provider = {kind: string; provider: string; model: string; purpose: string};
-type Pool = {
+type PoolProvider = {
+  kind: string;
+  provider: string;
   available: boolean;
   reason: string;
   daily_limit_cny: string;
   used_cny: string;
   remaining_cny: string;
+};
+type Pool = {
+  available: boolean;
+  reason: string;
   next_reset_at: number;
+  providers: PoolProvider[];
 };
 type AccessStatus = {
   fixed_providers: Provider[];
@@ -97,9 +104,12 @@ export default function ModelConfig({onSaved}: {onSaved?: () => Promise<void>}) 
         <div className="model-access-options">
           <button type="button" className={'model-access-option ' + (mode === 'public' ? 'is-selected' : '')} disabled={!status?.pool.available} onClick={() => setMode('public')} aria-pressed={mode === 'public'}>
             <span>共享体验池<em>{status?.pool.available ? '可用' : '不可用'}</em></span>
-            <strong>{status ? '¥' + status.pool.remaining_cny : '读取中…'}</strong>
+            <strong>{status ? '三个 Key 独立计量' : '读取中…'}</strong>
             <p>{status?.pool.reason || '正在核对今日额度与供应商状态'}</p>
-            {status && <small>今日预算 ¥{status.pool.daily_limit_cny} · 已预留 ¥{status.pool.used_cny}</small>}
+            {status && <div className="model-access-pool-quotas">{status.pool.providers.map(provider => <span key={provider.kind}>
+              <b>{provider.provider}<em>{provider.available ? '可用' : provider.reason}</em></b>
+              <small>剩余 ¥{provider.remaining_cny} / ¥{provider.daily_limit_cny}</small>
+            </span>)}</div>}
           </button>
           <button type="button" className={'model-access-option ' + (mode === 'own' ? 'is-selected' : '')} onClick={() => setMode('own')} aria-pressed={mode === 'own'}>
             <span>使用自己的 Key<em>稳定</em></span>
@@ -115,9 +125,9 @@ export default function ModelConfig({onSaved}: {onSaved?: () => Promise<void>}) 
         </article>)}</div>
 
         {mode === 'own' && <div className="model-access-keys">
-          <label><span>DeepSeek API Key</span><input type="password" autoComplete="off" value={keys.deepseek} onChange={event => setKeys({...keys, deepseek: event.target.value})} placeholder="用于文本理解与创作"/></label>
-          <label><span>硅基流动 API Key</span><input type="password" autoComplete="off" value={keys.siliconflow} onChange={event => setKeys({...keys, siliconflow: event.target.value})} placeholder="用于人物与场景生图"/></label>
-          <label><span>MiniMax API Key</span><input type="password" autoComplete="off" value={keys.minimax} onChange={event => setKeys({...keys, minimax: event.target.value})} placeholder="用于镜头视频生成"/></label>
+          <div className="model-access-key-field"><div><label htmlFor="deepseek-key">DeepSeek API Key</label><a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer">前往获取 ↗</a></div><input id="deepseek-key" type="password" autoComplete="off" value={keys.deepseek} onChange={event => setKeys({...keys, deepseek: event.target.value})} placeholder="用于文本理解与创作"/></div>
+          <div className="model-access-key-field"><div><label htmlFor="siliconflow-key">硅基流动 API Key</label><a href="https://cloud.siliconflow.cn/account/ak" target="_blank" rel="noopener noreferrer">前往获取 ↗</a></div><input id="siliconflow-key" type="password" autoComplete="off" value={keys.siliconflow} onChange={event => setKeys({...keys, siliconflow: event.target.value})} placeholder="用于人物与场景生图"/></div>
+          <div className="model-access-key-field"><div><label htmlFor="minimax-key">MiniMax API Key</label><a href="https://platform.minimax.cn/console/access?tab=api-keys" target="_blank" rel="noopener noreferrer">前往获取 ↗</a></div><input id="minimax-key" type="password" autoComplete="off" value={keys.minimax} onChange={event => setKeys({...keys, minimax: event.target.value})} placeholder="用于镜头视频生成"/></div>
           <p>Key 只发送给叙间后端，并以部署密钥加密保存；后台任务完成前请勿撤销供应商 Key。临时会话最长保留 24 小时。</p>
         </div>}
 

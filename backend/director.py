@@ -219,7 +219,7 @@ def projects(source_id:str):
 @router.post('')
 def create(body:Create):
     cfg=settings()
-    if not body.confirm_paid or not cfg['paid_enabled'] or not cfg['llm_configured']:raise HTTPException(422,'请配置语言模型并确认本次导演阐述收费调用。')
+    if not body.confirm_paid or not cfg.get('llm_paid_enabled',cfg['paid_enabled']) or not cfg['llm_configured']:raise HTTPException(422,'请配置语言模型并确认本次导演阐述收费调用。')
     with Session.begin() as db:
         source=db.get(Record,body.source_id)
         if not source or source.kind!='story_source':raise HTTPException(404,'请先保存故事到本地工作台。')
@@ -299,7 +299,7 @@ class Frame(BaseModel):
 @router.post('/projects/{project_id}/shots/{shot_id}/image')
 def frame(project_id:str,shot_id:str,body:Frame):
     cfg=settings()
-    if not body.confirm_paid or not cfg['paid_enabled'] or not cfg['image_configured']:raise HTTPException(422,'请配置生图并确认收费。')
+    if not body.confirm_paid or not cfg.get('image_paid_enabled',cfg['paid_enabled']) or not cfg['image_configured']:raise HTTPException(422,'请配置生图并确认收费。')
     with Session.begin() as db:
         row=db.get(Record,project_id)
         if not row or row.kind!='director':raise HTTPException(404,'导演方案不存在。')
@@ -353,7 +353,7 @@ class BoardStart(BaseModel):
 @router.post('/projects/{project_id}/storyboard')
 def start_storyboard(project_id:str,body:BoardStart):
     cfg=settings()
-    if not body.confirm_paid or not cfg['paid_enabled'] or not cfg['llm_configured']:raise HTTPException(422,'请配置文本模型并确认分镜与预审调用。')
+    if not body.confirm_paid or not cfg.get('llm_paid_enabled',cfg['paid_enabled']) or not cfg['llm_configured']:raise HTTPException(422,'请配置文本模型并确认分镜与预审调用。')
     from .preproduction import ready
     with Session.begin() as db:
         row=db.get(Record,project_id)
