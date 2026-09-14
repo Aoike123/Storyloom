@@ -18,21 +18,31 @@ type Props = {
 };
 
 export default function ReaderHero({items, loading, activeId, onActiveChange, onOpen}: Props) {
-  const [autoPaused, setAutoPaused] = useState(false);
+  const [pointerInside, setPointerInside] = useState(false);
+  const [focusInside, setFocusInside] = useState(false);
+  const [pageVisible, setPageVisible] = useState(true);
   const current = Math.max(0, items.findIndex(item => item.id === activeId));
+  const nextId = items.length > 1 ? items[wrapIndex(current + 1, items.length)].id : '';
+  const autoPaused = pointerInside || focusInside || !pageVisible;
 
   function activate(id: string) {
     if (id !== activeId) onActiveChange(id);
   }
 
   useEffect(() => {
-    if (autoPaused || items.length < 2 || reducedMotion()) return;
+    if (autoPaused || !nextId || reducedMotion()) return;
     const timer = window.setTimeout(() => {
-      const next = wrapIndex(current + 1, items.length);
-      onActiveChange(items[next].id);
+      onActiveChange(nextId);
     }, 4200);
     return () => window.clearTimeout(timer);
-  }, [activeId, autoPaused, current, items, onActiveChange]);
+  }, [autoPaused, nextId, onActiveChange]);
+
+  useEffect(() => {
+    const updateVisibility = () => setPageVisible(document.visibilityState === 'visible');
+    updateVisibility();
+    document.addEventListener('visibilitychange', updateVisibility);
+    return () => document.removeEventListener('visibilitychange', updateVisibility);
+  }, []);
 
   return <section className="reader-hero catalog-hero reader-browse-hero" aria-labelledby="reader-welcome">
     <div className="reader-hero-copy">
@@ -49,9 +59,9 @@ export default function ReaderHero({items, loading, activeId, onActiveChange, on
         <i/><i/><i/><span className="feedback-sr-only">正在准备故事封面</span>
       </div> : items.length ? <>
         <ol className="reader-cover-deck" aria-label="循环翻看故事封面" aria-roledescription="轮播图" data-count={items.length}
-          onPointerEnter={() => setAutoPaused(true)} onPointerLeave={() => setAutoPaused(false)}
-          onFocusCapture={() => setAutoPaused(true)} onBlurCapture={event => {
-            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setAutoPaused(false);
+          onMouseEnter={() => setPointerInside(true)} onMouseLeave={() => setPointerInside(false)}
+          onFocusCapture={() => setFocusInside(true)} onBlurCapture={event => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocusInside(false);
           }}>
           {items.map((item, index) => {
             const playable = canWatch(item);
