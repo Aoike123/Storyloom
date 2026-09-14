@@ -76,6 +76,11 @@ source of truth for recharge amounts.
 
 Set `PUBLIC_POOL_ENABLED=false` at any time to offer BYOK only.
 
+If Docker Hub is unreachable from a mainland China server, set
+`DOCKER_HUB_PREFIX=m.daocloud.io/docker.io/library/` in `.env.production`.
+This changes only Storyloom's four base images and does not modify the Docker
+daemon's global registry configuration.
+
 ## 3. Deploy
 
 ```bash

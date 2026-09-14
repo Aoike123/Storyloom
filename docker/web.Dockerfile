@@ -1,4 +1,5 @@
-FROM node:22-bookworm-slim AS build
+ARG DOCKER_HUB_PREFIX=
+FROM ${DOCKER_HUB_PREFIX}node:22-bookworm-slim AS build
 
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app
@@ -10,7 +11,7 @@ COPY web/ ./
 RUN pnpm build \
     && pnpm prune --prod
 
-FROM node:22-bookworm-slim AS runtime
+FROM ${DOCKER_HUB_PREFIX}node:22-bookworm-slim AS runtime
 
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1

@@ -1,5 +1,8 @@
 name: storyloom
 
+x-build-args: &build-args
+  DOCKER_HUB_PREFIX: "${DOCKER_HUB_PREFIX:-}"
+
 x-app-environment: &app-environment
   DATABASE_URL: "postgresql+psycopg://storyloom:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/storyloom"
   DATA_DIR: /app/data
@@ -27,7 +30,7 @@ x-logging: &default-logging
 
 services:
   db:
-    image: postgres:17-alpine
+    image: "${DOCKER_HUB_PREFIX:-}postgres:17-alpine"
     restart: unless-stopped
     environment:
       POSTGRES_USER: storyloom
@@ -48,6 +51,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
+      args: *build-args
     restart: unless-stopped
     init: true
     environment: *app-environment
@@ -75,6 +79,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
+      args: *build-args
     entrypoint: ["python", "-m", "backend.worker"]
     restart: unless-stopped
     init: true
@@ -103,6 +108,7 @@ services:
     build:
       context: .
       dockerfile: docker/web.Dockerfile
+      args: *build-args
     restart: unless-stopped
     init: true
     depends_on:
@@ -123,7 +129,7 @@ services:
     logging: *default-logging
 
   caddy:
-    image: caddy:2-alpine
+    image: "${DOCKER_HUB_PREFIX:-}caddy:2-alpine"
     restart: unless-stopped
     environment:
       SITE_ADDRESS: "${SITE_ADDRESS:?SITE_ADDRESS is required}"
