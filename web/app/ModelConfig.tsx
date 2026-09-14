@@ -45,7 +45,7 @@ export default function ModelConfig({onSaved}: {onSaved?: () => Promise<void>}) 
     const data = await response.json();
     if (!response.ok) throw Error(typeof data.detail === 'string' ? data.detail : '无法读取共享池状态。');
     setStatus(data);
-    if (data.session?.mode) setMode(data.session.mode);
+    if (data.session?.mode === 'own' || (data.session?.mode === 'public' && data.pool.available)) setMode(data.session.mode);
     else if (!data.pool.available) setMode('own');
   }
 
@@ -81,6 +81,7 @@ export default function ModelConfig({onSaved}: {onSaved?: () => Promise<void>}) 
   }
 
   const current = status?.session?.mode;
+  const currentUsable = current === 'own' || (current === 'public' && !!status?.pool.available);
   const ownReady = Object.values(keys).every(value => value.trim().length >= 8);
   return <div className="model-access-shell">
     <header className="model-access-brand"><a href="/">叙间<span>STORYLOOM</span></a><small>模型使用方式</small></header>
@@ -91,7 +92,7 @@ export default function ModelConfig({onSaved}: {onSaved?: () => Promise<void>}) 
         <p>无需注册账号。你可以抢先使用今日共享体验额度，也可以临时接入自己的 API Key。</p>
       </section>
       <form className="model-access-card" onSubmit={submit}>
-        {current && <div className="model-access-current"><span>当前方式</span><strong>{current === 'public' ? '共享体验池' : '使用自己的 Key'}</strong><button type="button" onClick={continueWithCurrent}>继续当前创作 →</button></div>}
+        {current && <div className="model-access-current"><span>当前方式</span><strong>{current === 'public' ? '共享体验池' : '使用自己的 Key'}</strong>{currentUsable ? <button type="button" onClick={continueWithCurrent}>继续当前创作 →</button> : <small>额度已用完，请切换</small>}</div>}
         <div className="model-access-section-title"><div><small>01</small><h2>选择使用方式</h2></div><button type="button" className="model-access-refresh" onClick={() => load().catch(reason => {setMessage(reason.message); setError(true);})}>刷新额度</button></div>
         <div className="model-access-options">
           <button type="button" className={'model-access-option ' + (mode === 'public' ? 'is-selected' : '')} disabled={!status?.pool.available} onClick={() => setMode('public')} aria-pressed={mode === 'public'}>

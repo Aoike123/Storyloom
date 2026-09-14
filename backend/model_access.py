@@ -260,7 +260,7 @@ def _deepseek_balance(base: dict[str, str], refresh: bool) -> dict:
         return {"state": "budget_guard", "available": True}
     cached = _balance_cache()
     ttl = float(os.getenv("PUBLIC_POOL_BALANCE_CACHE_SECONDS", "60"))
-    if cached and not refresh and time.time() - float(cached.get("checked_at", 0)) < max(15, min(ttl, 600)):
+    if cached and time.time() - float(cached.get("checked_at", 0)) < max(15, min(ttl, 600)):
         return cached
     key = base.get("LLM_API_KEY", "")
     if not key:
@@ -437,7 +437,7 @@ def _create_session(body: SessionRequest) -> dict:
 
     token = secrets.token_urlsafe(32)
     access_id = _record_id(token)
-    hours = max(1, min(int(os.getenv("MODEL_ACCESS_SESSION_HOURS", "24")), 168))
+    hours = max(1, min(int(os.getenv("MODEL_ACCESS_SESSION_HOURS", "24")), 24))
     expires_at = time.time() + hours * 3600
     from .db import Record, Session
 
