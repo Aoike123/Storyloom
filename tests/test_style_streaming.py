@@ -93,7 +93,7 @@ def test_real_partial_updates_before_model_finishes(client, setup_stream):
 
 
 @pytest.mark.parametrize('failure', ['disconnect', 'no_finish', 'invalid_schema', 'length', 'provider_error'])
-def test_failed_stream_keeps_drafts_and_never_replays(client, setup_stream, failure):
+def test_failed_stream_keeps_drafts_and_retries_only_completed_invalid_outputs(client, setup_stream, failure):
     task_id, install, calls = setup_stream
 
     def chunks():
@@ -116,10 +116,13 @@ def test_failed_stream_keeps_drafts_and_never_replays(client, setup_stream, fail
     assert result['recommend_task_status']['result']['live']['summary'] == '已收到的构思摘要'
     assert 'recommendations' not in result
     assert 'private upstream error' not in result['recommend_task_status']['message']
-    assert len(calls) == 1
+    expected_calls = 4 if failure in ('invalid_schema', 'length') else 1
+    assert len(calls) == expected_calls
+    assert not worker.process_one('stream-test-again')
+    assert len(calls) == expected_calls  # A terminal task is never replayed after its bounded in-run retries.
     with Session() as db:
         entries = list(db.scalars(select(Record).where(Record.kind == 'usage')))
-        assert len(entries) == 1
+        assert len(entries) == expected_calls
         if failure in ['disconnect', 'no_finish', 'provider_error']:
             assert entries[0].data['status'] == 'pending'
 

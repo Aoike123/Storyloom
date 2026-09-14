@@ -191,6 +191,7 @@ def run_director(payload,task_id,save_stage):
             return prompts
         prompts,_=call_node(chat_json,'shot_prompts',{'board':board.model_dump(),'preproduction':payload.get('preproduction'),'schema':ShotPromptBatch.model_json_schema()},task_id,
             validator=prompt_contract)
+        if not isinstance(prompts,ShotPromptBatch):prompts=prompt_contract(prompts)
         try:
             mapping={shot.id:shot for shot in prompts.shots}
         except ValueError:raise ProviderError('分镜提示词编译未通过，镜头计划已保留。') from None
@@ -201,6 +202,7 @@ def run_director(payload,task_id,save_stage):
     review,_=call_node(chat_json,'storyboard_review',
         {'source':source,'treatment':treatment.model_dump(),'board':board.model_dump(),'schema':Review.model_json_schema()},task_id,
         validator=Review.model_validate)
+    if not isinstance(review,Review):review=Review.model_validate(review)
     return review.model_dump()
 
 class Create(BaseModel):

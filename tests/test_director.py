@@ -105,7 +105,7 @@ def test_unfounded_rule_stops_later_calls(setup_source,monkeypatch):
     def chat(*args):calls.append(1);return t,{}
     monkeypatch.setattr(d,'chat_json',chat)
     with pytest.raises(d.ProviderError,match='依据'):d.run_director({'source':{'content':TEXT},'brief':'测试'},'t',lambda *x:None)
-    assert len(calls)==1
+    assert len(calls)==4
 
 def test_typographic_quote_changes_without_semantic_fuzzy_matching():
     assert d.quote_exists('“她看不清”', '「她\n看不清」')
@@ -125,20 +125,23 @@ def test_failed_quote_keeps_treatment_draft(setup_source,monkeypatch):
     monkeypatch.setattr(d,'chat_json',lambda *args:(t,{}))
     saved=[]
     with pytest.raises(d.ProviderError):d.run_director({'source':{'content':TEXT},'brief':'测试'},'t',lambda *args:saved.append(args))
-    assert next(x for x in saved if x[0]=='treatment')[1]['rules'][0]['quote']=='错误引用不会消失'
+    diagnostic=[x for x in saved if x[0]=='treatment_diagnostics'][-1][1]
+    assert diagnostic['raw']['rules'][0]['quote']=='错误引用不会消失'
+    assert len(diagnostic['attempts'])==4
 
 def test_invalid_board_preserves_diagnostics(setup_source,monkeypatch):
     treatment={k:'设计依据' for k in ['premise','dramatic_question','protagonist_goal','excerpt_scope','visual_strategy','information_strategy']}
     treatment.update(rules=[{'rule':'规则','quote':TEXT,'consequence':'后果'}],boundaries=['未知'])
     raw=board();raw['shots'][0]['size']='INVALID'
-    responses=iter([treatment,raw]);saved=[]
-    monkeypatch.setattr(d,'chat_json',lambda *a:(next(responses),{}))
+    saved=[]
+    monkeypatch.setattr(d,'chat_json',lambda _system,payload,*a:((treatment if payload['schema']['title']=='Treatment' else raw),{}))
     with pytest.raises(d.ProviderError,match='shots.0.size'):
         d.run_director({'source':{'content':TEXT},'brief':'测试'},'test',lambda *a:saved.append(a))
-    diagnostic=next(x[1] for x in saved if x[0]=='board_diagnostics')
+    diagnostic=[x[1] for x in saved if x[0]=='board_diagnostics'][-1]
     assert diagnostic['raw']==raw
     assert diagnostic['errors'][0]['field']=='shots.0.size'
     assert 'input' not in diagnostic['errors'][0]
+    assert len(diagnostic['attempts'])==4
 
 
 def test_saved_board_skips_storyboard_model_and_repairs_unique_scene_binding(monkeypatch):

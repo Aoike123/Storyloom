@@ -53,6 +53,41 @@ def test_node_pins_skill_and_reuses_only_identical_completed_requests(monkeypatc
         assert [row['status'] for row in trace]==['completed','reused','completed']
 
 
+def test_invalid_structured_output_is_retried_three_times_before_success():
+    with Session.begin() as db:db.add(Task(id='retry-node',kind='art_design',status='running',owner='tester'))
+    calls=[]
+    def chat(system,payload,*args,**kwargs):
+        calls.append(system)
+        return ({'visual_style':style()} if len(calls)==4 else {}),{}
+    result,_=skills.call_node(chat,'style_spec',{'art_preference':'墨线绘制','schema':StylePlan.model_json_schema()},
+        'retry-node',validator=StylePlan.model_validate)
+    assert result.visual_style.medium and len(calls)==4
+    assert '上一次输出校验结果' not in calls[0] and all('上一次输出校验结果' in value for value in calls[1:])
+    with Session() as db:
+        task=db.get(Task,'retry-node')
+        assert len(task.result['model_output_errors'])==3
+        assert [row['status'] for row in task_dict(task)['skill_calls']]==['invalid','invalid','invalid','completed']
+
+
+def test_invalid_structured_output_reports_only_after_three_retries():
+    calls=[]
+    def chat(*args,**kwargs):
+        calls.append(1);raise ModelOutputError('不是完整 JSON')
+    with pytest.raises(ModelOutputError,match='3 次重试'):
+        skills.call_node(chat,'style_spec',{'art_preference':'墨线绘制','schema':StylePlan.model_json_schema()},'none',
+            validator=StylePlan.model_validate)
+    assert len(calls)==4
+
+
+def test_uncertain_provider_error_is_not_resubmitted():
+    calls=[]
+    def chat(*args,**kwargs):calls.append(1);raise ProviderError('请求结果不确定')
+    with pytest.raises(ProviderError,match='不确定'):
+        skills.call_node(chat,'style_spec',{'art_preference':'墨线绘制','schema':StylePlan.model_json_schema()},'none',
+            validator=StylePlan.model_validate)
+    assert len(calls)==1
+
+
 def test_stopped_task_cannot_invoke_a_skill():
     with Session.begin() as db:db.add(Task(id='stopped-node',kind='art_design',status='cancelled'))
     with pytest.raises(ProviderError,match='未运行'):
@@ -101,7 +136,7 @@ def test_incomplete_prompt_batch_uses_validated_contract_for_only_the_missing_as
     assert worker.process_one('node-tester')
     with Session() as db:
         parent=db.get(Task,task['id'])
-        assert parent.status=='completed' and parent.result['prompt_fallbacks']==[1]
+        assert parent.status=='completed' and parent.result['prompt_fallbacks']==[0,1]
         run=db.get(Record,'creative_pid');assert run.data['raw_design']
         images=list(db.scalars(select(Task).where(Task.kind=='image')))
         assert len(images)==3
@@ -133,8 +168,8 @@ def test_unparseable_prompt_output_falls_back_without_blocking_images(creative,m
         images=list(db.scalars(select(Task).where(Task.kind=='image')))
         assert len(images)==3 and all(t.payload['prompt_source']=='validated_render_contract' for t in images)
         run=db.get(Record,'creative_pid')
-        assert all(batch['fallback_reason']=='语言模型未返回符合约定的 JSON。' for batch in run.data['image_prompt_batches'].values())
-    assert prompt_calls==2
+        assert all('3 次重试' in batch['fallback_reason'] for batch in run.data['image_prompt_batches'].values())
+    assert prompt_calls==8
 
 
 def test_shot_prompt_compiler_cannot_change_story_or_asset_bindings(monkeypatch):

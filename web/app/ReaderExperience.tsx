@@ -8,19 +8,20 @@ import ReaderArtwork from './ReaderArtwork';
 import ReaderHero from './ReaderHero';
 import ReaderStoryGrid from './ReaderStoryGrid';
 import {canWatch, productionLink} from './reader-types';
+import {rankByProduction} from './reader-carousel';
 import type {Catalog, CatalogItem, Release} from './reader-types';
 import './reader-catalog.css';
 import './reader-motion.css';
 
 type Wish = {at: number; text: string};
-type BrowseState = {query: string; filter: string; featuredIds: string[]; activeId: string; scrollY: number; focusKey: string};
+type BrowseState = {query: string; filter: string; carouselIds: string[]; activeId: string; scrollY: number; focusKey: string};
 const browseKey = 'storyloom.reader.browse.v1';
 
 export default function ReaderExperience() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [query, setQuery] = useState(''), [searchInput, setSearchInput] = useState('');
   const [filter, setFilter] = useState('all'), [refresh, setRefresh] = useState(0);
-  const [loading, setLoading] = useState(true), [featuredIds, setFeaturedIds] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true), [carouselIds, setCarouselIds] = useState<string[]>([]);
   const [activeId, setActiveId] = useState('');
   const [story, setStory] = useState<Release | null>(null), [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(true), [moment, setMoment] = useState(0);
@@ -32,8 +33,9 @@ export default function ReaderExperience() {
   const catalogRef = useRef<Catalog | null>(null), currentStory = useRef<string | null>(null);
   const requestVersion = useRef(0), drafts = useRef<Record<string, string>>({}), savedWishes = useRef<Record<string, Wish[]>>({});
   const restore = useRef(false), savedBrowse = useRef<BrowseState | null>(null);
-  const browse = useRef({query, filter, featuredIds, activeId});
-  browse.current = {query, filter, featuredIds, activeId};
+  const carouselInitialized = useRef(false);
+  const browse = useRef({query, filter, carouselIds, activeId});
+  browse.current = {query, filter, carouselIds, activeId};
   const entry = story?.entries[index];
 
   function remember(focusKey = '', selectedId?: string) {
@@ -87,14 +89,15 @@ export default function ReaderExperience() {
       if (state && typeof state.query === 'string' && ['all', 'ready', 'pending'].includes(state.filter)) {
         const restored: BrowseState = {
           query: state.query, filter: state.filter,
-          featuredIds: Array.isArray(state.featuredIds) ? state.featuredIds.filter((id: unknown) => typeof id === 'string').slice(0, 3) : [],
+          carouselIds: (Array.isArray(state.carouselIds) ? state.carouselIds : Array.isArray(state.featuredIds) ? state.featuredIds : [])
+            .filter((id: unknown) => typeof id === 'string'),
           activeId: typeof state.activeId === 'string' ? state.activeId : '',
           scrollY: Number.isFinite(state.scrollY) ? Math.max(0, state.scrollY) : 0,
           focusKey: typeof state.focusKey === 'string' ? state.focusKey : '',
         };
         savedBrowse.current = restored; restore.current = true;
         setQuery(restored.query); setSearchInput(restored.query); setFilter(restored.filter);
-        setFeaturedIds(restored.featuredIds); setActiveId(restored.activeId);
+        setCarouselIds(restored.carouselIds); setActiveId(restored.activeId);
       }
     } catch {}
     const onPop = () => {
@@ -138,21 +141,27 @@ export default function ReaderExperience() {
   useEffect(() => {
     if (!catalog) return;
     const available = new Set(catalog.items.map(item => item.id));
-    setFeaturedIds(previous => {
+    const ranked = rankByProduction(catalog.items);
+    if (!carouselInitialized.current) {
+      carouselInitialized.current = true;
+      setCarouselIds(ranked.map(item => item.id));
+      setActiveId(ranked[0]?.id || '');
+      return;
+    }
+    setCarouselIds(previous => {
       // Keep the covers under the reader's pointer stable during background refresh.
       const retained = previous.filter(id => available.has(id));
-      const ranked = [...catalog.items].sort((a, b) => Number(canWatch(b)) - Number(canWatch(a)));
-      const next = [...new Set([...retained, ...ranked.map(item => item.id)])].slice(0, 3);
+      const next = [...new Set([...retained, ...ranked.map(item => item.id)])];
       return next.join('|') === previous.join('|') ? previous : next;
     });
   }, [catalog]);
 
   useEffect(() => {
-    if (!featuredIds.includes(activeId)) setActiveId(featuredIds[0] || '');
-  }, [featuredIds, activeId]);
+    if (!carouselIds.includes(activeId)) setActiveId(carouselIds[0] || '');
+  }, [carouselIds, activeId]);
 
   useEffect(() => {
-    if (loading || story || !restore.current || !catalog || (catalog.items.length && !featuredIds.length)) return;
+    if (loading || story || !restore.current || !catalog || (catalog.items.length && !carouselIds.length)) return;
     const frame = requestAnimationFrame(() => {
       const state = savedBrowse.current;
       if (state) {
@@ -163,7 +172,7 @@ export default function ReaderExperience() {
       restore.current = false;
     });
     return () => cancelAnimationFrame(frame);
-  }, [loading, story, catalog, featuredIds]);
+  }, [loading, story, catalog, carouselIds]);
 
   function pause(focus = true) {
     video.current?.pause(); setPaused(true);
@@ -201,7 +210,7 @@ export default function ReaderExperience() {
   const visible = (catalog?.items || []).filter(item =>
     (filter === 'ready' ? canWatch(item) : filter === 'pending' ? !canWatch(item) : true) &&
     ((item.title || '') + ' ' + (item.description || '')).toLowerCase().includes(query.toLowerCase()));
-  const featured = featuredIds.map(id => catalog?.items.find(item => item.id === id)).filter((item): item is CatalogItem => !!item);
+  const carouselItems = carouselIds.map(id => catalog?.items.find(item => item.id === id)).filter((item): item is CatalogItem => !!item);
   const clearFilters = () => {setFilter('all'); setQuery(''); setSearchInput('');};
 
   return <div className="reader-world">
@@ -210,7 +219,7 @@ export default function ReaderExperience() {
       <div className="reader-entry-links"><Link href="/setup?next=%2Fauthor" prefetch={false} onClick={() => {if (!story) remember('nav:author');}} data-reader-focus="nav:author">漫剧生成 <ArrowRight size={14}/></Link></div>
     </nav>
     {!story ? <div className="reader-catalog-page">
-      <ReaderHero items={featured} loading={loading || (!!catalog?.items.length && !featured.length)} activeId={activeId} onActiveChange={setActiveId} onOpen={openItem}/>
+      <ReaderHero items={carouselItems} loading={loading || (!!catalog?.items.length && !carouselItems.length)} activeId={activeId} onActiveChange={setActiveId} onOpen={openItem}/>
       <section id="reader-shelf" className="reader-shelf">
         <div className="reader-section-title">
           <div><span className="reader-kicker">THE STORY COLLECTION</span><h2>脑洞微小说 · 故事目录</h2></div>
