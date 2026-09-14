@@ -1,7 +1,7 @@
 """Validated physical attributes and professional rendering parameters."""
 import re
 from typing import Annotated, Literal
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
 
 def static_phrase(value):
@@ -18,8 +18,26 @@ def static_phrase(value):
 Phrase=Annotated[str,Field(min_length=2,max_length=72),AfterValidator(static_phrase)]
 ObjectCategory=Annotated[str,Field(min_length=1,max_length=72),AfterValidator(static_phrase)]
 Color=Annotated[str,Field(pattern=r'^#[0-9A-Fa-f]{6}$')]
-Material=Literal['棉布','亚麻','羊毛','针织','皮革','牛仔布','涤纶','丝绸','橡胶','木材','石材','混凝土','砖','灰泥','瓷砖','钢材','玻璃','塑料','金属']
+Material=Literal['棉布','亚麻','羊毛','针织','皮革','牛仔布','涤纶','丝绸','橡胶','木材','石材','混凝土','砖','灰泥','石膏板','瓷砖','钢材','玻璃','塑料','金属']
 Finish=Literal['哑光','半哑光','高光','粗糙','拉丝','磨砂','织纹','做旧']
+
+
+def canonical_light_direction(value):
+    if not isinstance(value,str):return value
+    value=value.strip()
+    aliases={
+        '北向南':'北侧向南','南向北':'南侧向北','东向西':'东侧向西','西向东':'西侧向东',
+        '东北侧向西南':'东北向西南','东南侧向西北':'东南向西北',
+        '西南侧向东北':'西南向东北','西北侧向东南':'西北向东南',
+        '由东北向西南':'东北向西南','由东南向西北':'东南向西北',
+        '由西南向东北':'西南向东北','由西北向东南':'西北向东南',
+    }
+    return aliases.get(value,value)
+
+
+LightSource=Literal['漫射自然光','窗户日光','顶置灯板','吊灯','壁灯','落地灯','台灯','路灯','阴天天光','定向日光']
+LightDirection=Annotated[Literal['顶部向下','北侧向南','南侧向北','东侧向西','西侧向东',
+    '东北向西南','东南向西北','西南向东北','西北向东南','均匀环境光'],BeforeValidator(canonical_light_direction)]
 
 
 class Spec(BaseModel):
@@ -122,8 +140,8 @@ class SpatialObject(Spec):
 
 
 class Lighting(Spec):
-    source: Literal['漫射自然光','窗户日光','顶置灯板','吊灯','壁灯','落地灯','阴天天光','定向日光']
-    direction: Literal['顶部向下','北侧向南','南侧向北','东侧向西','西侧向东','均匀环境光']
+    source: LightSource
+    direction: LightDirection
     temperature_k: int=Field(ge=1500,le=12000)
     softness: Literal['硬光','柔光','漫射光']
     intensity: Literal['低照度','中等照度','高照度']

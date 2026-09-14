@@ -4,7 +4,7 @@ from sqlalchemy import select
 from backend import creative as c, worker
 from backend.db import Record, Session, Task
 from test_creative import creative, drain
-from asset_spec_fixtures import plan
+from asset_spec_fixtures import character, costume, plan, scene, style
 
 
 @pytest.mark.parametrize('reference,expected', [
@@ -82,6 +82,31 @@ def test_resume_uses_saved_design_without_second_model_call_or_duplicate_images(
             task.lease = 0
     drain()
     assert creative.get('/api/author/projects/work').json()['stage'] == 'assets_review'
+
+
+def test_resume_recovers_a_cached_scene_after_supported_physical_values_expand(creative, monkeypatch):
+    response=creative.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'温馨','confirm_paid':True})
+    task_id=response.json()['id'];record_id='node_output_recoverable_scene'
+    recovered_scene=scene()
+    recovered_scene['surfaces'].append({'part':'天花板','material':'石膏板','color':'#E5E2D8','finish':'哑光'})
+    recovered_scene['lighting'].update(source='路灯',direction='东南侧向西北')
+    with Session.begin() as db:
+        task=db.get(Task,task_id);task.status='needs_review'
+        task.result={'model_output_errors':[{'node':'scene_spec','attempt':4,'output_record':record_id}]}
+        run=db.get(Record,'creative_pid')
+        run.data={**run.data,'identity_plan':{'visual_style':style(),'characters':[character()]},
+            'costume_plan':{'costumes':[costume()]},'raw_design_task_id':task_id}
+        db.add(Record(id=record_id,kind='node_output',data={
+            'task_id':task_id,'node':'scene_spec','response':{'scenes':[recovered_scene]}}))
+    monkeypatch.setattr(c,'chat_json',lambda *a,**k:pytest.fail('Cached scene recovery must not call the model'))
+    with Session.begin() as db:c.resume_saved_design(db,'pid')
+    with Session() as db:
+        task=db.get(Task,task_id);raw=db.get(Record,'creative_pid').data['raw_design']
+        saved_scene=next(item for item in raw['items'] if item['role']=='scene')
+        assert task.status=='queued'
+        assert saved_scene['surfaces'][-1]['material']=='石膏板'
+        assert saved_scene['lighting']['source']=='路灯'
+        assert saved_scene['lighting']['direction']=='东南向西北'
 
 
 @pytest.mark.parametrize('problem', ['unknown_ref', 'missing_draft', 'other_task'])

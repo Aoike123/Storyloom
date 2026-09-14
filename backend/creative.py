@@ -104,7 +104,20 @@ def validate_sourced_spec(schema,raw,passages,collection):
     return result
 
 
-def saved_design(run,task_id):
+def cached_node_output(db,task_id,node,schema):
+    task=db.get(Task,task_id)
+    if not task:return None
+    for error in reversed((task.result or {}).get('model_output_errors',[])):
+        if error.get('node')!=node or not error.get('output_record'):continue
+        record=db.get(Record,error['output_record'])
+        data=record.data if record and record.kind=='node_output' else {}
+        if data.get('task_id')!=task_id or data.get('node')!=node:continue
+        try:return schema.model_validate(data.get('response')).model_dump()
+        except ValidationError:continue
+    return None
+
+
+def saved_design(db,run,task_id):
     # Legacy drafts were stored on the run; its watch identifies their only design task.
     if run.data.get('raw_design_task_id',run.data.get('watch'))==task_id:
         raw=run.data.get('raw_design')
@@ -114,6 +127,8 @@ def saved_design(run,task_id):
             identity=validate_spec(asset_sheets.IdentityPlan,identity)
             if materials is None:
                 costumes=run.data.get('costume_plan');scenes=run.data.get('scene_plan')
+                if costumes is None:costumes=cached_node_output(db,task_id,'costume_spec',asset_sheets.CostumePlan)
+                if scenes is None:scenes=cached_node_output(db,task_id,'scene_spec',asset_sheets.ScenePlan)
                 if costumes is not None and scenes is not None:
                     costumes=validate_spec(asset_sheets.CostumePlan,costumes)
                     scenes=validate_spec(asset_sheets.ScenePlan,scenes)
@@ -132,7 +147,7 @@ def resume_saved_design(db,pid):
     if not task or task.kind!='art_design' or task.status not in ('failed','needs_review'):return
     if task.payload.get('creative_id')!=pid:raise HTTPException(409,'美术设计任务与当前作品不一致，不能恢复。')
     try:
-        raw=saved_design(run,task.id)
+        raw=saved_design(db,run,task.id)
         if raw is None:raise HTTPException(409,'没有完整的已保存设计结果，请先核实原模型调用，不能自动重复提交。')
         validate_design(raw,director.source_passages(task.payload['source']['content']),task.payload.get('asset_schema'))
     except ProviderError as exc:raise HTTPException(409,str(exc)) from None
@@ -177,7 +192,7 @@ def run_design(task_id,payload):
         r=get_run(db,payload['creative_id'])
         if r.data.get('watch')!=task_id:raise ProviderError('美术设计任务已更新，旧结果不再使用。')
         if r.data.get('items'):return
-        raw=saved_design(r,task_id)
+        raw=saved_design(db,r,task_id)
         checkpoints=dict(r.data)
     if raw is None:
         if payload.get('asset_schema')!=asset_sheets.VERSION:
