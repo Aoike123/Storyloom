@@ -30,7 +30,9 @@ def queue_fittings(db,run,pid,assets):
         raise HTTPException(409,'旧版素材尚未分离人物身份与服装，请先重做本轮素材。')
     people={item['character_id']:(item,assets[item['task_id']]) for item in run.data['items'] if item['role']=='character'}
     looks=[]
-    for costume in (item for item in run.data['items'] if item['role']=='costume'):
+    costumes=[item for item in run.data['items'] if item['role']=='costume']
+    costumed={item['character_ref'] for item in costumes}
+    for costume in costumes:
         person,identity=people[costume['character_ref']]
         clothing=assets[costume['task_id']]
         validate_asset_origin(db,identity);validate_asset_origin(db,clothing)
@@ -55,7 +57,15 @@ def queue_fittings(db,run,pid,assets):
         looks.append({'task_id':task.id,'name':person['name']+' · '+costume['name'],
             'character_key':person['character_id'],'costume_key':costume['costume_id'],
             'identity_asset_id':identity.id,'costume_asset_id':clothing.id})
-    if not looks:raise HTTPException(409,'缺少绑定人物身份的独立服装。')
+    for person,identity in people.values():
+        if person['character_id'] in costumed:continue
+        if person.get('costume_mode','required')=='required':
+            raise HTTPException(409,'缺少绑定人物身份的独立服装。')
+        validate_asset_origin(db,identity)
+        looks.append({'task_id':person['task_id'],'name':person['name'],
+            'character_key':person['character_id'],'costume_key':None,
+            'identity_asset_id':identity.id,'costume_asset_id':None,'direct_identity':True})
+    if not looks:raise HTTPException(409,'缺少可用的角色身份参考图。')
     run.data={**run.data,'looks':looks,'stage':'fittings_review'};run.version+=1
 
 

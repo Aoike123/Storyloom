@@ -68,7 +68,7 @@ class VisualStyle(Spec):
         return self
 
 
-class Appearance(Spec):
+class HumanAppearance(Spec):
     age_band: Literal['儿童','少年','青年成人','中年成人','老年成人']
     presentation: Literal['女性外观','男性外观','中性外观']
     height_cm: int=Field(ge=60,le=250)
@@ -81,6 +81,27 @@ class Appearance(Spec):
     hair_shape: Phrase=Field(description='长度、轮廓、刘海、分缝、卷曲程度；具体且唯一')
     hair_color: Color
     features: list[Phrase]=Field(default_factory=list,max_length=3,description='固定可见特征，如左脸颊小圆痣；无特征填空数组')
+
+
+class CreatureAppearance(Spec):
+    form: Literal['类人神话生物','兽形神话生物','鸟形神话生物','蛇形神话生物','龙形神话生物','混合型神话生物','其他非人形生物']
+    species: Phrase=Field(description='明确物种或神话身份，例如石猴、牛头人、九尾狐、中华龙；不得改写成人类')
+    life_stage: Literal['幼体','少年体','青年体','成年体','老年体','不适用']
+    presentation: Literal['女性外观','男性外观','中性外观','无性别外观']
+    height_cm: float=Field(ge=5,le=10000,allow_inf_nan=False,description='直立高度或肩高，单位厘米')
+    body_length_cm: float|None=Field(default=None,ge=5,le=50000,allow_inf_nan=False,description='非人形主体从头至尾的体长，单位厘米')
+    wingspan_cm: float|None=Field(default=None,ge=5,le=50000,allow_inf_nan=False,description='有翼主体的翼展，单位厘米')
+    body_structure: Phrase=Field(description='躯干比例、脊柱姿态及身体分段，例如直立类人骨架、宽肩牛躯与反关节后腿')
+    head_structure: Phrase=Field(description='明确头部、口鼻、耳、角或喙的固定结构')
+    body_surface: Phrase=Field(description='皮肤、毛发、鳞片、羽毛、甲壳或能量体的覆盖方式与质地')
+    primary_color: Color
+    eye_shape: Phrase=Field(description='眼睛数量、形状与瞳孔结构')
+    eye_color: Color
+    limbs: Phrase=Field(description='四肢数量、类型、末端结构与固定比例')
+    features: list[Phrase]=Field(default_factory=list,max_length=6,description='尾、翼、角、鬃毛、纹路等不可丢失的身份锚点')
+
+
+Appearance=HumanAppearance|CreatureAppearance
 
 
 class Garment(Spec):
@@ -103,6 +124,7 @@ class CharacterSheet(AssetBase):
     role: Literal['character']
     character_id: str=Field(pattern=r'^C[0-9]{3}$',description='同一人物唯一身份编号；不能按服装拆分人物')
     appearance: Appearance
+    costume_mode: Literal['required','optional','none']=Field(default='required',description='required 必须另建服装，optional 仅在片段明确需要时建立，none 不为该生物添加服装')
 
     @model_validator(mode='after')
     def identity_not_costume(self):
@@ -183,9 +205,19 @@ def rendering_prompt(rendering):
 def description(item):
     if item.role=='character':
         a=item.appearance
-        lines=[f'外貌：{a.age_band}，{a.presentation}，身高{a.height_cm}厘米，{a.head_body_ratio:g}头身，{a.build}',
-            f'头面部：{a.face_shape}，肤色{a.skin_color}，{a.eye_shape}，瞳色{a.eye_color}',
-            f'发型：{a.hair_shape}；发色{a.hair_color}']
+        if isinstance(a,CreatureAppearance):
+            dimensions=f'高度{a.height_cm:g}厘米'
+            if a.body_length_cm is not None:dimensions+=f'，体长{a.body_length_cm:g}厘米'
+            if a.wingspan_cm is not None:dimensions+=f'，翼展{a.wingspan_cm:g}厘米'
+            lines=[f'物种与形态：{a.species}，{a.form}，{a.life_stage}，{a.presentation}',
+                f'尺度与身体结构：{dimensions}；{a.body_structure}',
+                f'头部与眼睛：{a.head_structure}；{a.eye_shape}，瞳色{a.eye_color}',
+                f'体表：{a.body_surface}；主固有色{a.primary_color}',
+                f'肢体：{a.limbs}']
+        else:
+            lines=[f'外貌：{a.age_band}，{a.presentation}，身高{a.height_cm}厘米，{a.head_body_ratio:g}头身，{a.build}',
+                f'头面部：{a.face_shape}，肤色{a.skin_color}，{a.eye_shape}，瞳色{a.eye_color}',
+                f'发型：{a.hair_shape}；发色{a.hair_color}']
         if a.features:lines.append('固定特征：'+'；'.join(a.features))
         return '\n'.join(lines)
     if item.role=='costume':

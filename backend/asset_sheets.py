@@ -1,7 +1,7 @@
 """Compile plot-free style, identity, costume and set specifications."""
 from typing import Annotated
 from pydantic import Field, model_validator
-from .visual_specs import (Spec, VisualStyle, CharacterSheet, CostumeSheet, SceneSheet,
+from .visual_specs import (Spec, VisualStyle, CharacterSheet, CostumeSheet, SceneSheet, CreatureAppearance,
                            description, style_prompt, validate_description_budget)
 
 VERSION = 'asset-sheets-v3'
@@ -24,7 +24,7 @@ class IdentityPlan(Spec):
 
 
 class WardrobeScenePlan(Spec):
-    items: list[Annotated[CostumeSheet | SceneSheet, Field(discriminator='role')]] = Field(min_length=2, max_length=MAX_MATERIALS)
+    items: list[Annotated[CostumeSheet | SceneSheet, Field(discriminator='role')]] = Field(min_length=1, max_length=MAX_MATERIALS)
 
 
 class StylePlan(Spec):
@@ -36,7 +36,7 @@ class CharacterPlan(Spec):
 
 
 class CostumePlan(Spec):
-    costumes: list[CostumeSheet] = Field(min_length=1,max_length=MAX_MATERIALS-1)
+    costumes: list[CostumeSheet] = Field(default_factory=list,max_length=MAX_MATERIALS-1)
 
 
 class ScenePlan(Spec):
@@ -54,11 +54,12 @@ class AssetPromptBatch(Spec):
 
 class AssetSheetPlan(Spec):
     visual_style: VisualStyle
-    items: list[Annotated[CharacterSheet | CostumeSheet | SceneSheet, Field(discriminator='role')]] = Field(min_length=3, max_length=MAX_CHARACTERS + MAX_MATERIALS)
+    items: list[Annotated[CharacterSheet | CostumeSheet | SceneSheet, Field(discriminator='role')]] = Field(min_length=2, max_length=MAX_CHARACTERS + MAX_MATERIALS)
 
     @model_validator(mode='after')
     def asset_bindings(self):
-        characters = [item.character_id for item in self.items if item.role == 'character']
+        character_items = [item for item in self.items if item.role == 'character']
+        characters = [item.character_id for item in character_items]
         costumes = [item for item in self.items if item.role == 'costume']
         if not characters or not any(item.role == 'scene' for item in self.items):
             raise ValueError('至少需要一份人物身份和一个物理场景')
@@ -66,8 +67,15 @@ class AssetSheetPlan(Spec):
             raise ValueError('同一人物只能有一个身份编号，不能按服装拆分')
         if len({item.costume_id for item in costumes}) != len(costumes):
             raise ValueError('服装编号重复')
-        if {item.character_ref for item in costumes} != set(characters):
-            raise ValueError('每套服装必须绑定已有身份，每个人物至少绑定一套服装')
+        costume_characters={item.character_ref for item in costumes}
+        if not costume_characters <= set(characters):
+            raise ValueError('每套服装必须绑定已有身份')
+        required={item.character_id for item in character_items if item.costume_mode=='required'}
+        forbidden={item.character_id for item in character_items if item.costume_mode=='none'}
+        if not required <= costume_characters:
+            raise ValueError('标记为 required 的人物必须至少绑定一套服装')
+        if forbidden & costume_characters:
+            raise ValueError('标记为 none 的神话生物不能绑定独立服装')
         names = [item.name for item in self.items if item.role == 'character']
         if len(set(names)) != len(names):
             raise ValueError('同一人物不能重复建立身份')
@@ -76,8 +84,17 @@ class AssetSheetPlan(Spec):
         return self
 
 
-def frame(kind):
+def frame(kind,item=None):
     if kind == 'character_sheet':
+        if item is not None and isinstance(item.appearance,CreatureAppearance):
+            if item.appearance.form=='类人神话生物' and item.costume_mode!='none':
+                clothing='不添加剧情服装、盔甲、法器或饰品；仅使用无标识、低遮挡的中性基础短装，不遮住体表和物种结构。'
+            else:
+                clothing='不添加人类服装、盔甲、法器或饰品，完整展示该物种自然体表与身体结构。'
+            return ('神话生物或非人角色身份三视图设定板。正面、左侧面、背面三个全身或全体视图从左到右并排；'
+                    '同一物种、头部结构、体表、肢体、尾翼角及固定特征，等比例、等尺寸、同一地面基线，主体完整可见。'
+                    '中立静止姿态，不做剧情动作，不得改成人类，不得用人类脸型、发型或肤色覆盖物种特征。'+clothing+
+                    '浅灰纯色背景、均匀中性灯光、正交视角，每个视图清晰对焦。')
         return ('人物身份三视图设定板。正面、左侧面、背面三个全身视图从左到右并排；'
                 '同一脸型、发型、身材和固定特征，等比例、等身高、同一地面基线，从头到脚完整可见。'
                 '自然中立站姿，手臂略离躯干，手脚清晰。固定浅灰圆领短袖上衣、直筒长裤与平底鞋；'
@@ -97,5 +114,5 @@ def frame(kind):
 
 def compose_prompt(style, item):
     validate_description_budget(item)
-    return '\n\n'.join([frame(KINDS[item.role]), style_prompt(style), description(item),
+    return '\n\n'.join([frame(KINDS[item.role],item), style_prompt(style), description(item),
                            '画面限制：无文字、无标签、无对话框、无界面元素、无水印；不画色卡、色块样本、材质样本或说明图例；保持固定展示版式。'])

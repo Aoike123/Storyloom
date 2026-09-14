@@ -1,5 +1,5 @@
 {
-  "version": "1.6.0",
+  "version": "1.6.1",
   "nodes": {
     "style_options": {
       "title": "电影视觉风格提案",
@@ -78,7 +78,7 @@
       ]
     },
     "identity_spec": {
-      "title": "唯一人物身份规格",
+      "title": "跨物种唯一角色身份规格",
       "mode": "llm",
       "schema": "CharacterPlan",
       "inputs": [

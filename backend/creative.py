@@ -426,8 +426,10 @@ def advance(pid:str,body:Continue,automatic:bool=False):
             for look in data.get('looks',[]):
                 task=db.get(Task,look['task_id']);validate_dependencies(db,task.payload)
                 a=image_asset(db,look['task_id']);ids.append(a.id)
-                assets[a.id]={'role':'character','name':look['name'],'notes':'固定身份与独立服装的已绑定定装参考图',
-                    'identity_asset_id':look['identity_asset_id'],'costume_asset_id':look['costume_asset_id']}
+                direct=look.get('direct_identity',False)
+                assets[a.id]={'role':'character','name':look['name'],
+                    'notes':'无需独立服装的已确认角色身份参考图' if direct else '固定身份与独立服装的已绑定定装参考图',
+                    'identity_asset_id':look['identity_asset_id'],'costume_asset_id':look.get('costume_asset_id')}
             for item in data['items']:
                 if item['role']=='scene':
                     a=image_asset(db,item['task_id']);assets[a.id]={'role':'scene','name':item['name'],'notes':item['design']}
@@ -486,11 +488,12 @@ def prepare_reference_inputs(pid):
         if data.get('asset_schema')!=asset_sheets.VERSION:raise HTTPException(409,'请先将基础素材更新为独立人物身份、服装和场景图。')
         rows={item['task_id']:image_asset(db,item['task_id']) for item in data['items']}
         people={item['character_id']:rows[item['task_id']].id for item in data['items'] if item['role']=='character'}
+        costumed={item['character_ref'] for item in data['items'] if item['role']=='costume'}
         assets={}
         for item in data['items']:
             asset=rows[item['task_id']]
             spec={'role':item['role'],'name':item['name'],'notes':str(item.get('design') or item.get('facts') or '使用这张已确认的基础参考图')[:1500]}
-            if item['role']=='character':spec.update(identity_asset_id=asset.id,requires_costume=True)
+            if item['role']=='character':spec.update(identity_asset_id=asset.id,requires_costume=item['character_id'] in costumed)
             elif item['role']=='costume':
                 identity=people.get(item.get('character_ref'))
                 if not identity:raise HTTPException(409,'服装缺少对应的人物身份图，请先检查基础素材。')

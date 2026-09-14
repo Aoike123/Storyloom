@@ -12,6 +12,16 @@ from test_creative import creative, drain
 from asset_spec_fixtures import character, costume, scene, style
 
 
+def creature(name='孙悟空',species='花果山石猴',form='类人神话生物',costume_mode='required'):
+    return {'role':'character','character_id':'C002','name':name,'source_ref':'P001','facts':'原文明确出现该神话角色',
+        'costume_mode':costume_mode,'appearance':{
+            'form':form,'species':species,'life_stage':'成年体','presentation':'男性外观','height_cm':175,
+            'body_structure':'直立骨架与物种特有躯干比例','head_structure':'前突短口鼻与圆耳固定头部结构',
+            'body_surface':'金棕色短毛覆盖头部外围与四肢','primary_color':'#A66B32',
+            'eye_shape':'双眼圆形金色虹膜与深色圆瞳','eye_color':'#D9A62E',
+            'limbs':'两臂两腿与五指抓握手掌','features':['一条金棕色长尾']}}
+
+
 def test_sheet_prompt_excludes_story_and_model_written_composition():
     data={**character(),'facts':'NARRATIVE_SENTINEL：她挥拳击飞怪物，观众弹幕尖叫。',
           'adaptation_notes':'NOTES_SENTINEL：原文未提供胸针信息。'}
@@ -21,6 +31,26 @@ def test_sheet_prompt_excludes_story_and_model_written_composition():
     assert '正面、左侧面、背面' in prompt and '同一脸型' in prompt
     assert item.appearance.hair_shape in prompt and 'wardrobe' not in item.model_dump()
     assert '圆形胸针' not in prompt and '浅灰纯色背景' in prompt
+
+
+@pytest.mark.parametrize(('name','species','form'),[
+    ('孙悟空','花果山石猴','类人神话生物'),
+    ('牛头人','牛首类人生物','类人神话生物'),
+    ('应龙','有翼应龙','龙形神话生物'),
+])
+def test_character_sheet_preserves_nonhuman_species(name,species,form):
+    data=creature(name,species,form,'none' if form=='龙形神话生物' else 'required')
+    item=sheets.CharacterSheet.model_validate(data)
+    prompt=sheets.compose_prompt(style(),item)
+    assert species in prompt and form in prompt
+    assert '不得改成人类' in prompt and '物种与形态' in prompt
+    assert ('不添加人类服装' in prompt)==(item.costume_mode=='none')
+
+
+def test_unclothed_mythical_creature_does_not_require_fake_costume():
+    dragon=creature('应龙','有翼应龙','龙形神话生物','none')
+    plan=sheets.AssetSheetPlan.model_validate({'visual_style':style(),'items':[dragon,scene()]})
+    assert [item.role for item in plan.items]==['character','scene']
 
 
 def test_storyboard_and_virtual_overlay_do_not_satisfy_asset_schema():

@@ -165,7 +165,7 @@ def save(pid:str,body:Setup):
             spec=body.assets[aid]
             if a.data.get('asset_kind')=='character_sheet':
                 if spec.role!='character':raise HTTPException(422,'人物身份图必须作为人物参考。')
-                spec.identity_asset_id=aid;spec.requires_costume=True
+                spec.identity_asset_id=aid
             if a.data.get('asset_kind')=='costume_sheet':
                 identity=db.get(Record,spec.identity_asset_id or '')
                 identity_spec=body.assets.get(spec.identity_asset_id or '')
@@ -179,8 +179,13 @@ def save(pid:str,body:Setup):
                 validate_dependencies(db,a.data)
                 for dependency in a.data['asset_dependencies']:dependencies[dependency['asset_revision_id']]=dependency
         for aid,spec in body.assets.items():
-            if spec.role=='character' and spec.requires_costume and not any(item.role=='costume' and item.identity_asset_id==aid for item in body.assets.values()):
+            asset=db.get(Record,aid)
+            if spec.role!='character' or not asset or asset.data.get('asset_kind')!='character_sheet':continue
+            has_costume=any(item.role=='costume' and item.identity_asset_id==aid for item in body.assets.values())
+            costume_mode=asset.data.get('asset_spec',{}).get('costume_mode','required')
+            if costume_mode=='required' and not has_costume:
                 raise HTTPException(422,'人物身份参考缺少对应的独立服装图。')
+            spec.requires_costume=has_costume
         r=db.get(Record,'prep_'+pid)
         if (r.version if r else 0)!=body.expected_version:raise HTTPException(409,'设定已更新，请刷新。')
         source_assets=body.model_dump().get('source_assets')

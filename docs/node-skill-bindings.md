@@ -1,13 +1,13 @@
 # 专业 Skill 节点绑定
 
-流程版本：`author-brainstorm-v6`。项目节点适配版本：`1.6.0`。
+流程版本：`author-brainstorm-v6`。项目节点适配版本：`1.6.1`。
 
 ## 实际调用路径
 
 ```mermaid
 flowchart TD
     A[电影视觉风格建议：每个方案附全片视觉规则] --> B[基础美术渲染参数]
-    S[剧情改编与原文依据] --> C[唯一人物身份规格]
+    S[剧情改编与原文依据] --> C[跨物种唯一角色身份规格]
     B --> C
     C --> D[独立服装规格]
     S --> E[物理场景规格]
@@ -34,7 +34,7 @@ flowchart TD
 | style_options | NolanX director-visual-language | 电影视觉方向、剧情气质、适配原因、全片镜头/光影/调色规则 |
 | story_treatment | structure-screenplay + shape-story-blueprint | 有原文依据的剧情阐述 |
 | style_spec | Replicate prompt-images | 供人物、服装和场景设定图共用的基础美术渲染参数 |
-| identity_spec | design-production-assets | 唯一人物身份 |
+| identity_spec | design-production-assets | 人类、类人异族及非人形神话生物的唯一身份 |
 | costume_spec | design-production-assets + prompt-images | 独立服装及身份绑定 |
 | scene_spec | design-production-assets + prompt-images | 静态物理场景 |
 | asset_prompts | prompt-images + compile-generation-prompts | 逐项生图 Prompt |
