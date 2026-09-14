@@ -12,6 +12,15 @@ const {mergeTask, mergeWorkspace} = context.exports;
 const {viewedAuthorStage}=context.exports;
 const {mergeProgress}=context.exports;
 const {authorDisplayStage}=context.exports;
+const {hasActiveProgress,shouldPollProgress}=context.exports;
+
+test('live progress uses one event stream without redundant workspace polling',()=>{
+  const work={jobs:[],task:null,recommend_task_status:{id:'styles',status:'running'}};
+  assert.equal(hasActiveProgress(work),true);
+  assert.equal(shouldPollProgress('live',true),false);
+  assert.equal(shouldPollProgress('fallback',true),true);
+  assert.equal(hasActiveProgress({...work,recommend_task_status:{id:'styles',status:'needs_review'}}),false);
+});
 
 test('a delayed full-page response cannot erase a newly completed preview or a new task', () => {
   const current = {id:'work', progress_at:20, jobs:[{id:'new', status:'completed'}], outputs:[{id:'new', media:'/media/new.png'}]};

@@ -178,10 +178,17 @@ def _decrypt_keys(ciphertext: str) -> dict[str, str]:
     return values
 
 
-def _locked_config() -> dict[str, str]:
+def _locked_config(base: dict[str, str] | None = None) -> dict[str, str]:
     from .environment import LOCKED_MODEL_CONFIG
 
-    return dict(LOCKED_MODEL_CONFIG)
+    configured = dict(LOCKED_MODEL_CONFIG)
+    # Visitors cannot select a transport target or model. The operator can still
+    # replace a retired DeepSeek model in the environment without a code release.
+    if base:
+        for key in ("LLM_MODEL", "LLM_FAST_MODEL"):
+            if base.get(key):
+                configured[key] = base[key]
+    return configured
 
 
 def effective_model_config(base: dict[str, str]) -> dict[str, str]:
@@ -190,9 +197,9 @@ def effective_model_config(base: dict[str, str]) -> dict[str, str]:
     if not record:
         if not public_demo_mode():
             return base
-        return {**base, **_locked_config(), "ALLOW_PAID_CALLS": "false"}
+        return {**base, **_locked_config(base), "ALLOW_PAID_CALLS": "false"}
 
-    configured = {**base, **_locked_config()}
+    configured = {**base, **_locked_config(base)}
     if record.get("mode") == "own":
         try:
             configured.update(_decrypt_keys(str(record.get("credentials", ""))))
@@ -295,7 +302,9 @@ def _deepseek_balance(base: dict[str, str], refresh: bool) -> dict:
 
 
 def fixed_providers() -> list[dict[str, str]]:
-    cfg = _locked_config()
+    from .environment import base_model_config
+
+    cfg = _locked_config(base_model_config())
     return [
         {"kind": "llm", "provider": "DeepSeek", "model": cfg["LLM_MODEL"], "purpose": "文本理解与创作"},
         {"kind": "image", "provider": "硅基流动", "model": cfg["IMAGE_MODEL"], "purpose": "人物、服装与场景画面"},

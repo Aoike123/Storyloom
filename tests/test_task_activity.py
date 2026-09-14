@@ -132,7 +132,7 @@ def test_project_progress_scopes_tasks_and_shows_only_completed_current_media(cl
     assert client.get('/api/author/projects/missing/events').status_code==404
 
 
-def test_project_stream_updates_between_stages_and_stops_on_disconnect():
+def test_project_stream_updates_between_stages_and_stops_when_terminal():
     with Session.begin() as db:
         db.add(Record(id='stream-project',kind='author_project',data={'stage':'preparing','director_id':'director-a'}))
         db.add(Task(id='stream-job',kind='art_design',status='running',payload={'creative_id':'director-a'}))
@@ -150,8 +150,8 @@ def test_project_stream_updates_between_stages_and_stops_on_disconnect():
         last=json.loads((await anext(body)).removeprefix('data: '))
         assert last['stage']=='assets_review'
         assert last['jobs'][0]['status']=='completed'
-        request.disconnected=True
-        await body.aclose()
+        with pytest.raises(StopAsyncIteration):
+            await anext(body)
     asyncio.run(read())
 
 

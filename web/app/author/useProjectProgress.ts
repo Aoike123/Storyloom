@@ -1,15 +1,18 @@
 'use client';
 import {useEffect, useRef, useState} from 'react';
 import type {Dispatch, SetStateAction} from 'react';
-import {mergeProgress, progressStructure} from './projectProgress';
+import {hasActiveProgress, mergeProgress, progressStructure} from './projectProgress';
 
 export default function useProjectProgress(work: any, enabled: boolean, setWork: Dispatch<SetStateAction<any>>, refresh: () => void) {
-  const [connection, setConnection] = useState('connecting');
+  const [connection, setConnection] = useState('idle');
   const latest = useRef(work);
   latest.current = work;
   const id = work?.id as string | undefined;
   useEffect(() => {
-    if (!enabled || !id) return;
+    if (!enabled || !id) {
+      setConnection('idle');
+      return;
+    }
     let alive = true, stream: EventSource | undefined, refreshTimer: ReturnType<typeof setTimeout> | undefined;
     let structure = progressStructure(latest.current);
     function connect() {
@@ -30,10 +33,14 @@ export default function useProjectProgress(work: any, enabled: boolean, setWork:
             clearTimeout(refreshTimer);
             refreshTimer = setTimeout(() => {if (alive) refresh();}, 180);
           }
-        } catch {setConnection('fallback');}
+          if (!hasActiveProgress(data)) {
+            stream?.close();
+            setConnection('idle');
+          }
+        } catch {stream?.close(); setConnection('fallback');}
       };
-      // EventSource reconnects read-only; the regular workspace poll remains available.
-      stream.onerror = () => {if (alive) setConnection('fallback');};
+      // A failed EventSource is closed explicitly; the workspace poll takes over.
+      stream.onerror = () => {if (alive) {stream?.close(); setConnection('fallback');}};
     }
     connect();
     document.addEventListener('visibilitychange', connect);

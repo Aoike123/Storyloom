@@ -7,7 +7,7 @@ import './author.css';
 import StyleProgress from '../StyleProgress';
 import StyleOptions from './StyleOptions';
 import useProjectProgress from './useProjectProgress';
-import {mergeWorkspace,viewedAuthorStage,authorDisplayStage} from './projectProgress';
+import {hasActiveProgress,mergeWorkspace,shouldPollProgress,viewedAuthorStage,authorDisplayStage} from './projectProgress';
 import ProductionProgress from './ProductionProgress';
 import GenerationPrompt from '../GenerationPrompt';
 import AssetRedesign from './AssetRedesign';
@@ -29,7 +29,8 @@ export default function Author(){
  const [refresh,setRefresh]=useState(0),[actionLabel,setActionLabel]=useState('正在提交操作，等待服务确认…');
  const refreshWorkspace=useCallback(()=>setRefresh(n=>n+1),[]);
  const recommendation=work?.recommend_task_status;
- const streamConnection=useProjectProgress(work,true,setWork,refreshWorkspace);
+ const progressActive=hasActiveProgress(work);
+ const streamConnection=useProjectProgress(work,progressActive,setWork,refreshWorkspace);
  useEffect(()=>{if(!readModelAccess()){window.location.replace(modelSetupLink(window.location.pathname+window.location.search));return;}setAccessReady(true);},[]);
  useEffect(()=>{
   if(!accessReady)return;
@@ -46,7 +47,7 @@ export default function Author(){
   let timer:ReturnType<typeof setTimeout>|undefined,controller:AbortController|undefined;
   const schedule=()=>{
    clearTimeout(timer);
-   if(live&&tracking&&!document.hidden)timer=setTimeout(load,5000);
+   if(live&&shouldPollProgress(streamConnection,tracking)&&!document.hidden)timer=setTimeout(load,5000);
   };
   const load=async()=>{
    if(!live||pending||document.hidden)return;
@@ -57,7 +58,7 @@ export default function Author(){
     const d=await api('/projects/'+encodeURIComponent(selected),undefined,signal);
     if(!live||signal.aborted)return;
     setWork((current:any)=>mergeWorkspace(current,d));setSyncError('');setUpdated(new Date().toLocaleTimeString('zh-CN',{hour12:false}));
-    tracking=[...(d.jobs||[]),d.task,d.recommend_task_status].some(t=>t&&!['legacy_trial','legacy_composition'].includes(t.production_phase||'')&&activeStatuses.includes(t.status));
+    tracking=hasActiveProgress(d);
    }catch(e){
     if(live&&!signal.aborted){tracking=false;setSyncError((e as Error).message);}
    }finally{pending=false;schedule();}
@@ -70,7 +71,7 @@ export default function Author(){
   void load();
   document.addEventListener('visibilitychange',visibilityChanged);
   return()=>{live=false;clearTimeout(timer);controller?.abort();document.removeEventListener('visibilitychange',visibilityChanged);};
- },[selected,refresh]);
+ },[selected,refresh,streamConnection]);
  useEffect(()=>{const read=()=>setViewedStep(new URLSearchParams(window.location.search).get('step'));read();window.addEventListener('popstate',read);return()=>window.removeEventListener('popstate',read);},[]);
  useEffect(()=>{if(work){setArt(work.art||'');setTone(work.tone||'');}},[work?.id,work?.run_id]);
  useEffect(()=>{setConfirmed(false);setIndex(0);},[work?.stage,work?.creative?.version,viewedStep,selected]);

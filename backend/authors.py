@@ -132,7 +132,9 @@ async def project_events(pid:str,request:Request):
                 yield ': keep-alive\n\n';heartbeat=time.monotonic()
             tasks=[*snapshot['jobs'],snapshot.get('task'),snapshot.get('recommend_task_status')]
             active=any(task and task['status'] in creative.BUSY for task in tasks)
-            await asyncio.sleep(.35 if active else 2)
+            if not active:
+                break
+            await asyncio.sleep(.35)
             snapshot=await run_in_threadpool(project_progress,pid)
     return StreamingResponse(events(),media_type='text/event-stream',headers={'Cache-Control':'no-cache, no-transform','X-Accel-Buffering':'no'})
 

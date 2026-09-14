@@ -1,11 +1,23 @@
 import type {ProgressTask} from '../ProgressFeedback';
 
+const activeStatuses = ['queued', 'running', 'waiting'];
+
+export function hasActiveProgress(work: any) {
+  return [...(work?.jobs || []), work?.task, work?.recommend_task_status].some(
+    task => task && !['legacy_trial', 'legacy_composition'].includes(task.production_phase || '')
+      && activeStatuses.includes(task.status),
+  );
+}
+
+export function shouldPollProgress(connection: string, tracking: boolean) {
+  return tracking && connection !== 'live';
+}
+
 export function mergeTask(prior: ProgressTask | null | undefined, incoming: ProgressTask | null | undefined) {
   if (!prior || !incoming || prior.id !== incoming.id) return incoming;
-  const active = ['queued', 'running', 'waiting'];
   const priorUpdate = Math.max(prior.activity?.updated_at || 0, prior.result?.live?.updated_at || 0);
   const nextUpdate = Math.max(incoming.activity?.updated_at || 0, incoming.result?.live?.updated_at || 0);
-  if (priorUpdate > nextUpdate || (!active.includes(prior.status) && active.includes(incoming.status))) return prior;
+  if (priorUpdate > nextUpdate || (!activeStatuses.includes(prior.status) && activeStatuses.includes(incoming.status))) return prior;
   return incoming;
 }
 

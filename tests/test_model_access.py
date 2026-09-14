@@ -16,6 +16,8 @@ OWN_KEYS = {
 
 def test_byok_is_encrypted_locked_and_inherited(client, monkeypatch):
     monkeypatch.setenv("MODEL_ACCESS_SECRET", "test-secret-" + "a" * 48)
+    monkeypatch.setenv("LLM_MODEL", "deepseek-v4-pro")
+    monkeypatch.setenv("LLM_FAST_MODEL", "deepseek-v4-pro")
     response = client.post("/api/model-access/sessions", json={"mode": "own", "keys": OWN_KEYS})
     assert response.status_code == 200
     session = response.json()
@@ -29,7 +31,7 @@ def test_byok_is_encrypted_locked_and_inherited(client, monkeypatch):
         cfg = model_config()
         assert cfg["LLM_API_KEY"] == OWN_KEYS["deepseek"]
         assert cfg["LLM_BASE_URL"] == "https://api.deepseek.com"
-        assert cfg["LLM_MODEL"] == "deepseek-v4-flash"
+        assert cfg["LLM_MODEL"] == "deepseek-v4-pro"
         assert cfg["IMAGE_MODEL"] == "Tongyi-MAI/Z-Image-Turbo"
         assert cfg["VIDEO_MODEL"] == "MiniMax-H3-Max"
         assert cfg["VIDEO_ENDPOINT"] == "https://api.minimax.cn/v2/video_generation"
