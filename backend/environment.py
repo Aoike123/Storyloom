@@ -5,7 +5,7 @@ from dotenv import dotenv_values,load_dotenv
 
 ROOT=Path(__file__).resolve().parents[1]
 DEFAULTS={
-    'LLM_BASE_URL':'https://api.deepseek.com','LLM_MODEL':'deepseek-flash','LLM_FAST_MODEL':'deepseek-flash',
+    'LLM_BASE_URL':'https://api.deepseek.com','LLM_MODEL':'deepseek-v4-pro','LLM_FAST_MODEL':'deepseek-v4-pro',
     'LLM_API_KEY':'','LLM_MAX_TOKENS':'8192','LLM_FAST_MAX_TOKENS':'2048','LLM_TIMEOUT':'120',
     'IMAGE_PROVIDER':'siliconflow','IMAGE_ENDPOINT':'https://api.siliconflow.cn/v1/images/generations',
     'IMAGE_MODEL':'Tongyi-MAI/Z-Image-Turbo','IMAGE_API_KEY':'',
@@ -19,7 +19,7 @@ DEFAULTS={
 # redirecting operator or visitor keys to an arbitrary endpoint.
 LOCKED_MODEL_CONFIG={
     'LLM_PROVIDER':'deepseek','LLM_BASE_URL':'https://api.deepseek.com',
-    'LLM_MODEL':'deepseek-flash','LLM_FAST_MODEL':'deepseek-flash',
+    'LLM_MODEL':'deepseek-v4-pro','LLM_FAST_MODEL':'deepseek-v4-pro',
     'IMAGE_PROVIDER':'siliconflow','IMAGE_ENDPOINT':'https://api.siliconflow.cn/v1/images/generations',
     'IMAGE_MODEL':'Tongyi-MAI/Z-Image-Turbo',
     'VIDEO_PROVIDER':'minimax','VIDEO_ENDPOINT':'https://api.minimax.cn/v2/video_generation',

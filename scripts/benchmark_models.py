@@ -196,7 +196,7 @@ async def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--suite',choices=['llm','image','video'],required=True)
     parser.add_argument('--run-id',required=True)
-    parser.add_argument('--models',nargs='*',default=['gpt-5.6-sol','gpt-5.6-luna','gpt-5.4-mini','deepseek-flash'])
+    parser.add_argument('--models',nargs='*',default=['gpt-5.6-sol','gpt-5.6-luna','gpt-5.4-mini','deepseek-v4-pro'])
     parser.add_argument('--rounds',type=int,default=1);parser.add_argument('--stream',action='store_true')
     args=parser.parse_args()
     if not re.fullmatch(r'[a-zA-Z0-9_-]+',args.run_id):raise SystemExit('Invalid run ID')
