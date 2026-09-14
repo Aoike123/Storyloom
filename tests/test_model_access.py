@@ -31,7 +31,7 @@ def test_byok_is_encrypted_locked_and_inherited(client, monkeypatch):
         assert cfg["LLM_BASE_URL"] == "https://api.deepseek.com"
         assert cfg["IMAGE_MODEL"] == "Tongyi-MAI/Z-Image-Turbo"
         assert cfg["VIDEO_MODEL"] == "MiniMax-H3-Max"
-        assert cfg["VIDEO_ENDPOINT"] == "https://api.minimaxi.com/v2/video_generation"
+        assert cfg["VIDEO_ENDPOINT"] == "https://api.minimax.cn/v2/video_generation"
         with Session.begin() as db:
             task = Task(id=uid("bound"), kind="author_flow")
             db.add(task)

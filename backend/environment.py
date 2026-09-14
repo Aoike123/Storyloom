@@ -9,7 +9,7 @@ DEFAULTS={
     'LLM_API_KEY':'','LLM_MAX_TOKENS':'8192','LLM_FAST_MAX_TOKENS':'2048','LLM_TIMEOUT':'120',
     'IMAGE_PROVIDER':'siliconflow','IMAGE_ENDPOINT':'https://api.siliconflow.cn/v1/images/generations',
     'IMAGE_MODEL':'Tongyi-MAI/Z-Image-Turbo','IMAGE_API_KEY':'',
-    'VIDEO_PROVIDER':'minimax','VIDEO_ENDPOINT':'https://api.minimaxi.com/v2/video_generation',
+    'VIDEO_PROVIDER':'minimax','VIDEO_ENDPOINT':'https://api.minimax.cn/v2/video_generation',
     'VIDEO_MODEL':'MiniMax-H3-Max','VIDEO_API_KEY':'','VIDEO_DURATION':'8','VIDEO_RESOLUTION':'768P',
     'ALLOW_PAID_CALLS':'false',
 }
@@ -22,7 +22,7 @@ LOCKED_MODEL_CONFIG={
     'LLM_MODEL':'deepseek-chat','LLM_FAST_MODEL':'deepseek-chat',
     'IMAGE_PROVIDER':'siliconflow','IMAGE_ENDPOINT':'https://api.siliconflow.cn/v1/images/generations',
     'IMAGE_MODEL':'Tongyi-MAI/Z-Image-Turbo',
-    'VIDEO_PROVIDER':'minimax','VIDEO_ENDPOINT':'https://api.minimaxi.com/v2/video_generation',
+    'VIDEO_PROVIDER':'minimax','VIDEO_ENDPOINT':'https://api.minimax.cn/v2/video_generation',
     'VIDEO_MODEL':'MiniMax-H3-Max','VIDEO_DURATION':'8','VIDEO_RESOLUTION':'768P',
 }
 def env_file():
