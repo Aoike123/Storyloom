@@ -1,6 +1,6 @@
 # 专业 Skill 节点绑定
 
-流程版本：`author-brainstorm-v6`。项目节点适配版本：`1.4.2`。
+流程版本：`author-brainstorm-v6`。项目节点适配版本：`1.4.3`。
 
 ## 实际调用路径
 
@@ -47,7 +47,7 @@ flowchart TD
 | frame_render / video_render | compile-generation-prompts | 生成请求编排模板 |
 | asset_review / film_review | 资产检查与 review-and-assemble | 作者查看真实素材后执行的验收清单 |
 
-人物、服装、场景修订和读者剧情分支另有各自的绑定，不共用一个全能角色。
+人物、服装和场景修订另有各自的绑定，不共用一个全能角色。
 
 ## 源文件与运行机制
 

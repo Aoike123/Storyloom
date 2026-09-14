@@ -82,7 +82,7 @@ def test_real_partial_updates_before_model_finishes(client, setup_stream):
     assert result['recommend_task_status']['status'] == 'completed'
     assert result['recommend_task_status']['result']['live']['phase'] == 'ready'
     assert result['recommendations'] == options
-    assert result['usage']['tokens'] == 300
+    assert 'usage' not in result
     assert len(calls) == 1
     stream = client.get(f'/api/author/projects/stream-work/recommendations/{task_id}/events')
     assert stream.status_code == 200
@@ -124,7 +124,7 @@ def test_failed_stream_keeps_drafts_and_never_replays(client, setup_stream, fail
             assert entries[0].data['status'] == 'pending'
 
 
-def test_rejected_stream_has_one_rejected_billing_record(setup_stream):
+def test_rejected_stream_has_one_rejected_usage_record(setup_stream):
     task_id, install, calls = setup_stream
     install(lambda: iter([]), status=400)
     worker.process_one('stream-test')

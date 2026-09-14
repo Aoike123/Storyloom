@@ -84,7 +84,7 @@ def validate_design(raw,passages,version=None):
     bindings=[]
     for item in plan.items:
         try:bindings.append(source_refs(item.source_ref,passages))
-        except ProviderError as exc:raise ProviderError(f'「{item.name}」{exc}设计已保留，未继续生图。') from None
+        except ProviderError as exc:raise ModelOutputError(f'「{item.name}」{exc}设计已保留，未继续生图。') from None
     return plan,bindings
 
 
@@ -92,7 +92,16 @@ def validate_spec(schema,raw):
     try:return schema.model_validate(raw)
     except ValidationError as exc:
         details='；'.join('.'.join(str(x) for x in e['loc'])+'：'+e['msg'] for e in exc.errors(include_input=False,include_url=False)[:4])
-        raise ProviderError('静态视觉规格校验未通过，结果已保存，未继续生图。'+details) from None
+        raise ModelOutputError('静态视觉规格校验未通过，结果已保存，未继续生图。'+details) from None
+
+
+def validate_sourced_spec(schema,raw,passages,collection):
+    result=validate_spec(schema,raw)
+    try:
+        for item in getattr(result,collection):source_refs(item.source_ref,passages)
+    except ProviderError as exc:
+        raise ModelOutputError('素材规格没有绑定有效原文依据：'+str(exc)) from None
+    return result
 
 
 def saved_design(run,task_id):
@@ -183,14 +192,16 @@ def run_design(task_id,payload):
         if identity is None:
             style=checkpoints.get('style_plan')
             if style is None:
-                style,_=call_node(chat_json,'style_spec',{'art_preference':payload['art'],'schema':asset_sheets.StylePlan.model_json_schema()},task_id)
-                checkpoint('style_plan',style)
-            style=validate_spec(asset_sheets.StylePlan,style)
+                style,_=call_node(chat_json,'style_spec',{'art_preference':payload['art'],'schema':asset_sheets.StylePlan.model_json_schema()},task_id,
+                    validator=lambda raw:validate_spec(asset_sheets.StylePlan,raw))
+                checkpoint('style_plan',style.model_dump())
+            else:style=validate_spec(asset_sheets.StylePlan,style)
             people=checkpoints.get('character_plan')
             if people is None:
-                people,_=call_node(chat_json,'identity_spec',{**context,'visual_style':style.visual_style.model_dump(),'schema':asset_sheets.CharacterPlan.model_json_schema()},task_id)
-                checkpoint('character_plan',people)
-            people=validate_spec(asset_sheets.CharacterPlan,people)
+                people,_=call_node(chat_json,'identity_spec',{**context,'visual_style':style.visual_style.model_dump(),'schema':asset_sheets.CharacterPlan.model_json_schema()},task_id,
+                    validator=lambda raw:validate_sourced_spec(asset_sheets.CharacterPlan,raw,passages,'characters'))
+                checkpoint('character_plan',people.model_dump())
+            else:people=validate_sourced_spec(asset_sheets.CharacterPlan,people,passages,'characters')
             identity={'visual_style':style.visual_style.model_dump(),'characters':[p.model_dump() for p in people.characters]}
             checkpoint('identity_plan',identity)
         identity=validate_spec(asset_sheets.IdentityPlan,identity)
@@ -200,16 +211,18 @@ def run_design(task_id,payload):
             costumes=checkpoints.get('costume_plan')
             if costumes is None:
                 costumes,_=call_node(chat_json,'costume_spec',{**context,'visual_style':identity.visual_style.model_dump(),
-                    'locked_characters':[p.model_dump() for p in identity.characters],'schema':asset_sheets.CostumePlan.model_json_schema()},task_id)
-                checkpoint('costume_plan',costumes)
-            costumes=validate_spec(asset_sheets.CostumePlan,costumes)
+                    'locked_characters':[p.model_dump() for p in identity.characters],'schema':asset_sheets.CostumePlan.model_json_schema()},task_id,
+                    validator=lambda raw:validate_sourced_spec(asset_sheets.CostumePlan,raw,passages,'costumes'))
+                checkpoint('costume_plan',costumes.model_dump())
+            else:costumes=validate_sourced_spec(asset_sheets.CostumePlan,costumes,passages,'costumes')
             scenes=checkpoints.get('scene_plan')
             if scenes is None:
                 schema=asset_sheets.ScenePlan.model_json_schema()
                 schema['properties']['scenes']['maxItems']=asset_sheets.MAX_MATERIALS-len(costumes.costumes)
-                scenes,_=call_node(chat_json,'scene_spec',{**context,'visual_style':identity.visual_style.model_dump(),'schema':schema},task_id)
-                checkpoint('scene_plan',scenes)
-            scenes=validate_spec(asset_sheets.ScenePlan,scenes)
+                scenes,_=call_node(chat_json,'scene_spec',{**context,'visual_style':identity.visual_style.model_dump(),'schema':schema},task_id,
+                    validator=lambda raw:validate_sourced_spec(asset_sheets.ScenePlan,raw,passages,'scenes'))
+                checkpoint('scene_plan',scenes.model_dump())
+            else:scenes=validate_sourced_spec(asset_sheets.ScenePlan,scenes,passages,'scenes')
             materials={'items':[i.model_dump() for i in costumes.costumes]+[i.model_dump() for i in scenes.scenes]}
             checkpoint('wardrobe_scene_plan',materials)
         materials=validate_spec(asset_sheets.WardrobeScenePlan,materials)
@@ -265,13 +278,22 @@ def write_asset_prompts(task_id,payload,plan):
             raise ProviderError('已保存的提示词与当前素材规格或模型配置不一致，请创建新修订，未重复提交。')
         fallback_reason=prior.get('fallback_reason') if prior else None
         raw=prior.get('response') if prior else None
+        batch=None
         if raw is None and fallback_reason is None:
             schema=asset_sheets.AssetPromptBatch.model_json_schema()
             schema['properties']['items'].update(minItems=len(assets),maxItems=len(assets))
+            expected={asset['asset_index'] for asset in assets}
+            def prompt_contract(value):
+                result=validate_spec(asset_sheets.AssetPromptBatch,value)
+                indexes=[item.asset_index for item in result.items]
+                if len(indexes)!=len(expected) or set(indexes)!=expected:
+                    raise ModelOutputError('图片提示词必须逐项且仅对应本批素材编号。')
+                return result
             try:
-                raw,_=call_node(chat_json,'asset_prompts',{'assets':assets,
+                batch,_=call_node(chat_json,'asset_prompts',{'assets':assets,
                     'target':target,
-                    'schema':schema},task_id)
+                    'schema':schema},task_id,validator=prompt_contract)
+                raw=batch.model_dump()
             except ModelOutputError as exc:
                 raw={};fallback_reason=str(exc)
             with Session.begin() as db:
@@ -280,9 +302,10 @@ def write_asset_prompts(task_id,payload,plan):
                 entry={'request_sha256':request_hash,'response':raw}
                 if fallback_reason:entry['fallback_reason']=fallback_reason
                 cached={**cached,key:entry};run.data={**run.data,'image_prompt_batches':cached}
-        batch=None
         if fallback_reason is None:
-            try:batch=validate_spec(asset_sheets.AssetPromptBatch,raw)
+            try:
+                if batch is None:
+                    batch=validate_spec(asset_sheets.AssetPromptBatch,raw)
             except ProviderError as exc:fallback_reason=str(exc)
         batch_fallbacks=[]
         for asset in assets:
@@ -310,12 +333,14 @@ def write_revised_asset_prompt(task_id,style,item):
     assets=[{'asset_index':0,'role':item.role,'render_contract':asset_sheets.compose_prompt(style,item)}]
     schema=asset_sheets.AssetPromptBatch.model_json_schema()
     schema['properties']['items'].update(minItems=1,maxItems=1)
-    raw,_=call_node(chat_json,'asset_prompts',{'assets':assets,
+    def prompt_contract(raw):
+        result=validate_spec(asset_sheets.AssetPromptBatch,raw)
+        if len(result.items)!=1 or result.items[0].asset_index!=0:
+            raise ModelOutputError('重做提示词没有准确对应当前素材。')
+        return result
+    batch,_=call_node(chat_json,'asset_prompts',{'assets':assets,
         'target':{'provider':cfg.get('IMAGE_PROVIDER'),'model':cfg.get('IMAGE_MODEL'),'image_size':'1024x1024'},
-        'schema':schema},task_id)
-    batch=validate_spec(asset_sheets.AssetPromptBatch,raw)
-    if len(batch.items)!=1 or batch.items[0].asset_index!=0:
-        raise ProviderError('重做提示词没有准确对应当前素材，已保存结果，未提交生图。')
+        'schema':schema},task_id,validator=prompt_contract)
     return batch.items[0].prompt
 
 def image_asset(db,tid):
@@ -532,18 +557,22 @@ def run_revision(task_id,p):
         if old_payload.get('asset_schema')!=asset_sheets.VERSION or not old_payload.get('asset_spec'):
             raise ProviderError('旧版人物与服装尚未分离，请先重做本轮素材。')
         original_spec=old_payload['asset_spec'];schema=asset_sheets.MODELS[original_spec['role']]
-        raw,_=call_node(chat_json,{'character':'identity_revision','costume':'costume_revision','scene':'scene_revision'}[original_spec['role']],
-            {'existing_spec':original_spec,'feedback':p['feedback'],'schema':schema.model_json_schema()},task_id)
-        updated_spec=validate_spec(schema,raw)
-        values=updated_spec.model_dump()
-        for key in ('role','name','source_ref','facts','character_id','character_ref','costume_id'):
-            if values.get(key)!=original_spec.get(key):raise ProviderError('修改不能更换人物身份、服装归属或原文依据。')
+        def revision_contract(raw):
+            result=validate_spec(schema,raw);values=result.model_dump()
+            for key in ('role','name','source_ref','facts','character_id','character_ref','costume_id'):
+                if values.get(key)!=original_spec.get(key):
+                    raise ModelOutputError('修改不能更换人物身份、服装归属或原文依据。')
+            return result
+        updated_spec,_=call_node(chat_json,{'character':'identity_revision','costume':'costume_revision','scene':'scene_revision'}[original_spec['role']],
+            {'existing_spec':original_spec,'feedback':p['feedback'],'schema':schema.model_json_schema()},task_id,
+            validator=revision_contract)
         prompt=write_revised_asset_prompt(task_id,old_payload['visual_style'],updated_spec)
     else:
         revision_node='video_revision' if kind=='video' else 'shot_revision'
-        raw,_=call_node(chat_json,revision_node,
-            {'original':old_payload['prompt'],'feedback':p['feedback'],'schema':Revision.model_json_schema()},task_id)
-        prompt=Revision.model_validate(raw).prompt
+        revision,_=call_node(chat_json,revision_node,
+            {'original':old_payload['prompt'],'feedback':p['feedback'],'schema':Revision.model_json_schema()},task_id,
+            validator=Revision.model_validate)
+        prompt=revision.prompt
     with Session.begin() as db:
         current=db.get(Task,task_id)
         if current.status!='running':return
@@ -573,7 +602,7 @@ def run_revision(task_id,p):
         if kind=='image' and old_payload.get('director_id'):
             c=visual.config(db,p['creative_id']);stage='samples_review' if old_payload['shot_id'] in c.data['samples'] else 'frames_review'
         r.data={**r.data,'items':items,'stage':stage};r.version+=1
-        current.result={'task_id':t.id}
+        current.result={**current.result,'task_id':t.id}
 
 class Publish(BaseModel):
     confirm:bool=False

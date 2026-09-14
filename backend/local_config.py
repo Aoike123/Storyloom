@@ -4,8 +4,7 @@ from pathlib import Path
 from threading import Lock
 from urllib.parse import urlparse
 from dotenv import set_key
-from .db import ROOT
-from .environment import DEFAULTS
+from .environment import DEFAULTS, env_file
 
 lock = Lock()
 FIELDS = set(DEFAULTS)|{'LLM_PROVIDER','LLM_ENDPOINT'}
@@ -28,8 +27,9 @@ def save_config(values):
     if 'ALLOW_PAID_CALLS' in values and values['ALLOW_PAID_CALLS'] not in ('true','false'):
         raise ValueError('付费开关格式无效。')
     with lock:
-        target=ROOT/'.env.local'
-        fd,name=tempfile.mkstemp(prefix='.config-',suffix='.tmp',dir=ROOT)
+        target=env_file()
+        target.parent.mkdir(parents=True,exist_ok=True)
+        fd,name=tempfile.mkstemp(prefix='.config-',suffix='.tmp',dir=target.parent)
         os.close(fd)
         try:
             temp=Path(name)

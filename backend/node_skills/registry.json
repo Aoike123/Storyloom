@@ -1,5 +1,5 @@
 {
-  "version": "1.4.2",
+  "version": "1.4.3",
   "nodes": {
     "style_options": {
       "title": "风格提案提示词",
@@ -423,43 +423,6 @@
         }
       ],
       "adapter": "adapters/video-revision/SKILL.md"
-    },
-    "reader_plan": {
-      "title": "读者分支剧情规划",
-      "mode": "llm",
-      "schema": "Plan",
-      "inputs": null,
-      "sources": [
-        {
-          "bundle": "film",
-          "skill": "shape-story-blueprint",
-          "sections": [
-            "Workflow",
-            "Boundaries"
-          ]
-        }
-      ],
-      "adapter": "adapters/reader-plan/SKILL.md"
-    },
-    "reader_review": {
-      "title": "读者分支因果检查",
-      "mode": "llm",
-      "schema": null,
-      "inputs": [
-        "context",
-        "plan"
-      ],
-      "sources": [
-        {
-          "bundle": "film",
-          "skill": "shape-story-blueprint",
-          "sections": [
-            "Workflow",
-            "Boundaries"
-          ]
-        }
-      ],
-      "adapter": "adapters/reader-review/SKILL.md"
     },
     "fitting": {
       "title": "定装参考图合成提示词",

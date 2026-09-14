@@ -71,7 +71,7 @@ def test_recommendation_worker_uses_fast_profile(client, monkeypatch, fast_model
     assert workspace['recommend_task_status']['status'] == 'completed'
     assert workspace['recommendations'] == options
     assert workspace['stage'] == 'style'
-    assert workspace['usage']['tokens'] == 300
+    assert 'usage' not in workspace
     assert len(calls) == 1
     with Session() as db:
         assert len(list(db.scalars(select(Task)))) == 1

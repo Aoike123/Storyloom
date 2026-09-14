@@ -1,4 +1,5 @@
 import os
+import shutil
 import uuid
 from pathlib import Path
 
@@ -12,18 +13,29 @@ import pytest
 from fastapi.testclient import TestClient
 from backend.app import app
 from backend.db import Base,engine,init_db
-from backend.seed import seed
 
 @pytest.fixture(autouse=True)
 def database():
     Base.metadata.drop_all(engine)
-    init_db();seed()
+    init_db()
     yield
+
+
+def pytest_sessionfinish(session, exitstatus):
+    engine.dispose()
+    shutil.rmtree(TEST_DATA, ignore_errors=True)
 
 @pytest.fixture
 def client():
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture
+def tmp_path():
+    path = TEST_DATA / 'tmp' / uuid.uuid4().hex
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 @pytest.fixture(scope='session')

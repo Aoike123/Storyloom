@@ -1,9 +1,7 @@
 'use client';
 import {useCallback,useEffect,useState} from 'react';
-import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import {ArrowLeft,ArrowRight,BookOpen,Check,Clapperboard,Settings2} from 'lucide-react';
-import ModelConfig from '../ModelConfig';
 import {activeStatuses,problemStatuses,InteractionFeedback,TaskProgress,WorkProgress,workStages,ProgressTask} from '../ProgressFeedback';
 import './author.css';
 import StyleProgress from '../StyleProgress';
@@ -18,29 +16,32 @@ import ImageRecovery from './ImageRecovery';
 import AssetFeedback from './AssetFeedback';
 import useModelPermission from './useModelPermission';
 import NodeSkillsPanel from '../NodeSkills';
-const Maintenance=dynamic(()=>import('../AdminWorkspace'),{ssr:false});
-async function api(path:string,body?:unknown,signal?:AbortSignal){const r=await fetch('/api/author'+path,body===undefined?{signal}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal});const d=await r.json();if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:'暂时无法完成操作，请稍后再试。');return d;}
+import {clearModelAccess,modelAccessHeaders,modelSetupLink,readModelAccess} from '../model-access';
+async function api(path:string,body?:unknown,signal?:AbortSignal){const headers=modelAccessHeaders();const r=await fetch('/api/author'+path,body===undefined?{headers,signal}:{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body),signal});const d=await r.json();if(r.status===401&&typeof window!=='undefined'){clearModelAccess();window.location.href=modelSetupLink(window.location.pathname+window.location.search);}if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:'暂时无法完成操作，请稍后再试。');return d;}
 const stages:Record<string,string>={style:'先为这个故事，选择一种气质。',preparing:'故事中的人物，正在走向画面。',assets_review:'这些形象，符合你的想象吗？',producing:'从静止的画面，到会动的故事。',compositing:'让人物、服装和场景对上。',storyboarding:'这段故事，拆成怎样的镜头？',rendering:'让分镜真正动起来。',film_review:'最后一次审片，让故事准备好登场。',published:'这段脑洞，已经有了画面。'};
 export default function Author(){
+ const [accessReady,setAccessReady]=useState(false);
  const [works,setWorks]=useState<any[]>([]),[selected,setSelected]=useState(''),[work,setWork]=useState<any>(null),[opening,setOpening]=useState(true);
  const [art,setArt]=useState(''),[tone,setTone]=useState(''),[confirmed,setConfirmed]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[messageError,setMessageError]=useState(false),[syncError,setSyncError]=useState(''),[updated,setUpdated]=useState('');
  const [paid,setPaid]=useModelPermission(selected);
- const [notes,setNotes]=useState<Record<string,string>>({}),[index,setIndex]=useState(0),[filter,setFilter]=useState('all'),[expanded,setExpanded]=useState(false),[settings,setSettings]=useState(false),[maintenance,setMaintenance]=useState(false);
+ const [notes,setNotes]=useState<Record<string,string>>({}),[index,setIndex]=useState(0),[filter,setFilter]=useState('all'),[expanded,setExpanded]=useState(false);
  const [viewedStep,setViewedStep]=useState<string|null>(null);
  const [refresh,setRefresh]=useState(0),[actionLabel,setActionLabel]=useState('正在提交操作，等待服务确认…');
  const refreshWorkspace=useCallback(()=>setRefresh(n=>n+1),[]);
  const recommendation=work?.recommend_task_status;
- const streamConnection=useProjectProgress(work,!maintenance,setWork,refreshWorkspace);
+ const streamConnection=useProjectProgress(work,true,setWork,refreshWorkspace);
+ useEffect(()=>{if(!readModelAccess()){window.location.replace(modelSetupLink(window.location.pathname+window.location.search));return;}setAccessReady(true);},[]);
  useEffect(()=>{
+  if(!accessReady)return;
   let live=true;const params=new URLSearchParams(window.location.search),id=params.get('work'),story=params.get('story');
   if(id){setSelected(id);setOpening(false);}
   else if(story){api('/stories/'+encodeURIComponent(story)+'/open',{}).then(d=>{if(live){setSelected(d.id);setWork(d);window.history.replaceState(null,'','/author?work='+encodeURIComponent(d.id));}}).catch(e=>{if(live){setMessage(e.message);setMessageError(true);}}).finally(()=>{if(live)setOpening(false);});}
   else setOpening(false);
   return()=>{live=false;};
- },[]);
- useEffect(()=>{let live=true;api('/projects').then(d=>{if(live){setWorks(d);const params=new URLSearchParams(window.location.search);if(!params.get('story')&&!params.get('work')&&d.length){setSelected(d[0].id);window.history.replaceState(null,'','/author?work='+encodeURIComponent(d[0].id));}}}).catch(e=>{if(live){setMessage(e.message);setMessageError(true);}});return()=>{live=false;};},[]);
+ },[accessReady]);
+ useEffect(()=>{if(!accessReady)return;let live=true;api('/projects').then(d=>{if(live){setWorks(d);const params=new URLSearchParams(window.location.search);if(!params.get('story')&&!params.get('work')&&d.length){setSelected(d[0].id);window.history.replaceState(null,'','/author?work='+encodeURIComponent(d[0].id));}}}).catch(e=>{if(live){setMessage(e.message);setMessageError(true);}});return()=>{live=false;};},[accessReady]);
  useEffect(()=>{
-  if(!selected||maintenance)return;
+  if(!selected)return;
   let live=true,pending=false,tracking=true;
   let timer:ReturnType<typeof setTimeout>|undefined,controller:AbortController|undefined;
   const schedule=()=>{
@@ -69,7 +70,7 @@ export default function Author(){
   void load();
   document.addEventListener('visibilitychange',visibilityChanged);
   return()=>{live=false;clearTimeout(timer);controller?.abort();document.removeEventListener('visibilitychange',visibilityChanged);};
- },[selected,refresh,maintenance]);
+ },[selected,refresh]);
  useEffect(()=>{const read=()=>setViewedStep(new URLSearchParams(window.location.search).get('step'));read();window.addEventListener('popstate',read);return()=>window.removeEventListener('popstate',read);},[]);
  useEffect(()=>{if(work){setArt(work.art||'');setTone(work.tone||'');}},[work?.id,work?.run_id]);
  useEffect(()=>{setConfirmed(false);setIndex(0);},[work?.stage,work?.creative?.version,viewedStep,selected]);
@@ -91,7 +92,6 @@ export default function Author(){
  const inFlight=[...(work?.jobs||[]),work?.task].some((t:ProgressTask|undefined)=>t&&!['legacy_trial','legacy_composition'].includes(t.production_phase||'')&&activeStatuses.includes(t.status));
  const ready=cards.length>0&&cards.every((c:any)=>c.asset&&c.task?.status==='completed')&&!inFlight;
  const activeShot=shots[index],recommending=activeStatuses.includes(work?.recommend_task_status?.status),currentStage=workStages.find(s=>s.id===stage);
- if(maintenance)return <><div className="studio-maintenance-return"><button className="button secondary" onClick={()=>setMaintenance(false)}>← 返回微小说制作</button></div><Maintenance/></>;
  return <main className="author-page">
   <header className="studio-header"><Link href="/" className="studio-brand">叙间<span>STORYLOOM / STUDIO</span></Link><Link className="studio-back" href="/"><ArrowLeft size={15}/>返回脑洞目录</Link></header>
   <div className="studio-heading"><div><span className="studio-eyebrow">MICROFICTION TO MOTION</span><h1>把一个脑洞，拍成一幕。</h1><p>阅读原文，选择风格，见证微小说成为漫剧的每一步。</p></div>{works.length>0&&<label className="studio-picker">继续已有制作<select aria-label="继续已有制作" value={selected} onChange={e=>{if(e.target.value)window.location.href='/author?work='+encodeURIComponent(e.target.value);}}><option value="">选择微小说</option>{works.map(w=><option value={w.id} key={w.id}>{w.title}</option>)}</select></label>}</div>
@@ -124,11 +124,9 @@ export default function Author(){
      </section>
      <section className="author-panel studio-activity" id="studio-activity"><div className="studio-section-heading"><h2>制作动态</h2><span>{jobs.filter(t=>t.status==='completed').length} 已完成 · {active.length} 进行中 · {problems.length} 需处理</span></div><div className="studio-filters">{[['all','全部'],['active','进行中'],['attention','需处理']].map(([value,label])=><button key={value} className={filter===value?'is-selected':''} aria-pressed={filter===value} onClick={()=>{setFilter(value);setExpanded(false);}}>{label}</button>)}</div><div className="author-task-history">{(expanded?filtered:filtered.slice(0,5)).map(t=><TaskProgress task={t} key={t.id}/>)}</div>{!filtered.length&&<p className="studio-note">{filter==='attention'?'当前没有需要处理的任务。':filter==='active'?'当前没有正在执行的任务。':'确定风格并开始制作后，每一步的实际状态都会显示在这里。'}</p>}{filtered.length>5&&<button className="studio-expand" onClick={()=>setExpanded(!expanded)}>{expanded?'收起记录':'查看全部 '+filtered.length+' 项任务'}</button>}<p className="studio-note">创作摘要、制作阶段和已完成素材会持续更新；每项任务的过程记录可展开查看。</p></section>
      <AttemptHistory attempts={work.attempt_history||[]}/>
-     {work.usage&&<aside className="author-usage"><strong>本作品用量</strong><span>{work.usage.tokens.toLocaleString()} token · {work.usage.images} 张图 · {work.usage.video_seconds.toFixed(1)} 秒视频</span><span>已知费用 ¥{work.usage.estimated_cny.toFixed(4)} · {work.usage.unpriced_calls} 次待核算</span><small>按已配置单价估算，实际费用以供应商账单为准。</small></aside>}
     </div>
    </div>
   </>}
-  <footer className="studio-footer"><span>叙间 · 从一篇微小说，到一个可观看的故事</span><button onClick={()=>setSettings(!settings)} aria-expanded={settings}><Settings2 size={14}/>制作设置与维护</button></footer>
-  {settings&&<section className="author-panel"><ModelConfig onSaved={async()=>{}}/><details className="studio-advanced"><summary>高级维护</summary><p>用于查看任务错误与恢复中断的制作。</p><button className="button secondary" onClick={()=>setMaintenance(true)}>打开维护工具</button></details></section>}
+  <footer className="studio-footer"><span>叙间 · 从一篇微小说，到一个可观看的故事</span><button onClick={()=>window.location.href=modelSetupLink(window.location.pathname+window.location.search)}><Settings2 size={14}/>切换模型额度</button></footer>
  </main>;
 }

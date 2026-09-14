@@ -6,7 +6,7 @@ from backend.environment import DEFAULTS
 
 def test_removed_edit_model_is_not_public_configuration(tmp_path,monkeypatch):
     assert 'IMAGE_EDIT_MODEL' not in DEFAULTS and 'IMAGE_EDIT_STEPS' not in DEFAULTS
-    monkeypatch.setattr(local_config,'ROOT',tmp_path)
+    monkeypatch.setattr(local_config,'env_file',lambda:tmp_path/'.env.local')
     (tmp_path/'.env.local').write_text('IMAGE_API_KEY=kept-key\n',encoding='utf-8')
     values={key:value for key,value in DEFAULTS.items() if not key.endswith('_API_KEY')}
     local_config.save_config(values)

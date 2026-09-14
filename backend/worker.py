@@ -1,15 +1,10 @@
 from fastapi import HTTPException
-import os
 import time
 import threading
-from pathlib import Path
 import httpx
 from sqlalchemy import select, update, or_, and_
 from .db import Record,Task,Session,uid,init_db,DATA
-from .seed import seed
-from .domain import Plan,demo_plan,validate_plan,prefix_at
-from .media import render_demo,export_entries,inspect_video
-from .providers import live_plan,submit_video,poll_video,ProviderError
+from .providers import submit_video,poll_video,ProviderError
 from .image_provider import generate_image,generate_from_references,save_image,local_frame_data
 from .video_storage import register_artifact, attach_artifact, verify_file
 from .task_activity import media_activity
@@ -21,7 +16,7 @@ def claim(owner):
         row=db.scalars(select(Task).where(or_(Task.status=='queued',and_(Task.status.in_(['running','waiting']),Task.lease<now)))
                        .order_by(Task.created).limit(1)).first()
         if not row:return None
-        if row.status=='running' and (row.kind=='author_flow' or row.kind in PRODUCTION_KINDS or (row.kind in ['plan','video','image','director','art_design','creative_revision','creative_watch','author_styles'] and row.payload.get('mode')=='live' and not row.result.get('provider_id'))):
+        if row.status=='running' and (row.kind=='author_flow' or row.kind in PRODUCTION_KINDS or (row.kind in ['video','image','director','art_design','creative_revision','creative_watch','author_styles'] and row.payload.get('mode')=='live' and not row.result.get('provider_id'))):
             # Paid submission may have succeeded before its response was recorded.
             changed=db.execute(update(Task).where(Task.id==row.id,Task.lease==row.lease,Task.status=='running')
                 .values(status='needs_review',message='执行中断且调用结果不确定，请核实供应商记录后处理。'))
@@ -59,16 +54,12 @@ def save_video_result(task_id,owner,p,result,source):
                   'events':[],'entry_state':{},'assets':[],'annotated':False,'source_task':task_id,
                   'director_id':p.get('director_id'),'director_version':p.get('director_version'),
                   'shot_id':p.get('shot_id'),'input_snapshot':p.get('input_snapshot')}
-            if p.get('beat'):
-                beat=p['beat'];data['narration']=beat['narration'];data['expected_changes']=beat['changes']
-                data['draft_events']=[{'at':round(artifact.data['playback']['properties']['duration']*.8,2),
-                                      'text':beat['narration'],'changes':beat['changes']}]
             clip=Record(id=clip_id,kind='clip',data=data);db.add(clip)
         attach_artifact(clip,artifact)
         duration=artifact.data['source']['properties']['duration']
         saved={**result,'clip_id':clip_id,'artifact_id':artifact.id,'media':clip.data['media'],'storage_schema_version':1}
         current.result=saved
-    from .billing import finish_video
+    from .provider_usage import finish_video
     finish_video(task_id,{'duration':duration})
     patch(task_id,owner,status='completed',progress=100,message='独立视频及素材来源已保存，等待审片与选取区间',result=saved)
 
@@ -76,7 +67,6 @@ def save_video_result(task_id,owner,p,result,source):
 def run_task(task_id,owner):
     with Session() as db:
         row=db.get(Task,task_id);kind=row.kind;p=dict(row.payload);result=dict(row.result)
-        session_id=row.session_id;revision=row.revision
     if kind=='author_styles':
         from .authors import recommend_styles
         recommend_styles(task_id,p,owner)
@@ -109,7 +99,7 @@ def run_task(task_id,owner):
                 if current.status!='running' or current.owner!=owner:raise ProviderError('导演任务已停止。')
                 project=db.get(Record,p['project_id'])
                 project.data={**project.data,key:value};project.version+=1
-                message=value if key=='phase' else {'treatment':'导演阐述已保存','board':'分镜已保存','board_plan':'专业镜头计划已保存，正在编写生成提示词','prompt_diagnostics':'生成提示词问题已保存','board_diagnostics':'分镜格式问题已保存，可查看具体字段','board_repairs':'分镜素材绑定已按唯一场景名称校正'}[key]
+                message=value if key=='phase' else {'treatment':'导演阐述已保存','treatment_diagnostics':'导演阐述输出问题已保存，正在自动重试','board':'分镜已保存','board_plan':'专业镜头计划已保存，正在编写生成提示词','prompt_diagnostics':'生成提示词问题已保存，正在自动重试','board_diagnostics':'分镜输出问题已保存，正在自动重试','board_repairs':'分镜素材绑定已按唯一场景名称校正'}[key]
                 project.data={**project.data,'events':[*project.data.get('events',[]),{'at':time.time(),'message':message}]}
                 current.progress=progress;current.message=message
         review=run_director(p,task_id,save_stage)
@@ -119,58 +109,7 @@ def run_task(task_id,owner):
             project=db.get(Record,p['project_id'])
             project.data={**project.data,'review':review,'status':'awaiting_preproduction' if p.get('stage')=='treatment' else 'pending_review'};project.version+=1
             current.status='completed';current.progress=100;current.message='导演阐述已完成，请选角、搭影棚并审核定装试拍' if p.get('stage')=='treatment' else '脑洞导演方案已生成，等待人工审核'
-            current.result={'project_id':project.id}
-    elif kind=='plan':
-        patch(task_id,owner,progress=20,message='重建暂停状态，检查改写与作者约束')
-        if p['mode']=='live':plan,usage=live_plan(p,task_id)
-        else:plan,usage=demo_plan(p['text'],p['state']),{}
-        errors=validate_plan(plan,p['state'])
-        if errors:
-            plan.status='needs_review';plan.suggestions=errors
-        with Session.begin() as db:
-            done=db.execute(update(Task).where(Task.id==task_id,Task.owner==owner,Task.status=='running')
-                .values(status='completed',progress=100,message='方案已就绪' if plan.status=='ready' else '改写需要调整',
-                        result={'plan':plan.model_dump(),'state':p['state'],'history':p['history'],'usage':usage,'checks':errors}))
-            if done.rowcount and plan.status=='ready' and p.get('auto_render') and p['mode']=='demo':
-                session=db.get(Record,session_id)
-                if session and session.version==revision:
-                    child_id=f'render_{task_id}'
-                    if not db.get(Task,child_id):
-                        db.add(Task(id=child_id,kind='render',session_id=session_id,revision=revision,
-                                    payload={**p,'plan':plan.model_dump(),'mode':'demo'}))
-                        db.execute(update(Record).where(Record.id==session_id,Record.version==revision)
-                                   .values(data={**session.data,'active_task':child_id}))
-    elif kind=='render':
-        plan=Plan.model_validate(p['plan'])
-        if plan.status!='ready' or validate_plan(plan,p['state']):raise ProviderError('方案尚未通过逻辑检查。')
-        generated=[]
-        for i,beat in enumerate(plan.beats):
-            with Session() as db:
-                session=db.get(Record,session_id)
-                if not session or session.version!=revision:
-                    patch(task_id,owner,status='superseded',message='有更新的改写，旧结果不进入播放列表');return
-            clip_id=f'{task_id}_clip{i}'
-            patch(task_id,owner,progress=10+int(i/len(plan.beats)*75),message=f'制作示意片段 {i+1}/{len(plan.beats)}')
-            media=render_demo(clip_id,beat.title,beat.duration,'security' if beat.changes.get('location')=='security' else 'platform')
-            clip={'title':beat.title,'duration':beat.duration,'scene':'branch','media':media,'demo':True,'status':'approved',
-                  'narration':beat.narration,'reason':beat.reason,'events':[{'at':beat.duration*.8,'text':beat.narration,'changes':beat.changes}],
-                  'assets':[],'entry_state':{},'source_task':task_id,'review_note':'程序示意片段，已检查结构化状态；不是人工审核的真实视频'}
-            with Session.begin() as db:
-                if not db.get(Record,clip_id):db.add(Record(id=clip_id,kind='clip',data=clip))
-            generated.append({'clip_id':clip_id,'start':0,'end':beat.duration})
-        entries=prefix_at(p['entries'],p['index'],p['offset'])+generated+[{'clip_id':'clip_end','start':0,'end':16}]
-        with Session.begin() as db:
-            owned=db.execute(update(Task).where(Task.id==task_id,Task.owner==owner,Task.status=='running')
-                             .values(progress=99,message='正在提交播放列表'))
-            if not owned.rowcount:return
-            session=db.get(Record,session_id)
-            if session and session.version==revision:
-                data={**session.data,'entries':entries,'active_task':None,'last_plan':plan.model_dump()}
-                changed=db.execute(update(Record).where(Record.id==session_id,Record.version==revision).values(data=data,version=revision+1))
-                status='completed' if changed.rowcount else 'superseded'
-            else:status='superseded'
-            db.execute(update(Task).where(Task.id==task_id,Task.owner==owner,Task.status=='running').values(status=status,progress=100,
-                message='过渡片段已接入，可继续播放或再次改写' if status=='completed' else '旧结果已隔离',result={'entries':entries,'clip_ids':[x['clip_id'] for x in generated]}))
+            current.result={**current.result,'project_id':project.id}
     elif kind=='image':
         from .asset_workflow import validate_dependencies
         with Session() as db:validate_dependencies(db,p)
@@ -271,46 +210,16 @@ def run_task(task_id,owner):
             patch(task_id,owner,status='needs_review',message='等待超过一小时，已保留任务编号供核实',result=result)
         else:
             patch(task_id,owner,status='waiting',progress=45,message='供应商正在生成，已保存任务编号',result=result,lease=time.time()+10)
-    elif kind=='bridge':
-        with Session.begin() as db:
-            owned=db.execute(update(Task).where(Task.id==task_id,Task.owner==owner,Task.status=='running').values(progress=12))
-            if not owned.rowcount:return
-            session=db.get(Record,session_id)
-            if not session or session.version!=revision:
-                db.execute(update(Task).where(Task.id==task_id).values(status='superseded',message='新改写已替代此过渡'));return
-            children=list(result.get('children',[]))
-            if not children:
-                for i,beat in enumerate(p['plan']['beats']):
-                    child_id=f'{task_id}_video{i}';children.append(child_id)
-                    if not db.get(Task,child_id):
-                        db.add(Task(id=child_id,kind='video',session_id=session_id,revision=revision,
-                            payload={'mode':'live','title':beat['title'],'beat':beat,
-                                     'prompt':'统一漫画风格。人物林夏：短发、米白风衣。场景：雨夜旧站台或值班室。'+beat['narration']}))
-                db.execute(update(Task).where(Task.id==task_id,Task.owner==owner,Task.status=='running')
-                           .values(status='waiting',lease=time.time()+10,progress=10,result={'children':children},message='逐镜生成真实视频，完成后需要审核与时间标注'))
-                return
-            child_rows=[db.get(Task,c) for c in children]
-            if all(c.status=='completed' for c in child_rows):
-                clip_ids=[c.result['clip_id'] for c in child_rows]
-                db.execute(update(Task).where(Task.id==task_id,Task.owner==owner,Task.status=='running')
-                    .values(status='needs_review',progress=90,result={'children':children,'clip_ids':clip_ids},message='真实片段已生成，请在原版制作页标注、审核，再确认接入'))
-            elif any(c.status in ['failed','needs_review','cancelled','superseded'] for c in child_rows):
-                db.execute(update(Task).where(Task.id==task_id,Task.owner==owner,Task.status=='running')
-                    .values(status='needs_review',message='部分镜头未完成。已有片段已保留，不能自动接入主线。'))
-            else:
-                db.execute(update(Task).where(Task.id==task_id,Task.owner==owner,Task.status=='running')
-                    .values(status='waiting',lease=time.time()+10,progress=20+int(60*sum(c.status=='completed' for c in child_rows)/len(children)),message='等待分镜生成完成'))
-    elif kind=='export':
-        with Session() as db:clips={r.id:r.data for r in db.scalars(select(Record).where(Record.kind=='clip'))}
-        media=export_entries(p['entries'],clips,task_id)
-        patch(task_id,owner,status='completed',progress=100,message='示意版已导出（当前无配音）',result={'media':media})
     else:raise ProviderError('未知任务类型')
 
 def process_one(owner):
     task_id=claim(owner)
     if not task_id:return False
+    with Session() as db:access_id=db.get(Task,task_id).session_id
     stop=threading.Event();thread=threading.Thread(target=heartbeat,args=(task_id,owner,stop),daemon=True);thread.start()
-    try:run_task(task_id,owner)
+    try:
+        from .model_access import access_scope
+        with access_scope(access_id):run_task(task_id,owner)
     except HTTPException as exc:patch(task_id,owner,status='needs_review',message=str(exc.detail)[:900])
     except ProviderError as exc:patch(task_id,owner,status='needs_review',message=str(exc)[:900])
     except Exception as exc:
@@ -320,7 +229,7 @@ def process_one(owner):
     return True
 
 if __name__=='__main__':
-    init_db();seed();owner=uid('worker')
+    init_db();owner=uid('worker')
     print('Story worker ready',flush=True)
     while True:
         with Session.begin() as db:

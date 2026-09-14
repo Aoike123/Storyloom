@@ -88,8 +88,8 @@ def test_old_scheduler_and_assets_cannot_update_or_feed_new_round(creative):
     with Session.begin() as db:
         db.get(Task,'old-flow').status='needs_review'
         task=db.get(Task,old['items'][0]['task_id']);task.status='failed'
-    assert creative.post('/api/tasks/old-flow/resume',json={}).status_code==409
-    assert creative.post('/api/tasks/'+task.id+'/resume',json={}).status_code==409
+    assert creative.post('/api/tasks/old-flow/resume',json={}).status_code==404
+    assert creative.post('/api/tasks/'+task.id+'/resume',json={}).status_code==404
     with Session() as db:
         asset=db.get(Record,task.result['asset_id'])
         with pytest.raises(HTTPException,match='旧轮次'):asset_workflow.validate_asset_origin(db,asset)
@@ -115,18 +115,3 @@ def test_retest_invalidates_published_version_without_deleting_media(creative):
     assert media.read_bytes()==b'historical-video'
     assert creative.post('/api/director/projects/pid/archive',json={'version':version,'archived':False}).status_code==409
     assert creative.post('/api/reader/wishes',json={'release_id':'old-release','index':0,'offset':0,'text':'新的想法'}).status_code==409
-
-
-def test_invalidated_base_asset_cannot_generate_video_via_generic_api(creative,monkeypatch):
-    from backend import app as application
-    monkeypatch.setattr(application,'settings',lambda:{'paid_enabled':True,'video_configured':True,'editable':{'VIDEO_PROVIDER':'minimax'}})
-    old=completed_work(creative)
-    with Session.begin() as db:
-        task=db.get(Task,old['items'][0]['task_id'])
-        asset=db.get(Record,task.result['asset_id'])
-        asset.data={**asset.data,'status':'approved'}
-        asset_id=asset.id
-    assert restart(creative).status_code==200
-    response=creative.post('/api/video',json={'asset_id':asset_id,'prompt':'静态素材生成视频','confirm_paid':True})
-    assert response.status_code==409 and '旧轮次' in response.json()['detail']
-    with Session() as db:assert not list(db.scalars(select(Task).where(Task.kind=='video')))

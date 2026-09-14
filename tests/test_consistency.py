@@ -37,7 +37,7 @@ def test_gate_reference_change_and_sample_remake(client):
         with pytest.raises(HTTPException):c.ready(db,'d','S01')
     assert client.post('/api/consistency/d',json=body).status_code==409
 
-def test_reference_payload_and_separate_billing(client,monkeypatch):
+def test_reference_payload_and_separate_usage_records(client,monkeypatch):
     prepare(client);calls=[];usage=[]
     monkeypatch.setattr(ip,'settings',lambda:None)
     monkeypatch.setenv('IMAGE_PROVIDER','siliconflow');monkeypatch.setenv('IMAGE_ENDPOINT','https://example.test/images')

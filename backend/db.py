@@ -24,6 +24,12 @@ Session = sessionmaker(engine, expire_on_commit=False)
 class Base(DeclarativeBase):
     pass
 
+
+def _current_model_access_id():
+    from .model_access import current_access_id
+
+    return current_access_id()
+
 class Record(Base):
     __tablename__ = 'records'
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
@@ -37,7 +43,9 @@ class Task(Base):
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
     kind: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(32), default='queued', index=True)
-    session_id: Mapped[str] = mapped_column(String(80), default='')
+    # New work inherits the anonymous model-access session active for this
+    # browser request or parent worker task. No API key is stored on the task.
+    session_id: Mapped[str] = mapped_column(String(80), default=_current_model_access_id)
     revision: Mapped[int] = mapped_column(Integer, default=0)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     result: Mapped[dict] = mapped_column(JSON, default=dict)

@@ -159,9 +159,9 @@ fal 公布的 0.44 秒对应 5 秒 480p 文生视频的 GPU 去噪耗时，不�
 | backend/production.py，save_wish；web/app/ReaderExperience.tsx | 当前只保存愿望，尚不生成/播放真实分支；新增分支任务与动态清单 |
 | backend/consistency.py，image_context | 已有参考素材、资产版本和连续性状态；扩展为入口、出口和可检索回归约束 |
 | backend/director.py，Shot | 已有连续性、人物认知和生成/剪辑时长；补结构化事件、依赖条件和切点 |
-| backend/providers.py，chat_json/live_plan | 当前非流式完整 JSON，规划后再一次模型检查；新建小范围规划路径，不把整个导演制作流程放入实时请求 |
+| backend/providers.py，chat_json | 当前服务于作者制作节点；未来若实现互动规划，应新建独立的小范围路径，不把整个导演制作流程放入实时请求 |
 | backend/providers.py，submit_video | 当前视频请求只传首帧；补尾帧与供应商专用适配，不能只换 URL 接 fal |
-| backend/domain.py，JOIN_STATE | 旧演示固定全局回归状态；改为每部作品、每个节点的可检验条件与已看事件 |
+| 新的互动领域模型 | 按每部作品、每个节点保存可检验条件与已看事件，不复用已删除的固定演示状态 |
 | backend/worker.py，video 等待分支 | 未完成后等待 10 秒才可再次查询；交互任务需独立优先级、适当并发、完成通知或符合供应商限制的短轮询 |
 | backend/worker.py，视频入库 | 目前完整下载、探测再入库，且待审核；需逐镜媒体就绪和质量门槛，不能仅删等待就称为实时 |
 | web/app/ReaderExperience.tsx，video key={index} | 当前逐镜重建 video 元素，未预加载下一镜；改为就绪事件驱动的预加载与切换 |

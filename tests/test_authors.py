@@ -22,7 +22,6 @@ def test_author_workspace_is_shared_without_sign_in(story_api):
     assert b.get('/api/author/projects').json()[0]['id']==pid
     assert b.get('/api/author/projects/'+pid).status_code==200
     assert b.get('/api/settings').status_code==200
-    assert b.get('/api/bootstrap').status_code==200
     (DATA/'media/unpublished.png').write_bytes(b'image')
     assert a.get('/media/unpublished.png').status_code==200
     assert b.get('/media/unpublished.png').status_code==200

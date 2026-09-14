@@ -5,15 +5,25 @@ from dotenv import dotenv_values,load_dotenv
 
 ROOT=Path(__file__).resolve().parents[1]
 DEFAULTS={
-    'LLM_BASE_URL':'https://api.openai-next.com/v1','LLM_MODEL':'','LLM_FAST_MODEL':'',
-    'LLM_READER_MODEL':'','LLM_READER_REVIEW_MODEL':'',
+    'LLM_BASE_URL':'https://api.deepseek.com','LLM_MODEL':'deepseek-chat','LLM_FAST_MODEL':'deepseek-chat',
     'LLM_API_KEY':'','LLM_MAX_TOKENS':'8192','LLM_FAST_MAX_TOKENS':'2048','LLM_TIMEOUT':'120',
-    'LLM_READER_MAX_TOKENS':'4096','LLM_READER_REVIEW_MAX_TOKENS':'1536','LLM_READER_TIMEOUT':'90',
     'IMAGE_PROVIDER':'siliconflow','IMAGE_ENDPOINT':'https://api.siliconflow.cn/v1/images/generations',
     'IMAGE_MODEL':'Tongyi-MAI/Z-Image-Turbo','IMAGE_API_KEY':'',
     'VIDEO_PROVIDER':'minimax','VIDEO_ENDPOINT':'https://api.minimax.cn/v2/video_generation',
     'VIDEO_MODEL':'MiniMax-H3-Max','VIDEO_API_KEY':'','VIDEO_DURATION':'8','VIDEO_RESOLUTION':'768P',
     'ALLOW_PAID_CALLS':'false',
+}
+
+# Public visitors may supply credentials, but never transport targets or model
+# identifiers. Keeping this contract in code prevents a browser request from
+# redirecting operator or visitor keys to an arbitrary endpoint.
+LOCKED_MODEL_CONFIG={
+    'LLM_PROVIDER':'deepseek','LLM_BASE_URL':'https://api.deepseek.com',
+    'LLM_MODEL':'deepseek-chat','LLM_FAST_MODEL':'deepseek-chat',
+    'IMAGE_PROVIDER':'siliconflow','IMAGE_ENDPOINT':'https://api.siliconflow.cn/v1/images/generations',
+    'IMAGE_MODEL':'Tongyi-MAI/Z-Image-Turbo',
+    'VIDEO_PROVIDER':'minimax','VIDEO_ENDPOINT':'https://api.minimax.cn/v2/video_generation',
+    'VIDEO_MODEL':'MiniMax-H3-Max','VIDEO_DURATION':'8','VIDEO_RESOLUTION':'768P',
 }
 def env_file():
     return Path(os.getenv('STORYLOOM_ENV_FILE',str(ROOT/'.env.local')))
@@ -21,7 +31,7 @@ def env_file():
 def load_bootstrap_environment():
     load_dotenv(env_file(),override=False)
 
-def model_config():
+def base_model_config():
     # Return a per-request snapshot. Changing one model must not mutate another request's environment.
     keys=set(DEFAULTS)|{'LLM_PROVIDER','LLM_ENDPOINT'}
     configured={k:os.environ[k] for k in keys if k in os.environ}
@@ -36,3 +46,9 @@ def model_config():
         configured['LLM_BASE_URL']=legacy.rstrip('/').removesuffix('/chat/completions')
     values={**DEFAULTS,**configured}
     return values
+
+
+def model_config():
+    from .model_access import effective_model_config
+
+    return effective_model_config(base_model_config())

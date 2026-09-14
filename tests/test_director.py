@@ -34,7 +34,7 @@ def recoverable_board():
 @pytest.fixture
 def setup_source(client,monkeypatch):
     with Session.begin() as db:db.add(Record(id='source_test',kind='story_source',data={'title':'脑洞','labels':['脑洞'],'content':TEXT,'content_hash':'testhash','completeness':'unknown'}))
-    monkeypatch.setattr(d,'settings',lambda:{'paid_enabled':True,'llm_configured':True,'paid_limit':3,'paid_used':0,'image_configured':True})
+    monkeypatch.setattr(d,'settings',lambda:{'paid_enabled':True,'llm_configured':True,'image_configured':True})
     return client
 
 

@@ -2,7 +2,7 @@ import json
 import httpx
 import pytest
 from sqlalchemy import select
-from backend import image_provider,worker,billing
+from backend import image_provider,worker,provider_usage
 from backend.db import Session,Record,Task,task_dict
 from backend.image_errors import response_error,can_retry
 
@@ -12,7 +12,7 @@ def image_call(monkeypatch):
     cfg={'IMAGE_PROVIDER':'siliconflow','IMAGE_MODEL':'test-image','IMAGE_API_KEY':'sk-private-image-key',
          'IMAGE_ENDPOINT':'https://api.siliconflow.cn/v1/images/generations'}
     monkeypatch.setattr(image_provider,'model_config',lambda:cfg)
-    monkeypatch.setattr(image_provider,'reserve_call',lambda kind,tid:billing.begin(kind,'test-image',tid))
+    monkeypatch.setattr(image_provider,'reserve_call',lambda kind,tid:provider_usage.begin(kind,'test-image',tid))
     with Session.begin() as db:
         db.add(Task(id='error-image',kind='image',payload={'mode':'live','title':'公司急救培训室','prompt':'无人培训教室的场景设定图'}))
     return cfg
@@ -37,7 +37,8 @@ def test_rejection_is_recorded_once_with_diagnostics_and_terminal_activity(image
         assert activity['phase']=='rejected' and activity['events'][-1]['at']==error['captured_at']
         assert db.scalar(select(Record).where(Record.kind=='usage')).data['status']=='rejected'
     assert len(calls)==1
-    public=next(t for t in client.get('/api/tasks').json() if t['id']=='error-image')
+    with Session() as db:
+        public=task_dict(db.get(Task,'error-image'))
     assert public['provider_error']==error
 
 

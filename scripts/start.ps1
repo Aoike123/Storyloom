@@ -18,8 +18,6 @@ $nodePath = if ($nodeCommand) { $nodeCommand.Source } else { Join-Path $env:USER
 if (!(Test-Path -LiteralPath $nodePath)) { throw 'Node.js is required.' }
 if (!(Test-Path -LiteralPath '.env.local')) { Copy-Item -LiteralPath '.env.example' -Destination '.env.local' }
 New-Item -ItemType Directory -Force -Path (Join-Path $projectRoot 'data\logs') | Out-Null
-& $pythonPath -m backend.media
-if ($LASTEXITCODE -ne 0) { throw 'Demo media initialization failed.' }
 $nextPath = Join-Path $projectRoot 'web\node_modules\next\dist\bin\next'
 $mode = if ($Dev) { 'dev' } else { 'start' }
 if (!$Dev -and !(Test-Path -LiteralPath 'web\.next\BUILD_ID')) { throw 'Build frontend first, or use -Dev.' }

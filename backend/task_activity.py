@@ -122,7 +122,7 @@ def model_activity(task_id,payload,profile):
         if not task or task.kind not in MODEL_KINDS or task.status!='running' or task.payload.get('mode')!='live':return None
         owner=task.owner
     schema=payload.get('schema') or {}
-    title=CALL_TITLES.get(schema.get('title'),'检查剧情变化' if profile=='reader_review' else '构思创作方案')
+    title=CALL_TITLES.get(schema.get('title'),'构思创作方案')
     return Activity(task_id,owner,title)
 
 

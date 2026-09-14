@@ -20,24 +20,6 @@ def clip_from(db, path, cid='storage_clip'):
     return clip,artifact
 
 
-def test_real_upload_is_independent_faststart_av_and_serves_ranges(client,sample_video):
-    response=client.post('/api/upload',files={'file':('scene.mp4',sample_video.read_bytes(),'video/mp4')})
-    assert response.status_code==200,response.text
-    data=response.json()
-    storage=client.get(f'/api/clips/{data["clip_id"]}/storage').json()
-    artifact=storage['artifact']
-    assert storage['schema_version']==1
-    assert artifact['source']['sha256']==digest(sample_video)
-    assert artifact['preparation']=='reused'
-    meta=artifact['playback']['properties']
-    assert meta['frame_count']==120 and meta['fps']=={'num':24,'den':1}
-    assert meta['audio']=={'present':True,'codec':'aac','profile':'LC','sample_rate':48000,'channels':2}
-    partial=client.get(data['media'],headers={'Range':'bytes=0-31'})
-    assert partial.status_code==206 and partial.content==sample_video.read_bytes()[:32]
-    with Session() as db:
-        assert db.get(Record,data['clip_id']).data['status']=='pending'
-
-
 def test_actual_trim_frames_and_old_selection_are_immutable(sample_video):
     with Session.begin() as db:
         clip,artifact=clip_from(db,sample_video)
@@ -116,11 +98,7 @@ def test_file_tampering_prevents_publishing_a_selection(sample_video):
         with pytest.raises(StorageError,match='摘要'):use_entry(db,use,'occurrence_1')
 
 
-def test_pending_or_invalid_file_is_not_registered(client):
-    r=client.post('/api/upload',files={'file':('broken.mp4',b'not a video','video/mp4')})
-    assert r.status_code==422
-    with Session() as db:
-        assert not list(db.scalars(select(Record).where(Record.kind=='clip_artifact')))
+def test_invalid_media_paths_are_rejected():
     with pytest.raises(StorageError):media_path('/media/../story.db')
     with pytest.raises(StorageError):media_path('https://example.com/video.mp4')
 

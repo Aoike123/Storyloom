@@ -6,6 +6,7 @@ import httpx
 from PIL import Image
 from .db import DATA,save_generation_request
 from .environment import model_config
+from .model_access import mark_public_provider_unavailable
 from .providers import ProviderError,settings,reserve_call,endpoint
 from .reference_image_model import REFERENCE_IMAGE_MODEL, REFERENCE_IMAGE_STEPS, MAX_REFERENCE_IMAGES
 
@@ -42,7 +43,7 @@ def _request_image(body,task_id,cfg,*,input_mode,reference_count=0):
     # Transport, accounting, and diagnostics are shared; generation/edit inputs are not.
     target=endpoint('image',cfg)
     entry=reserve_call('image',task_id,model=body['model']) if reference_count else reserve_call('image',task_id)
-    from .billing import finish
+    from .provider_usage import finish
     try:
         save_generation_request(task_id,model=body['model'],prompt=body['prompt'],image_size=body.get('image_size'),reference_count=reference_count,input_mode=input_mode,inference_steps=body.get('num_inference_steps'))
         r=httpx.post(target,headers={'Authorization':f'Bearer {cfg.get("IMAGE_API_KEY")}'},json=body,timeout=180)
@@ -51,6 +52,7 @@ def _request_image(body,task_id,cfg,*,input_mode,reference_count=0):
             error=response_error(r,cfg)
             save_error(task_id,error)
             finish(entry,status='rejected')
+            mark_public_provider_unavailable('image',r.status_code)
             raise ProviderError(error_message(error))
         url=r.json()['images'][0]['url']
         if not isinstance(url,str) or urlparse(url).scheme!='https': raise ValueError()

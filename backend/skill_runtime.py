@@ -6,10 +6,12 @@ import re
 import time
 from pathlib import Path
 from string import Template
+from pydantic import ValidationError
 from .db import Record,Task,Session
-from .providers import ProviderError
+from .providers import ProviderError,ModelOutputError
 
 ROOT=Path(__file__).with_name('node_skills')
+MODEL_OUTPUT_RETRIES=3
 
 
 def _read(path):
@@ -64,7 +66,7 @@ def catalog():
     return [public(snapshot(node)) for node in json.loads(_read('registry.json'))['nodes']]
 
 
-def _start(task_id,node):
+def _start(task_id,node,attempt=0):
     with Session.begin() as db:
         task=db.get(Task,task_id)
         if task is not None and task.status!='running':raise ProviderError('任务当前未运行，专业节点不会继续调用模型。')
@@ -74,7 +76,8 @@ def _start(task_id,node):
         task.payload={**task.payload,'node_skill_pins':{**pins,node:binding}}
         key='skill_trace_'+task_id;record=db.get(Record,key)
         calls=list(record.data['calls']) if record else []
-        index=len(calls);calls.append({**public(binding),'status':'running','started_at':time.time()})
+        index=len(calls);calls.append({**public(binding),'status':'running','started_at':time.time(),
+            'output_attempt':attempt+1,'retry_number':attempt})
         if record:record.data={'calls':calls}
         else:db.add(Record(id=key,kind='node_skill_trace',data={'calls':calls}))
         return binding,index
@@ -88,31 +91,69 @@ def _finish(task_id,index,status):
         record.data={'calls':calls}
 
 
-def call_node(chat,node,payload,task_id,profile='default',**kwargs):
-    binding,index=_start(task_id,node)
-    try:
-        allowed=binding['inputs']
-        if allowed is not None and set(payload)-set(allowed):raise ProviderError('节点收到越界输入：'+node)
-        if binding['schema'] and payload.get('schema',{}).get('title')!=binding['schema']:
-            raise ProviderError('节点输出格式与绑定契约不一致：'+node)
-        digest=hashlib.sha256(json.dumps([task_id,node,binding['sha256'],payload],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
-        cache_id='node_output_'+digest[:48]
-        with Session() as db:
-            cached=db.get(Record,cache_id)
-            if cached:
-                value=(cached.data['response'],cached.data.get('usage',{}))
-                _finish(task_id,index,'reused')
-                return value
-        value=chat(binding['system'],payload,task_id,profile,**kwargs)
-        if index is not None:
-            with Session.begin() as db:
-                if not db.get(Record,cache_id):db.add(Record(id=cache_id,kind='node_output',data={
-                    'task_id':task_id,'node':node,'input_sha256':digest,'response':value[0],'usage':value[1]}))
-        _finish(task_id,index,'completed')
-        return value
-    except Exception:
-        _finish(task_id,index,'failed')
-        raise
+def _validation_message(exc):
+    if isinstance(exc,ValidationError):
+        return '；'.join('.'.join(str(x) for x in error['loc'])+'：'+error['msg']
+            for error in exc.errors(include_input=False,include_url=False)[:5])
+    return str(exc) or type(exc).__name__
+
+
+def _record_output_error(task_id,node,attempt,message,cache_id=None):
+    with Session.begin() as db:
+        task=db.get(Task,task_id)
+        if not task:return
+        entry={'node':node,'attempt':attempt+1,'retry_number':attempt,'message':message[:900],
+               'at':time.time(),**({'output_record':cache_id} if cache_id else {})}
+        errors=[*task.result.get('model_output_errors',[])]
+        signature=(node,attempt,cache_id,message)
+        if not any((item.get('node'),item.get('retry_number'),item.get('output_record'),item.get('message'))==signature for item in errors):
+            errors.append(entry)
+        task.result={**task.result,'model_output_errors':errors[-20:]}
+        if attempt<MODEL_OUTPUT_RETRIES:
+            task.message=f'{node} 输出未通过约定，正在进行第 {attempt+1}/{MODEL_OUTPUT_RETRIES} 次重试'
+
+
+def call_node(chat,node,payload,task_id,profile='default',validator=None,**kwargs):
+    """Call one structured node and retry only completed-but-invalid model outputs."""
+    feedback=''
+    for attempt in range(MODEL_OUTPUT_RETRIES+1):
+        binding,index=_start(task_id,node,attempt)
+        cache_id=None
+        try:
+            allowed=binding['inputs']
+            if allowed is not None and set(payload)-set(allowed):raise ProviderError('节点收到越界输入：'+node)
+            if binding['schema'] and payload.get('schema',{}).get('title')!=binding['schema']:
+                raise ProviderError('节点输出格式与绑定契约不一致：'+node)
+            fingerprint=[task_id,node,binding['sha256'],payload]
+            if attempt:fingerprint.append({'output_retry':attempt,'validation_feedback':feedback})
+            digest=hashlib.sha256(json.dumps(fingerprint,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+            cache_id='node_output_'+digest[:48]
+            with Session() as db:
+                cached=db.get(Record,cache_id)
+                value=(cached.data['response'],cached.data.get('usage',{})) if cached else None
+            reused=value is not None
+            if value is None:
+                retry_system=binding['system']
+                if feedback:
+                    retry_system+='\n\n# 上一次输出校验结果\n上一次输出未通过调用方约定：'+feedback[:1200]+'\n请重新生成完整 JSON，逐项修正，不要解释。'
+                value=chat(retry_system,payload,task_id,profile,**kwargs)
+                if index is not None:
+                    with Session.begin() as db:
+                        if not db.get(Record,cache_id):db.add(Record(id=cache_id,kind='node_output',data={
+                            'task_id':task_id,'node':node,'input_sha256':digest,'response':value[0],
+                            'usage':value[1],'output_attempt':attempt+1,'retry_number':attempt}))
+            validated=validator(value[0]) if validator else value[0]
+            _finish(task_id,index,'reused' if reused else 'completed')
+            return validated,value[1]
+        except (ModelOutputError,ValidationError,ValueError) as exc:
+            feedback=_validation_message(exc)
+            _finish(task_id,index,'invalid')
+            _record_output_error(task_id,node,attempt,feedback,cache_id)
+            if attempt==MODEL_OUTPUT_RETRIES:
+                raise ModelOutputError(f'{node} 首次输出及 {MODEL_OUTPUT_RETRIES} 次重试均未通过约定：{feedback}') from None
+        except Exception:
+            _finish(task_id,index,'failed')
+            raise
 
 
 def render_node(node,values):

@@ -98,7 +98,8 @@ def test_request_prompt_snapshot_survives_image_completion_and_is_exposed(client
         assert task.status=='completed'
         assert task.result['generation_request']['prompt']==sent[0]['prompt']==prompt
         task.payload={**task.payload,'prompt':'changed after submission'}
-    public=client.get('/api/tasks').json()[0]['generation']
+    with Session() as db:
+        public=task_dict(db.get(Task,'sheet-image'))['generation']
     assert public['source']=='request' and public['prompt']==prompt
     assert public['model']==sent[0]['model']=='test-image-model'
     assert public['image_size']=='1024x1024' and public['asset_kind']=='character_sheet'

@@ -207,7 +207,7 @@ export default function ReaderExperience() {
   return <div className="reader-world">
     <nav className="reader-nav">
       <button className="reader-brand" onClick={() => {if (story) back(); else window.scrollTo({top: 0, behavior: 'instant'});}}>叙间<span>每个故事，都有另一种可能</span></button>
-      <div className="demo-entry-links"><Link href="/author" prefetch={false} onClick={() => {if (!story) remember('nav:author');}} data-reader-focus="nav:author">漫剧生成 <ArrowRight size={14}/></Link></div>
+      <div className="reader-entry-links"><Link href="/setup?next=%2Fauthor" prefetch={false} onClick={() => {if (!story) remember('nav:author');}} data-reader-focus="nav:author">漫剧生成 <ArrowRight size={14}/></Link></div>
     </nav>
     {!story ? <div className="reader-catalog-page">
       <ReaderHero items={featured} loading={loading || (!!catalog?.items.length && !featured.length)} activeId={activeId} onActiveChange={setActiveId} onOpen={openItem}/>

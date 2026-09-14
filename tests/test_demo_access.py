@@ -4,20 +4,24 @@ from backend.app import app
 from backend.db import DATA, Session, Record, Task, init_db
 
 
-def test_demo_visitors_can_use_management_and_author_apis():
+def test_local_visitors_can_use_current_apis():
     with TestClient(app) as visitor:
-        for path in ['/api/health', '/api/platform', '/api/bootstrap', '/api/tasks',
-                     '/api/settings', '/api/billing', '/api/author/projects', '/api/reader/stories']:
+        for path in ['/api/health', '/api/platform', '/api/settings',
+                     '/api/author/projects', '/api/reader/stories']:
             response = visitor.get(path)
             assert response.status_code == 200, path
             assert 'set-cookie' not in response.headers
-        # A real management write works without creating an account or authorizing a session.
-        result = visitor.post('/api/assets', json={'name': '共享演示素材', 'description': '角色参考图'})
-        assert result.status_code == 200
-        asset_id = result.json()['id']
-        assert visitor.post('/api/review/' + asset_id, json={'status': 'approved'}).status_code == 200
-        assert visitor.post('/api/sessions').status_code == 200
         assert not visitor.cookies
+
+
+def test_legacy_demo_routes_and_seed_are_removed(client):
+    for path in ['/api/bootstrap', '/api/tasks', '/api/billing']:
+        assert client.get(path).status_code == 404
+    for path in ['/api/sessions', '/api/assets', '/api/image', '/api/video']:
+        assert client.post(path, json={}).status_code == 404
+    with Session() as db:
+        assert db.get(Record, 'story_demo') is None
+        assert db.get(Record, 'paid_budget') is None
 
 
 def test_account_endpoints_are_removed():
@@ -29,7 +33,7 @@ def test_account_endpoints_are_removed():
             assert visitor.get(prefix + '/session').status_code == 404
 
 
-def test_demo_cleanup_preserves_content_and_task_leases():
+def test_legacy_account_cleanup_preserves_content_and_task_leases():
     (DATA / 'admin-access.txt').write_text('obsolete-demo-password', encoding='utf-8')
     media = DATA / 'media' / 'legacy.png'
     media.write_bytes(b'keep-existing-image')

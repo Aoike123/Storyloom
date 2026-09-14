@@ -35,10 +35,12 @@ export type Catalog = {
   warning?: string;
 };
 
-export const productionLink = (item: {work_id?: string | null; source_work_id?: string; project_id?: string | null}) =>
-  item.project_id ? '/author?work=' + encodeURIComponent(item.project_id)
+export const productionLink = (item: {work_id?: string | null; source_work_id?: string; project_id?: string | null}) => {
+  const author = item.project_id ? '/author?work=' + encodeURIComponent(item.project_id)
     : item.work_id || item.source_work_id ? '/author?story=' + encodeURIComponent((item.work_id || item.source_work_id)!)
     : '/author';
+  return '/setup?next=' + encodeURIComponent(author);
+};
 
 export const canWatch = (item: CatalogItem) => !!item.release?.entries.length;
 export const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;

@@ -65,7 +65,7 @@ WORKFLOWS['author-brainstorm-v4']={
 
 WORKFLOWS['author-brainstorm-v5']={
     **WORKFLOWS['author-brainstorm-v4'],
-    'name':'脑洞 · 分节点制作','node_skill_version':'1.4.2','revision_mode':'full_prompt_regeneration',
+    'name':'脑洞 · 分节点制作','node_skill_version':'1.4.3','revision_mode':'full_prompt_regeneration',
     'modules':[{**module,**({'depends_on':['fittings']} if module['id']=='board' else {})} for module in WORKFLOWS['author-brainstorm-v4']['modules'] if module['id']!='trial'],
     'production_coordinators':[
         {'id':'compositing','name':'图像合成','executor':'author_composite','modules':['fittings'],'output':'已确认定装与场景参考图'},
@@ -76,7 +76,7 @@ WORKFLOWS['author-brainstorm-v5']={
 
 WORKFLOWS['author-brainstorm-v6']={
     **WORKFLOWS['author-brainstorm-v5'],
-    'name':'脑洞 · 基础参考图直接分镜','node_skill_version':'1.4.2',
+    'name':'脑洞 · 基础参考图直接分镜','node_skill_version':'1.4.3',
     'modules':[{**module,**({'depends_on':['author_assets']} if module['id']=='board' else {})} for module in WORKFLOWS['author-brainstorm-v5']['modules'] if module['id'] not in ('fittings','trial')],
     'production_coordinators':[
         {'id':'storyboarding','name':'分镜生成','executor':'author_storyboard','modules':['board','shot_prompts','board_review'],'output':'直接组合人物身份、服装与场景参考图的分镜及提示词'},

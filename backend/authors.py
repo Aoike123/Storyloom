@@ -76,12 +76,6 @@ def workspace(pid: str):
         data['retryable_images'] = retryable_images(db,row)
         director_version=db.get(Record,sid).version if sid and db.get(Record,sid) else None
         data['outputs'] = completed_outputs(tasks,sid,director_version)
-        from .billing import estimate,number
-        tids={t.id for t in tasks}|{row.data.get('recommend_task')}
-        past={attempt.get('director_id') for attempt in row.data.get('attempt_history',[]) if attempt.get('director_id')}
-        tids.update(t.id for t in all_tasks if any(t.payload.get(k) in past for k in ('creative_id','director_id','preproduction_id','project_id')))
-        usage=[r.data for r in db.scalars(select(Record).where(Record.kind=='usage')) if r.data.get('task') in tids]
-        data['usage']={'tokens':sum(number(u.get('usage',{}).get('total_tokens')) or ((number(u.get('usage',{}).get('prompt_tokens')) or 0)+(number(u.get('usage',{}).get('completion_tokens')) or 0)) for u in usage if u.get('provider')=='llm'),'images':sum(number(u.get('usage',{}).get('images')) or 0 for u in usage if u.get('provider')=='image'),'video_seconds':sum(number(u.get('usage',{}).get('duration')) or 0 for u in usage if u.get('provider')=='video'),'estimated_cny':sum(estimate(u) or 0 for u in usage),'unpriced_calls':sum(estimate(u) is None for u in usage)}
     data['creative'] = creative.workspace(sid) if sid else None
     data['display_stage']=data['stage']
     if data['stage'] in ('producing','compositing') and data['creative']:
@@ -258,11 +252,9 @@ def recommend_styles(task_id,payload,owner=None):
         last_saved=now
 
     save('preparing',force=True)
-    raw,_=call_node(creative.chat_json,'style_options',{'source':payload['source'],'schema':Options.model_json_schema()},task_id,'fast',on_event=save)
-    try:
-        result=Options.model_validate(raw).model_dump()
-    except ValueError:
-        raise creative.ProviderError('风格方案格式检查未通过，已保留构思草稿；请重新推荐。') from None
+    options,_=call_node(creative.chat_json,'style_options',{'source':payload['source'],'schema':Options.model_json_schema()},task_id,'fast',
+        validator=Options.model_validate,on_event=save)
+    result=options.model_dump()
     with Session.begin() as db:
         task=db.get(Task,task_id)
         if not task or task.status!='running' or (owner is not None and task.owner!=owner):

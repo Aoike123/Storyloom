@@ -6,7 +6,7 @@ from pydantic import AliasChoices,BaseModel,Field,ValidationError
 from fastapi import APIRouter,HTTPException
 from sqlalchemy import select
 from .db import Record,Task,Session,uid,record_dict,task_dict
-from .providers import settings,chat_json,ProviderError
+from .providers import settings,chat_json,ProviderError,ModelOutputError
 from .skill_runtime import call_node,render_node
 
 VERSION='brainstorm-1.0'
@@ -112,58 +112,96 @@ def run_director(payload,task_id,save_stage):
         treatment=Treatment.model_validate(payload['treatment'])
     else:
         save_stage('phase','正在阅读原文，提炼脑洞规则与人物目标',10)
+        treatment_attempts=[]
+        def treatment_contract(raw):
+            errors=[]
+            try:result=Treatment.model_validate(raw)
+            except ValidationError as exc:
+                errors=[{'field':'.'.join(str(x) for x in e['loc']),'reason':e['msg'],'type':e['type']} for e in exc.errors(include_input=False,include_url=False)]
+                result=None
+            if result is not None:
+                try:bind_sources(result.rules,passages,'quote')
+                except ProviderError as exc:errors=[{'field':'rules.source_ref','reason':str(exc),'type':'source_binding'}]
+            if result is not None and not errors:
+                missing=[f'规则 {i+1}：{rule.quote[:100]}' for i,rule in enumerate(result.rules) if not quote_exists(rule.quote,content)]
+                if missing:errors=[{'field':'rules.quote','reason':'原文依据无法定位：'+'；'.join(missing),'type':'source_quote'}]
+            if errors:
+                treatment_attempts.append({'raw':raw,'errors':errors})
+                save_stage('treatment_diagnostics',{'raw':raw,'errors':errors,'attempts':list(treatment_attempts)},20)
+                raise ModelOutputError('导演阐述未按原文与格式约定输出：'+'；'.join(e['reason'] for e in errors[:5]))
+            return result
         treatment,_=call_node(chat_json,'story_treatment',
-            {'source':source,'source_passages':passages,'brief':payload['brief'],'schema':Treatment.model_json_schema()},task_id)
-        try:treatment=Treatment.model_validate(treatment)
-        except ValueError:raise ProviderError('导演阐述格式未通过，请检查任务记录后新建。') from None
-        save_stage('treatment',treatment.model_dump(),20)
-        bind_sources(treatment.rules,passages,'quote')
-        missing=[f'规则 {i+1}：{rule.quote[:100]}' for i,rule in enumerate(treatment.rules) if not quote_exists(rule.quote,content)]
-        if missing:raise ProviderError('原文依据无法定位，已保留导演草稿；'+ '；'.join(missing))
+            {'source':source,'source_passages':passages,'brief':payload['brief'],'schema':Treatment.model_json_schema()},task_id,
+            validator=treatment_contract)
         save_stage('treatment',treatment.model_dump(),30)
     if payload.get('stage')=='treatment':return {'stage':'awaiting_preproduction'}
     save_stage('phase','正在设计镜头调度、信息揭示与声音衔接',35)
+    board_attempts=[]
+    def board_contract(raw):
+        errors=[];repairs=[]
+        try:result=Board.model_validate(raw)
+        except ValidationError as exc:
+            errors=[{'field':'.'.join(str(x) for x in e['loc']),'reason':e['msg'],'type':e['type']} for e in exc.errors(include_input=False,include_url=False)]
+            result=None
+        if result is not None and payload.get('preproduction'):
+            from .preproduction import repair_board_assets,validate_board
+            result,repairs=repair_board_assets(result,payload['preproduction'])
+            try:validate_board(result,payload['preproduction'])
+            except HTTPException as exc:errors=[{'field':'assets','reason':str(exc.detail),'type':'asset_binding'}]
+        if result is not None and not errors:
+            try:bind_sources(result.shots,passages,'source_quote')
+            except ProviderError as exc:errors=[{'field':'shots.source_ref','reason':str(exc),'type':'source_binding'}]
+        if result is not None and not errors:
+            errors=[{'field':'board','reason':issue,'type':'structural_check'} for issue in check_board(result,content)]
+        if errors:
+            board_attempts.append({'raw':raw,'errors':errors})
+            save_stage('board_diagnostics',{'raw':raw,'errors':errors,'attempts':list(board_attempts)},35)
+            details='；'.join(e['field']+'：'+e['reason'] for e in errors[:5])
+            raise ModelOutputError('分镜未按结构、原文或素材绑定约定输出：'+details)
+        return result,repairs
     raw=payload.get('saved_board')
     if raw is None:
-        raw,_=call_node(chat_json,'storyboard',
-            {'source':source,'source_passages':passages,'treatment':treatment.model_dump(),'brief':payload['brief'],'preproduction':payload.get('preproduction'),'schema':Board.model_json_schema()},task_id)
-    try:board=Board.model_validate(raw)
-    except ValidationError as exc:
-        errors=[{'field':'.'.join(str(x) for x in e['loc']),'reason':e['msg'],'type':e['type']} for e in exc.errors(include_input=False,include_url=False)]
-        save_stage('board_diagnostics',{'raw':raw,'errors':errors},35)
-        details='；'.join(e['field']+'：'+e['reason'] for e in errors[:5])
-        raise ProviderError('分镜格式校验失败（非剧情审核）；原始输出已保留。'+details) from None
-    if payload.get('preproduction'):
-        from .preproduction import repair_board_assets,validate_board
-        board,repairs=repair_board_assets(board,payload['preproduction'])
-        if repairs:save_stage('board_repairs',{'changes':repairs},35)
-        try:validate_board(board,payload['preproduction'])
-        except HTTPException as e:
-            save_stage('board_diagnostics',{'raw':raw,'errors':[{'field':'assets','reason':e.detail}]},35)
-            raise ProviderError(e.detail) from None
-    save_stage('board',board.model_dump(),60)
-    bind_sources(board.shots,passages,'source_quote')
-    issues=check_board(board,content)
+        validated,_=call_node(chat_json,'storyboard',
+            {'source':source,'source_passages':passages,'treatment':treatment.model_dump(),'brief':payload['brief'],'preproduction':payload.get('preproduction'),'schema':Board.model_json_schema()},task_id,
+            validator=board_contract)
+        board,repairs=validated
+    else:
+        try:board,repairs=board_contract(raw)
+        except ModelOutputError as exc:raise ProviderError(str(exc)) from None
+    if repairs:save_stage('board_repairs',{'changes':repairs},35)
     save_stage('board',board.model_dump(),65)
-    if issues:return {'approved':False,'issues':issues,'stage':'structural_check'}
     if payload.get('professional_prompts'):
         save_stage('board_plan',board.model_dump(),66)
-        compiled,_=call_node(chat_json,'shot_prompts',{'board':board.model_dump(),'preproduction':payload.get('preproduction'),'schema':ShotPromptBatch.model_json_schema()},task_id)
+        prompt_attempts=[]
+        def prompt_contract(compiled):
+            errors=[]
+            try:
+                prompts=ShotPromptBatch.model_validate(compiled)
+            except ValidationError as exc:
+                errors=[{'field':'.'.join(str(x) for x in e['loc']),'reason':e['msg'],'type':e['type']} for e in exc.errors(include_input=False,include_url=False)]
+                prompts=None
+            if prompts is not None:
+                mapping={shot.id:shot for shot in prompts.shots}
+                if set(mapping)!={shot.id for shot in board.shots} or len(mapping)!=len(prompts.shots):
+                    errors=[{'field':'shots','reason':'生成提示词的格式或镜号不符合分镜计划','type':'shot_mapping'}]
+            if errors:
+                prompt_attempts.append({'raw':compiled,'errors':errors})
+                save_stage('prompt_diagnostics',{'raw':compiled,'errors':errors,'attempts':list(prompt_attempts)},66)
+                raise ModelOutputError('镜头提示词未按镜号与格式约定输出：'+'；'.join(e['reason'] for e in errors[:5]))
+            return prompts
+        prompts,_=call_node(chat_json,'shot_prompts',{'board':board.model_dump(),'preproduction':payload.get('preproduction'),'schema':ShotPromptBatch.model_json_schema()},task_id,
+            validator=prompt_contract)
         try:
-            prompts=ShotPromptBatch.model_validate(compiled)
             mapping={shot.id:shot for shot in prompts.shots}
-            if set(mapping)!={shot.id for shot in board.shots} or len(mapping)!=len(prompts.shots):raise ValueError('镜号缺失或重复')
-        except ValueError:
-            save_stage('prompt_diagnostics',{'raw':compiled,'errors':[{'field':'shots','reason':'生成提示词的格式或镜号不符合分镜计划'}]},66)
-            raise ProviderError('分镜提示词编译未通过，镜头计划已保留。') from None
+        except ValueError:raise ProviderError('分镜提示词编译未通过，镜头计划已保留。') from None
         for shot in board.shots:
             shot.reference_prompt=mapping[shot.id].reference_prompt;shot.motion_prompt=mapping[shot.id].motion_prompt
         save_stage('board',board.model_dump(),70)
     save_stage('phase','正在独立核对原文依据、连续性与生成可行性',75)
     review,_=call_node(chat_json,'storyboard_review',
-        {'source':source,'treatment':treatment.model_dump(),'board':board.model_dump(),'schema':Review.model_json_schema()},task_id)
-    try:return Review.model_validate(review).model_dump()
-    except ValueError:raise ProviderError('独立检查输出无效，分镜保留待人工处理。') from None
+        {'source':source,'treatment':treatment.model_dump(),'board':board.model_dump(),'schema':Review.model_json_schema()},task_id,
+        validator=Review.model_validate)
+    return review.model_dump()
 
 class Create(BaseModel):
     restart_of:str|None=None

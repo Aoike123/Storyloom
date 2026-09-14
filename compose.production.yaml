@@ -1,0 +1,153 @@
+name: storyloom
+
+x-app-environment: &app-environment
+  DATABASE_URL: "postgresql+psycopg://storyloom:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/storyloom"
+  DATA_DIR: /app/data
+  STORYLOOM_ENV_FILE: /app/data/.env.local
+  STORYLOOM_PUBLIC_ORIGIN: "https://${SITE_ADDRESS:?SITE_ADDRESS is required}"
+  STORYLOOM_DEMO_MODE: public
+  MODEL_ACCESS_SECRET: "${MODEL_ACCESS_SECRET:?MODEL_ACCESS_SECRET is required}"
+  MODEL_ACCESS_SESSION_HOURS: "${MODEL_ACCESS_SESSION_HOURS:-24}"
+  PUBLIC_POOL_ENABLED: "${PUBLIC_POOL_ENABLED:-false}"
+  PUBLIC_POOL_DAILY_BUDGET_CNY: "${PUBLIC_POOL_DAILY_BUDGET_CNY:-0}"
+  PUBLIC_POOL_LLM_RESERVE_CNY: "${PUBLIC_POOL_LLM_RESERVE_CNY:-0.20}"
+  PUBLIC_POOL_IMAGE_RESERVE_CNY: "${PUBLIC_POOL_IMAGE_RESERVE_CNY:-0.50}"
+  PUBLIC_POOL_VIDEO_RESERVE_CNY: "${PUBLIC_POOL_VIDEO_RESERVE_CNY:-6.00}"
+  PUBLIC_POOL_VERIFY_DEEPSEEK_BALANCE: "${PUBLIC_POOL_VERIFY_DEEPSEEK_BALANCE:-true}"
+  PUBLIC_POOL_MIN_DEEPSEEK_CNY: "${PUBLIC_POOL_MIN_DEEPSEEK_CNY:-0.05}"
+  LLM_API_KEY: "${LLM_API_KEY:-}"
+  IMAGE_API_KEY: "${IMAGE_API_KEY:-}"
+  VIDEO_API_KEY: "${VIDEO_API_KEY:-}"
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: storyloom
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+      POSTGRES_DB: storyloom
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    logging: *default-logging
+
+  api:
+    image: "storyloom-api:${IMAGE_TAG:-local}"
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    restart: unless-stopped
+    init: true
+    environment: *app-environment
+    volumes:
+      - story_data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5).read()"]
+      interval: 15s
+      timeout: 8s
+      retries: 10
+      start_period: 90s
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *default-logging
+
+  worker:
+    image: "storyloom-api:${IMAGE_TAG:-local}"
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    entrypoint: ["python", "-m", "backend.worker"]
+    restart: unless-stopped
+    init: true
+    environment: *app-environment
+    volumes:
+      - story_data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test: ["CMD", "python", "/usr/local/bin/storyloom-worker-healthcheck"]
+      interval: 20s
+      timeout: 8s
+      retries: 5
+      start_period: 30s
+    stop_grace_period: 2m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *default-logging
+
+  web:
+    image: "storyloom-web:${IMAGE_TAG:-local}"
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    restart: unless-stopped
+    init: true
+    depends_on:
+      api:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 8s
+      retries: 10
+      start_period: 30s
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *default-logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: "${SITE_ADDRESS:?SITE_ADDRESS is required}"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+        restart: true
+      web:
+        condition: service_healthy
+        restart: true
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+volumes:
+  postgres_data:
+  story_data:
+  caddy_data:
+  caddy_config:
