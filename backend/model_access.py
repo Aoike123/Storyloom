@@ -395,7 +395,7 @@ def public_pool_status(*, refresh: bool = True) -> dict:
         unavailable = next(item for item in checks if not item["available"])
         reason = f'{unavailable["provider"]}：{unavailable["reason"]}'
     else:
-        reason = "三个共享 Key 今日额度均可用，先到先得"
+        reason = "共享额度今日均可用，先到先得"
     return {
         "available": available,
         "reason": reason,

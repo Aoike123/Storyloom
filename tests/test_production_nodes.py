@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from backend import creative, worker
 from backend.db import Session,Record,Task
-from backend.production_nodes import queue_node,run_node,NODES
+from backend.production_nodes import queue_node,retry_current_node,run_node,NODES
 from backend.asset_workflow import validate_shot_identities
 
 
@@ -40,3 +40,30 @@ def test_interrupted_node_is_not_automatically_resubmitted():
     with Session.begin() as db:db.add(Task(id='interrupted',kind='author_storyboard',status='running',lease=0,payload={'mode':'live'}))
     assert worker.claim('new-owner') is None
     with Session() as db:assert db.get(Task,'interrupted').status=='needs_review'
+
+
+def test_failed_storyboard_child_exposes_a_fresh_current_node_retry_with_feedback():
+    from test_director import TEXT,board
+    raw=board()
+    for shot,source_ref in zip(raw['shots'],['P001','P004','P002','P003']):shot['source_ref']=source_ref
+    with Session.begin() as db:
+        work=Record(id='retry-work',kind='author_project',data={
+            'director_id':'retry-director','stage':'storyboarding','run_id':'round'})
+        run=Record(id='creative_retry-director',kind='creative_run',data={'stage':'storyboarding'})
+        db.add_all([work,run,Record(id='retry-director',kind='director',data={
+            'board_diagnostics':{'raw':raw}})]);db.flush()
+        previous=queue_node(db,work,'storyboarding');previous.status='waiting';db.flush()
+        child=Task(id='retry-child',kind='director',status='needs_review',message='S03 的人物与服装映射错误',payload={
+            'stage':'board','project_id':'retry-director','production_phase':'storyboarding','production_node':previous.id,
+            'source':{'content':TEXT}})
+        watch=Task(id='retry-watch',kind='creative_watch',status='needs_review',message='自动分镜未完成',payload={
+            'creative_id':'retry-director','child':child.id,'production_phase':'storyboarding','production_node':previous.id})
+        db.add_all([child,watch]);run.data={**run.data,'watch':watch.id};db.flush()
+        replacement=retry_current_node(db,work)
+        assert replacement.id!=previous.id and replacement.status=='queued'
+        assert replacement.payload['revision_of']==previous.id
+        assert work.data['supervisor']==replacement.id
+        assert child.status==watch.status=='superseded'
+        assert run.data['stage']=='references_ready'
+        assert 'S03 的人物与服装映射错误' in run.data['storyboard_retry_feedback']
+        assert 'S03 原文顺序倒退' in run.data['storyboard_retry_feedback']

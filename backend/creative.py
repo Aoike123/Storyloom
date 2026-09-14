@@ -173,16 +173,33 @@ def resume_saved_storyboard(db,pid):
         if current['stamp']!=child.payload.get('preproduction',{}).get('stamp'):
             raise HTTPException(409,'已确认素材发生变化，保存的分镜不能继续使用。')
         board=director.Board.model_validate(raw)
-        repaired,changes=prep.repair_board_assets(board,current)
-        prep.validate_board(repaired,current)
+        repaired,changes=director.repair_board_causality(board)
+        content=child.payload.get('source',{}).get('content','')
+        if not content:raise HTTPException(409,'已保存的分镜任务缺少对应原文，不能安全复用，请重新运行当前节点。')
+        director.bind_sources(repaired.shots,director.source_passages(content),'source_quote')
+        structural_issues=director.check_board(repaired,content)
+        if structural_issues:
+            raise HTTPException(409,'已保存分镜仍有结构问题，不能直接复用：'+'；'.join(structural_issues[:5])+'。请使用“重新运行当前节点”，新模型会收到这些原因。')
+        repaired,asset_changes=prep.repair_board_assets(repaired,current);changes.extend(asset_changes)
+        packing=prep.plan_board_asset_packing(repaired,current)
+        prep.validate_board(repaired,current,packing)
+        pairs=[pair for shot_pairs in packing.values() for pair in shot_pairs]
+        if pairs:
+            current,added=prep.add_condensed_reference_alternatives(db,pid,pairs)
+            repaired,packed_changes=prep.repair_board_assets(repaired,current)
+            changes.extend(packed_changes);prep.validate_board(repaired,current)
+        else:added=[]
     except ValidationError as exc:
         raise HTTPException(409,'已保存分镜的格式仍不完整，不能自动重复提交模型。') from None
+    except ProviderError as exc:
+        raise HTTPException(409,str(exc)) from None
     except HTTPException as exc:
         raise HTTPException(409,str(exc.detail)) from None
-    child.payload={**child.payload,'saved_board':raw}
-    child.status='queued';child.lease=0;child.owner='';child.message='已恢复保存的分镜，正在校正素材绑定并继续专业提示词节点'
+    child.payload={**child.payload,'preproduction':current,'saved_board':repaired.model_dump()}
+    child.status='queued';child.lease=0;child.owner='';child.message='已恢复保存的分镜，正在校正结构与素材绑定并继续专业提示词节点'
     watch.status='queued';watch.lease=0;watch.owner='';watch.message='已恢复保存的分镜，等待文本预审'
-    project.data={**project.data,'board_recovery':{'task_id':child.id,'changes':changes}}
+    project.data={**project.data,'preproduction_stamp':current['stamp'],
+        'board_recovery':{'task_id':child.id,'changes':changes,'conditional_stitching_added':bool(added)}}
     db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'saved_storyboard_resumed','task_id':child.id,'changes':changes}))
 
 
@@ -498,11 +515,12 @@ def finish_composites(pid,automatic=False):
 
 
 def prepare_reference_inputs(pid):
-    """Bind the reviewed base sheets directly; no fitting or trial request is submitted."""
+    """Bind reviewed base sheets; any needed local stitching is decided per storyboard shot later."""
     with Session.begin() as db:
         run=get_run(db,pid);data=dict(run.data)
         if data.get('asset_schema')!=asset_sheets.VERSION:raise HTTPException(409,'请先将基础素材更新为独立人物身份、服装和场景图。')
         rows={item['task_id']:image_asset(db,item['task_id']) for item in data['items']}
+        approve_images(db,[row.id for row in rows.values()],automatic=False)
         people={item['character_id']:rows[item['task_id']].id for item in data['items'] if item['role']=='character'}
         costumed={item['character_ref'] for item in data['items'] if item['role']=='costume'}
         assets={}
@@ -515,20 +533,23 @@ def prepare_reference_inputs(pid):
                 if not identity:raise HTTPException(409,'服装缺少对应的人物身份图，请先检查基础素材。')
                 spec['identity_asset_id']=identity
             assets[asset.id]=spec
-        approve_images(db,[row.id for row in rows.values()],automatic=False)
         source_assets={task_id:{'asset_id':asset.id,'asset_version':asset.version} for task_id,asset in rows.items()}
     current=prep.get(pid)['config']
     prep.save(pid,prep.Setup(expected_version=current['version'] if current else 0,style=data['visual_language'],assets=assets,source_assets=source_assets))
     prep.approve_references(pid,prep.get(pid)['stamp'])
-    save_run(pid,stage='references_ready',reference_inputs='base_sheets')
+    save_run(pid,stage='references_ready',reference_inputs='base_sheets_conditional_stitching_ready')
 
 
 def start_storyboard_stage(pid):
-    with Session() as db:version=db.get(Record,pid).version
-    child=director.start_storyboard(pid,director.BoardStart(version=version,confirm_paid=True))
+    with Session() as db:
+        version=db.get(Record,pid).version
+        retry_feedback=get_run(db,pid).data.get('storyboard_retry_feedback')
+    child=director.start_storyboard(pid,director.BoardStart(
+        version=version,confirm_paid=True,retry_feedback=retry_feedback))
     with Session.begin() as db:
         w=Task(id=uid('watch'),kind='creative_watch',payload={'mode':'live','creative_id':pid,'child':child['task']['id'],'step':'board'})
-        db.add(w);r=get_run(db,pid);r.data={**r.data,'stage':'storyboarding','watch':w.id}
+        db.add(w);r=get_run(db,pid);data={key:value for key,value in r.data.items() if key!='storyboard_retry_feedback'}
+        r.data={**data,'stage':'storyboarding','watch':w.id}
 
 def get_status(pid):
     with Session() as db:return get_run(db,pid).data['stage']

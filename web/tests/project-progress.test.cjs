@@ -14,6 +14,7 @@ const {mergeProgress}=context.exports;
 const {authorDisplayStage}=context.exports;
 const {hasActiveProgress,shouldPollProgress}=context.exports;
 const {progressStructure}=context.exports;
+const {canRetryCurrentNode}=context.exports;
 
 test('live progress uses one event stream without redundant workspace polling',()=>{
   const work={jobs:[],task:null,recommend_task_status:{id:'styles',status:'running'}};
@@ -23,6 +24,13 @@ test('live progress uses one event stream without redundant workspace polling',(
   assert.equal(shouldPollProgress('idle',true),false);
   assert.equal(shouldPollProgress('fallback',true),true);
   assert.equal(hasActiveProgress({...work,recommend_task_status:{id:'styles',status:'needs_review'}}),false);
+});
+
+test('a current production-node or child error exposes the retry action',()=>{
+  assert.equal(canRetryCurrentNode({production_steps:[{id:'storyboarding',task:{status:'needs_review'}}],jobs:[]},'storyboarding'),true);
+  assert.equal(canRetryCurrentNode({production_steps:[{id:'storyboarding',task:{status:'waiting'}}],jobs:[{production_phase:'storyboarding',status:'failed'}]},'storyboarding'),true);
+  assert.equal(canRetryCurrentNode({production_steps:[{id:'storyboarding',task:{status:'waiting'}}],jobs:[]},'storyboarding'),false);
+  assert.equal(canRetryCurrentNode({production_steps:[{id:'storyboarding',task:{status:'needs_review'}}],jobs:[]},'rendering'),false);
 });
 
 test('busy status changes stay on the event stream while terminal results request one full refresh',()=>{

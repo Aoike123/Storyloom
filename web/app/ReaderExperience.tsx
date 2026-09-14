@@ -8,8 +8,9 @@ import ReaderArtwork from './ReaderArtwork';
 import ReaderHero from './ReaderHero';
 import ReaderStoryGrid from './ReaderStoryGrid';
 import {canWatch, productionLink} from './reader-types';
+import {modelAccessHeaders, modelSetupLink} from './model-access';
 import {rankByProduction} from './reader-carousel';
-import type {Catalog, CatalogItem, Release} from './reader-types';
+import type {Catalog, CatalogItem, ReaderBranch, Release, ReleaseEntry} from './reader-types';
 import './reader-catalog.css';
 import './reader-motion.css';
 
@@ -24,19 +25,47 @@ export default function ReaderExperience() {
   const [loading, setLoading] = useState(true), [carouselIds, setCarouselIds] = useState<string[]>([]);
   const [activeId, setActiveId] = useState('');
   const [story, setStory] = useState<Release | null>(null), [index, setIndex] = useState(0);
+  const [playbackEntries, setPlaybackEntries] = useState<ReleaseEntry[]>([]);
+  const [branch, setBranch] = useState<ReaderBranch | null>(null), [manifestBranchId, setManifestBranchId] = useState('');
   const [paused, setPaused] = useState(true), [moment, setMoment] = useState(0);
   const [text, setText] = useState(''), [wishes, setWishes] = useState<Wish[]>([]);
   const [reply, setReply] = useState(''), [replyError, setReplyError] = useState(false);
   const [message, setMessage] = useState(''), [busy, setBusy] = useState(false);
+  const [seekNotice, setSeekNotice] = useState('');
   const video = useRef<HTMLVideoElement>(null), input = useRef<HTMLTextAreaElement>(null);
   const continuePlay = useRef(false), openedLink = useRef(false), composing = useRef(false);
   const catalogRef = useRef<Catalog | null>(null), currentStory = useRef<string | null>(null);
   const requestVersion = useRef(0), drafts = useRef<Record<string, string>>({}), savedWishes = useRef<Record<string, Wish[]>>({});
+  const readerSession = useRef(''), manifestBranch = useRef(''), playbackIndex = useRef(0);
+  const safeTime = useRef(0), internalSeek = useRef(false), waitingForNext = useRef(false), finishedEntry = useRef('');
+  const resumeAt = useRef<number | null>(null);
+  const watchedUntil = useRef<Record<string, number>>({});
   const restore = useRef(false), savedBrowse = useRef<BrowseState | null>(null);
   const carouselInitialized = useRef(false);
   const browse = useRef({query, filter, carouselIds, activeId});
   browse.current = {query, filter, carouselIds, activeId};
-  const entry = story?.entries[index];
+  playbackIndex.current = index;
+  const entry = playbackEntries[index];
+  const nextEntry = playbackEntries[index + 1];
+  const forwardLocked = !!manifestBranchId || (!!branch?.lock_forward_seek && branch.status !== 'rejected');
+  const branchWorking = branch?.status === 'planning' || branch?.status === 'generating';
+  const awaitingFirstBranch = !!branchWorking && manifestBranchId !== branch?.id;
+  const blockedAtCut = busy || (!!branch?.lock_forward_seek && branch.status !== 'rejected' && manifestBranchId !== branch.id);
+
+  function sessionToken() {
+    if (readerSession.current) return readerSession.current;
+    try {
+      const saved = localStorage.getItem('storyloom.reader.session.v1') || '';
+      if (/^[A-Za-z0-9_-]{16,80}$/.test(saved)) return readerSession.current = saved;
+      const created = crypto.randomUUID();
+      localStorage.setItem('storyloom.reader.session.v1', created);
+      return readerSession.current = created;
+    } catch {
+      return readerSession.current = crypto.randomUUID();
+    }
+  }
+
+  const branchStorageKey = (releaseId: string) => 'storyloom.reader.branch.v1:' + releaseId;
 
   function remember(focusKey = '', selectedId?: string) {
     const state = {...browse.current, activeId: selectedId || browse.current.activeId, scrollY: window.scrollY, focusKey};
@@ -49,7 +78,10 @@ export default function ReaderExperience() {
     currentStory.current = release.id;
     requestVersion.current++;
     continuePlay.current = false;
-    setStory(release); setIndex(0); setMoment(release.entries[0].start); setPaused(true);
+    manifestBranch.current = ''; waitingForNext.current = false;
+    resumeAt.current = null;
+    setStory(release); setPlaybackEntries(release.entries); setIndex(0); setMoment(release.entries[0].start); setPaused(true);
+    setBranch(null); setManifestBranchId(''); setSeekNotice(''); safeTime.current = release.entries[0].start;
     setText(drafts.current[release.id] || ''); setWishes(savedWishes.current[release.id] || []);
     setReply(''); setReplyError(false); setMessage(''); setBusy(false);
     window.scrollTo({top: 0, behavior: 'instant'});
@@ -61,7 +93,9 @@ export default function ReaderExperience() {
     requestVersion.current++;
     continuePlay.current = false;
     restore.current = true;
-    setStory(null); setBusy(false);
+    manifestBranch.current = ''; waitingForNext.current = false;
+    resumeAt.current = null;
+    setStory(null); setPlaybackEntries([]); setBranch(null); setManifestBranchId(''); setBusy(false);
   }
 
   function back() {
@@ -180,31 +214,201 @@ export default function ReaderExperience() {
     if (focus) input.current?.focus({preventScroll: true});
   }
 
-  const elapsed = story ? story.entries.slice(0, index).reduce((total, item) => total + item.end - item.start, 0) + Math.max(0, moment - (entry?.start || 0)) : 0;
+  function entryKey(item: ReleaseEntry | undefined, position = index) {
+    return item?.occurrence_id || (story ? story.id + ':original:' + position : 'none');
+  }
+
+  function activateBranch(next: ReaderBranch) {
+    if (next.entries[0]?.status !== 'ready') return;
+    if (manifestBranch.current !== next.id) {
+      video.current?.pause();
+      manifestBranch.current = next.id; waitingForNext.current = false;
+      setManifestBranchId(next.id); setPlaybackEntries(next.entries); setIndex(0);
+      const start = next.entries[0].start || 0;
+      safeTime.current = start; watchedUntil.current[entryKey(next.entries[0], 0)] = start;
+      setMoment(start); setPaused(true); continuePlay.current = true;
+      setReply('第一段分支已就绪，正在衔接播放；后续片段继续在后台准备。');
+      return;
+    }
+    setPlaybackEntries(next.entries);
+    const currentIndex = playbackIndex.current;
+    if (waitingForNext.current && next.entries[currentIndex + 1]?.status === 'ready') {
+      waitingForNext.current = false; continuePlay.current = true;
+      const start = next.entries[currentIndex + 1].start || 0;
+      safeTime.current = start; setMoment(start); setIndex(currentIndex + 1);
+    }
+  }
+
+  useEffect(() => {
+    if (!branch?.id || ['ready', 'rejected', 'failed', 'superseded'].includes(branch.status)) return;
+    let alive = true, timer: ReturnType<typeof setTimeout>;
+    async function pollBranch() {
+      try {
+        const response = await fetch('/api/reader/branches/' + encodeURIComponent(branch!.id), {
+          headers: {'X-Reader-Session': sessionToken()}, cache: 'no-store',
+        });
+        const data: ReaderBranch & {detail?: string} = await response.json();
+        if (!response.ok) throw Error(typeof data.detail === 'string' ? data.detail : '读取分支进度失败。');
+        if (!alive) return;
+        setBranch(data); setReply(data.message); setReplyError(data.status === 'failed' || data.status === 'rejected');
+        if (data.status === 'rejected' && story) {
+          try {
+            if (manifestBranch.current) localStorage.setItem(branchStorageKey(story.id), manifestBranch.current);
+            else localStorage.removeItem(branchStorageKey(story.id));
+          } catch {}
+        }
+        activateBranch(data);
+        if (!['ready', 'rejected', 'failed', 'superseded'].includes(data.status)) {
+          timer = setTimeout(pollBranch, data.ready_count ? 1200 : 1800);
+        }
+      } catch (error) {
+        if (alive) {setReply((error as Error).message); setReplyError(true); timer = setTimeout(pollBranch, 3000);}
+      }
+    }
+    timer = setTimeout(pollBranch, 700);
+    return () => {alive = false; clearTimeout(timer);};
+  }, [branch?.id]);
+
+  useEffect(() => {
+    if (!story) return;
+    let alive = true;
+    let branchId = '';
+    try {branchId = localStorage.getItem(branchStorageKey(story.id)) || '';} catch {}
+    if (!branchId) return;
+    fetch('/api/reader/branches/' + encodeURIComponent(branchId), {
+      headers: {'X-Reader-Session': sessionToken()}, cache: 'no-store',
+    }).then(async response => {
+      const data: ReaderBranch & {detail?: string} = await response.json();
+      if (!response.ok) throw Error(typeof data.detail === 'string' ? data.detail : '分支记录不可用。');
+      if (!alive || currentStory.current !== story.id) return;
+      if (data.status === 'rejected') {
+        try {localStorage.removeItem(branchStorageKey(story.id));} catch {}
+        return;
+      }
+      setBranch(data); setReply(data.message); setReplyError(data.status === 'failed');
+      if (data.entries[0]?.status === 'ready') {
+        activateBranch(data);
+      } else {
+        const cutIndex = Math.min(Math.max(0, data.cut.manifest_index || 0), story.entries.length - 1);
+        const cutEntry = story.entries[cutIndex];
+        const resume = Math.max(cutEntry.start, Math.min(cutEntry.end, data.cut.offset));
+        resumeAt.current = resume; safeTime.current = resume; setPlaybackEntries(story.entries); setIndex(cutIndex);
+        setMoment(resume); setPaused(true);
+      }
+    }).catch(() => {
+      if (alive) {try {localStorage.removeItem(branchStorageKey(story.id));} catch {}}
+    });
+    return () => {alive = false;};
+  }, [story?.id]);
+
+  const elapsed = story ? playbackEntries.slice(0, index).reduce((total, item) =>
+    total + Math.max(0, (item.end || 0) - (item.start || 0)), 0) + Math.max(0, moment - (entry?.start || 0)) : 0;
 
   async function saveWish() {
-    if (!story || !entry || busy || !paused || text.trim().length < 2) return;
+    if (!story || !entry || busy || awaitingFirstBranch || !paused || text.trim().length < 2) return;
     const submittedText = text.trim(), releaseId = story.id, at = video.current?.currentTime ?? entry.start;
     const submittedElapsed = elapsed, version = ++requestVersion.current;
     setBusy(true); setReply(''); setReplyError(false);
     try {
-      const response = await fetch('/api/reader/wishes', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
-        release_id: releaseId, index, offset: Math.max(entry.start, Math.min(entry.end, at)), text: submittedText,
+      const response = await fetch('/api/reader/branches', {method: 'POST', headers: {
+        'Content-Type': 'application/json', 'X-Reader-Session': sessionToken(), ...modelAccessHeaders(),
+      }, body: JSON.stringify({
+        release_id: releaseId, base_branch_id: manifestBranch.current || undefined,
+        index, offset: Math.max(entry.start, Math.min(entry.end, at)), text: submittedText, confirm_generation: true,
       })});
-      const data = await response.json();
+      const data: ReaderBranch & {detail?: string} = await response.json();
       if (!response.ok) throw Error(typeof data.detail === 'string' ? data.detail : '保存失败，请重试。');
       const next = [...(savedWishes.current[releaseId] || []), {at: submittedElapsed, text: submittedText}];
       savedWishes.current[releaseId] = next;
       if (drafts.current[releaseId]?.trim() === submittedText) drafts.current[releaseId] = '';
       if (currentStory.current === releaseId && requestVersion.current === version) {
         setWishes(next); setText(current => current.trim() === submittedText ? '' : current);
-        setReply('想法已保存 · ' + Math.floor(submittedElapsed) + ' 秒。继续看看故事怎么演。');
+        setBranch(data); setReply(data.message); setReplyError(false);
+        try {localStorage.setItem(branchStorageKey(releaseId), data.id);} catch {}
       }
     } catch (error) {
       if (currentStory.current === releaseId && requestVersion.current === version) {setReply((error as Error).message); setReplyError(true);}
     } finally {
       if (currentStory.current === releaseId && requestVersion.current === version) setBusy(false);
     }
+  }
+
+  function loadedEntry() {
+    const current = video.current;
+    if (!current || !entry || entry.status === 'pending' || entry.status === 'failed') return;
+    const key = entryKey(entry);
+    const start = resumeAt.current ?? entry.start ?? 0;
+    resumeAt.current = null;
+    internalSeek.current = false; finishedEntry.current = ''; safeTime.current = watchedUntil.current[key] || start;
+    current.currentTime = start;
+    if (continuePlay.current) {
+      continuePlay.current = false;
+      current.play().catch(() => setPaused(true));
+    }
+  }
+
+  function preventForwardSeek() {
+    const current = video.current;
+    if (!current || !forwardLocked || internalSeek.current) return;
+    if (current.currentTime > safeTime.current + .08) {
+      internalSeek.current = true; current.currentTime = safeTime.current;
+      setSeekNotice('分支生成后不能向前跳看；播放到达后会自动解锁相应进度。');
+    }
+  }
+
+  function startPlayback() {
+    if (blockedAtCut) {
+      video.current?.pause(); setPaused(true);
+      setReply(branch?.status === 'failed' ? '分支尚未完成，请在当前画面重新提交一种可生成的选择。' : '请稍等第一段分支，原版后续不会越过你的选择继续播放。');
+      return;
+    }
+    setPaused(false);
+  }
+
+  function finishEntry() {
+    const finished = entryKey(entry);
+    if (finishedEntry.current === finished) return;
+    finishedEntry.current = finished;
+    const following = playbackEntries[index + 1];
+    if (following?.status === 'ready' || (following && !following.status)) {
+      continuePlay.current = true; waitingForNext.current = false;
+      safeTime.current = following.start || 0; setIndex(index + 1); setMoment(following.start || 0);
+    } else if (following?.status === 'pending') {
+      waitingForNext.current = true; setPaused(true);
+      setReply('下一段还在后台生成，准备好后会自动接着播放。'); setReplyError(false);
+    } else if (following?.status === 'failed') {
+      waitingForNext.current = false; setPaused(true);
+      setReply(following.message || '下一段生成失败，当前画面和已完成分支均已保留。'); setReplyError(true);
+    } else {
+      waitingForNext.current = false; setPaused(true);
+      if (manifestBranch.current && branch?.terminal) {
+        setReply('这次改写已在因果完整处收束，没有强行回到原结局。'); setReplyError(false);
+      }
+    }
+  }
+
+  function updatePlaybackTime() {
+    const current = video.current;
+    if (!current || !entry) return;
+    setMoment(current.currentTime);
+    if (!current.seeking && !internalSeek.current) {
+      const key = entryKey(entry);
+      safeTime.current = Math.max(safeTime.current, current.currentTime);
+      watchedUntil.current[key] = Math.max(watchedUntil.current[key] || entry.start || 0, current.currentTime);
+    }
+    if (current.currentTime >= entry.end - .04 && !current.paused) {
+      current.pause(); finishEntry();
+    }
+  }
+
+  function chooseEntry(target: number) {
+    const selected = playbackEntries[target];
+    if (!selected || selected.status === 'pending' || selected.status === 'failed') return;
+    if (forwardLocked && target > index) {
+      setSeekNotice('分支生成后不能向前跳看，请按顺序观看。'); return;
+    }
+    pause(false); continuePlay.current = false; waitingForNext.current = false;
+    setIndex(target); setMoment(selected.start || 0);
   }
 
   const visible = (catalog?.items || []).filter(item =>
@@ -251,7 +455,7 @@ export default function ReaderExperience() {
             return <article className={'reader-story-card ' + (playable ? 'is-ready' : 'is-pending')} key={item.id} data-story-id={item.id}>
               <div className="catalog-poster">
                 {playable ? <button aria-label={'观看《' + item.title + '》'} data-reader-focus={posterKey} onClick={() => openItem(item, posterKey)}>
-                  {cover ? <ReaderArtwork src={cover} order={order}/> : <video src={release!.entries[0].media} preload="metadata" muted/>}
+                  {cover ? <ReaderArtwork src={cover} order={order}/> : <video src={release!.entries[0].media} preload="none" muted/>}
                   <span className="catalog-play"><Clapperboard size={22}/> 观看漫剧</span>
                 </button> : <Link href={productionLink(item)} prefetch={false} aria-label={'查看《' + item.title + '》并生成漫剧'} data-reader-focus={posterKey} onClick={() => remember(posterKey)}>
                   <ReaderArtwork src={cover} order={order}/><span className="catalog-not-made">这段故事，尚未有画面</span>
@@ -278,24 +482,33 @@ export default function ReaderExperience() {
         {(story.source_work_id || story.project_id) && <Link className="reader-source-link" href={productionLink(story)} prefetch={false}>阅读微小说 · 查看制作流程 <ArrowRight size={14}/></Link>}
       </header>
       <div className="reader-view-grid"><div>
-        <div className="reader-cinema"><video key={story.id + ':' + index} ref={video} src={entry?.media} controls playsInline
-          onLoadedMetadata={() => {if (video.current && entry) {video.current.currentTime = entry.start; if (continuePlay.current) {continuePlay.current = false; video.current.play().catch(() => setPaused(true));}}}}
-          onPlay={() => setPaused(false)} onPause={() => {setPaused(true); setMoment(video.current?.currentTime ?? 0);}}
-          onTimeUpdate={() => {const v = video.current; if (!v || !entry) return; setMoment(v.currentTime); if (v.currentTime >= entry.end - .04 && !v.paused) {v.pause(); if (index < story.entries.length - 1) {continuePlay.current = true; setIndex(index + 1);}}}}
-          onEnded={() => {if (index < story.entries.length - 1) {continuePlay.current = true; setIndex(index + 1);}}}/>
+        <div className="reader-cinema"><video key={story.id + ':' + manifestBranchId + ':' + entryKey(entry)} ref={video}
+          src={entry && entry.status !== 'pending' && entry.status !== 'failed' ? entry.media : undefined} controls playsInline preload="auto"
+          onLoadedMetadata={loadedEntry} onSeeking={preventForwardSeek} onSeeked={() => {internalSeek.current = false;}}
+          onPlay={startPlayback} onPause={() => {setPaused(true); setMoment(video.current?.currentTime ?? 0);}}
+          onTimeUpdate={updatePlaybackTime} onEnded={finishEntry}/>
+          {nextEntry?.status === 'ready' && nextEntry.media && <video className="reader-video-preload" src={nextEntry.media} preload="auto" muted playsInline aria-hidden="true"/>}
         </div>
-        <div className="reader-playbar"><span>第 {index + 1} / {story.entries.length} 段 · {Math.floor(elapsed)} 秒</span><button onClick={() => pause()}>暂停，留下另一种可能</button></div>
-        <div className="reader-segments">{story.entries.map((segment, i) => <button key={segment.clip_id} className={index === i ? 'active' : ''}
-          onClick={() => {pause(false); continuePlay.current = false; setIndex(i); setMoment(segment.start);}} aria-label={'切换到第 ' + (i + 1) + ' 段'} aria-pressed={index === i}/>)}</div>
+        {branch && <div className={'reader-branch-status is-' + branch.status} role="status" aria-live="polite">
+          <span>{branchWorking && <LoaderCircle size={13} className="feedback-spin"/>}<strong>你的分支 · v{branch.branch_version}</strong></span>
+          <p>{branch.message}</p>{branch.generated_count > 0 && <small>{branch.ready_count} / {branch.generated_count} 段已就绪 · 仅复用当前场景、人物和着装</small>}
+        </div>}
+        {seekNotice && <p className="reader-seek-notice" role="status">{seekNotice}</p>}
+        <div className="reader-playbar"><span>{entry?.kind === 'branch' ? '分支镜头' : '第'} {index + 1} / {playbackEntries.length} 段 · {Math.floor(elapsed)} 秒</span><button onClick={() => pause()}>暂停，改写这一刻</button></div>
+        <div className="reader-segments">{playbackEntries.map((segment, i) => <button key={segment.occurrence_id || segment.clip_id + ':' + i}
+          className={(index === i ? 'active ' : '') + (segment.status === 'pending' ? 'pending ' : '') + (segment.kind === 'branch' ? 'branch' : '')}
+          disabled={segment.status === 'pending' || segment.status === 'failed' || (forwardLocked && i > index)}
+          onClick={() => chooseEntry(i)} aria-label={(segment.label || '第 ' + (i + 1) + ' 段') + (segment.status === 'pending' ? '，生成中' : '')} aria-pressed={index === i}/>)}</div>
         <p className="reader-credit">画面为 AI 改编。当前作品为短场景，不代表原作完整结局。</p>
       </div>
       <aside className={'reader-interact' + (paused ? ' is-paused' : '')}>
         <span className="reader-kicker">YOUR WHAT IF</span><h2>这一刻，你会怎么选？</h2>
         <p className="reader-pause-hint">{paused ? '故事停在这里。把你的想法留在这一秒。' : '随时暂停，不必等故事给你选项。'}</p>
         <textarea ref={input} aria-label="你的剧情想法" value={text} onChange={event => {setText(event.target.value); drafts.current[story.id] = event.target.value;}} placeholder="如果换我来演，这一刻我会……"/>
-        <button className="reader-cta reader-save-wish" disabled={!paused || text.trim().length < 2 || busy} onClick={saveWish}>{busy ? '正在保存你的想法…' : '保存这一刻的想法'}</button>
-        <div className="reader-feedback-slot"><InteractionFeedback title="故事回应" busy={busy} text={busy ? '正在记录暂停位置和你的剧情想法…' : reply} error={!busy && replyError}/></div>
-        <small>会保存你的剧情想法，当前视频不会改变。自由改写后自动续播仍在开发中。</small>
+        <button className="reader-cta reader-save-wish" disabled={!paused || text.trim().length < 2 || busy || awaitingFirstBranch} onClick={saveWish}>{busy ? '正在提交这一刻…' : awaitingFirstBranch ? '正在准备第一段分支…' : '生成这一种可能'}</button>
+        <div className="reader-feedback-slot"><InteractionFeedback title="故事回应" busy={busy || !!branchWorking} text={busy ? '正在冻结暂停画面与当前剧情状态…' : reply} error={!busy && replyError}/></div>
+        {replyError && /模型|权限|配置/.test(reply) && <Link className="reader-model-link" href={modelSetupLink('/?story=' + encodeURIComponent(story.id))} prefetch={false}>选择模型使用方式 <ArrowRight size={13}/></Link>}
+        <small>改写只复用当前场景、人物与着装。分支开始后不能向前跳看；后续视频会逐段生成并提前加载。</small>
         {wishes.map((wish, i) => <blockquote key={i}><small>{Math.floor(wish.at)} 秒 · 你的另一种可能</small><p>{wish.text}</p></blockquote>)}
       </aside></div>
     </section>}

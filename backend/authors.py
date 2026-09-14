@@ -15,7 +15,7 @@ from . import creative, director
 from . import zhihu_stories
 from .catalog import labels
 from .skill_runtime import call_node
-from .production_nodes import NODES, queue_node, node_snapshots, is_node_task, phase_for_saved_state
+from .production_nodes import NODES, queue_node, node_snapshots, is_node_task, phase_for_saved_state, retry_current_node
 
 router = APIRouter(prefix='/api/author', tags=['author'])
 open_lock = Lock()
@@ -317,6 +317,20 @@ def resume(pid: str):
             queue_node(db,row,phase_for_saved_state(run.data['stage']))
         else:schedule(db,row,row.data['stage'])
     return {'queued':True}
+
+
+class NodeRetry(BaseModel):
+    confirm_paid:bool=False
+
+
+@router.post('/projects/{pid}/retry-node')
+def retry_node(pid:str,body:NodeRetry):
+    creative.paid(body)
+    with attempt_lock,Session.begin() as db:
+        row=get_work(db,pid)
+        task=retry_current_node(db,row)
+        db.flush()
+        return {'queued':True,'task':task_dict(task)}
 
 def schedule(db, row, phase):
     old = db.get(Task, row.data.get('supervisor', ''))

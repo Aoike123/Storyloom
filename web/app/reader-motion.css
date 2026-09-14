@@ -18,9 +18,9 @@
 .reader-cover-link{display:block;position:relative;height:100%;width:100%;border-radius:10px;transition:none;user-select:none;cursor:pointer}
 .reader-cover-visual{position:absolute;inset:14px 0 8px;pointer-events:none;overflow:hidden;border-radius:12px;background:#233128;border:1px solid #9fb28c3d;box-shadow:0 12px 24px #07110d4d;transform:translate3d(0,calc(var(--cover-y) + var(--cover-focus-lift)),0) scale(calc(var(--cover-scale) + var(--cover-focus-scale))) rotateY(var(--cover-rotate));transform-origin:center center;backface-visibility:hidden;filter:saturate(.64) brightness(.74);transition:transform .5s cubic-bezier(.22,1,.36,1),filter .26s ease,border-color .22s ease-out,box-shadow .32s ease-out;will-change:transform,filter}
 .reader-cover-visual:before{content:'';position:absolute;z-index:1;inset:0;border-radius:inherit;background:radial-gradient(ellipse at 50% 0,#e5f6cc2b 0,transparent 48%);opacity:0;transition:opacity .24s ease;pointer-events:none}
-.reader-cover-slot.is-active .reader-cover-visual{transform:translate3d(0,-11px,0) scale(1.075) rotateY(0);filter:none;border-color:#daefb9d2;box-shadow:0 30px 54px #02070696,0 0 0 1px #dff4bc38,0 0 50px #b3d0911b}
-.reader-cover-slot.is-active .reader-cover-visual:before{opacity:.22}
-.reader-cover-slot.is-active:has(>.reader-cover-link:focus-visible) .reader-cover-visual{transform:translate3d(0,-14px,0) scale(1.092) rotateY(0);border-color:#e7f6cfee;box-shadow:0 34px 60px #020706a3,0 0 0 1px #e7fac94d,0 0 58px #bddb9a28;transition-duration:.24s}
+.reader-cover-slot.is-active .reader-cover-visual{transform:translate3d(0,0,0) scale(1) rotateY(0);filter:none;border-color:#b8cb9d73;box-shadow:0 18px 34px #02070673}
+.reader-cover-slot.is-active .reader-cover-visual:before{opacity:0}
+.reader-cover-slot.is-active:has(>.reader-cover-link:focus-visible) .reader-cover-visual{transform:translate3d(0,-10px,0) scale(1.065) rotateY(0);border-color:#e7f6cfee;box-shadow:0 32px 56px #0207069e,0 0 0 1px #e7fac94d,0 0 52px #bddb9a24;transition-duration:.24s}
 .reader-cover-slot.is-active:has(>.reader-cover-link:focus-visible) .reader-cover-visual:before{opacity:.34}
 .reader-cover-slot.is-active:has(>.reader-cover-link:focus-visible) .reader-cover-action svg{transform:translateX(6px)}
 .reader-cover-slot:not(.is-active):not(.is-distant):has(>.reader-cover-link:focus-visible){--cover-focus-lift:-7px;--cover-focus-scale:.045;opacity:.9!important}
@@ -28,7 +28,7 @@
 .reader-cover-slot:not(.is-active):not(.is-distant):has(>.reader-cover-link:focus-visible) .reader-cover-visual:before{opacity:.2}
 .reader-cover-slot:not(.is-active):not(.is-distant):has(>.reader-cover-link:focus-visible) .reader-cover-copy{opacity:.95;transform:none}
 @media(hover:hover) and (pointer:fine){
-  .reader-cover-slot.is-active:hover .reader-cover-visual{transform:translate3d(0,-14px,0) scale(1.092) rotateY(0);border-color:#e7f6cfee;box-shadow:0 34px 60px #020706a3,0 0 0 1px #e7fac94d,0 0 58px #bddb9a28;transition-duration:.24s}
+  .reader-cover-slot.is-active:hover .reader-cover-visual{transform:translate3d(0,-10px,0) scale(1.065) rotateY(0);border-color:#e7f6cfee;box-shadow:0 32px 56px #0207069e,0 0 0 1px #e7fac94d,0 0 52px #bddb9a24;transition-duration:.24s}
   .reader-cover-slot.is-active:hover .reader-cover-visual:before{opacity:.34}
   .reader-cover-slot.is-active:hover .reader-cover-action svg{transform:translateX(6px)}
   .reader-cover-slot:not(.is-active):not(.is-distant):hover{--cover-focus-lift:-7px;--cover-focus-scale:.045;opacity:.9!important}
@@ -113,7 +113,7 @@
   .reader-cover-deck{height:266px;padding:7px 0 9px}
   .reader-cover-slot,.reader-cover-slot.is-active{--cover-lift:4px;top:7px;width:var(--cover-width);height:250px;transform:translate3d(calc(-50% + var(--cover-mobile-x)),0,0)}
   .reader-cover-visual{inset:0;box-shadow:0 7px 14px #07110d30}
-  .reader-cover-slot.is-active .reader-cover-visual{transform:translate3d(0,-6px,0) scale(1.05) rotateY(0);box-shadow:0 19px 34px #050c0980,0 0 0 1px #d9edb630}
+  .reader-cover-slot.is-active .reader-cover-visual{transform:translate3d(0,0,0) scale(1) rotateY(0);box-shadow:0 14px 26px #050c096b}
   .reader-cover-link>.reader-link-pending{bottom:10px}
   .reader-cover-copy h2{font-size:18px;-webkit-line-clamp:2}
   .reader-cover-skeleton{height:266px;overflow:hidden;padding-top:7px}

@@ -1,4 +1,5 @@
 from fastapi import HTTPException
+import os
 import time
 import threading
 import httpx
@@ -10,11 +11,17 @@ from .video_storage import register_artifact, attach_artifact, verify_file
 from .task_activity import media_activity
 from .production_nodes import KINDS as PRODUCTION_KINDS
 
-def claim(owner):
+def _lane_matches(task, lane):
+    branch_video=task.kind=='video' and bool(task.payload.get('reader_branch_id'))
+    return lane=='any' or (lane=='branch' and branch_video) or (lane=='general' and not branch_video)
+
+def claim(owner,lane='any'):
+    if lane not in ('any','branch','general'):raise ValueError('未知任务通道。')
     now=time.time()
     with Session.begin() as db:
-        row=db.scalars(select(Task).where(or_(Task.status=='queued',and_(Task.status.in_(['running','waiting']),Task.lease<now)))
-                       .order_by(Task.created).limit(1)).first()
+        candidates=db.scalars(select(Task).where(or_(Task.status=='queued',and_(Task.status.in_(['running','waiting']),Task.lease<now)))
+                              .order_by(Task.created).limit(256)).all()
+        row=next((candidate for candidate in candidates if _lane_matches(candidate,lane)),None)
         if not row:return None
         if row.status=='running' and (row.kind=='author_flow' or row.kind in PRODUCTION_KINDS or (row.kind in ['video','image','director','art_design','creative_revision','creative_watch','author_styles'] and row.payload.get('mode')=='live' and not row.result.get('provider_id'))):
             # Paid submission may have succeeded before its response was recorded.
@@ -50,10 +57,14 @@ def save_video_result(task_id,owner,p,result,source):
         })
         clip=db.get(Record,clip_id)
         if not clip:
-            data={'title':p.get('title','真实生成片段'),'demo':False,'status':'pending','narration':p['prompt'],
+            branch_id=p.get('reader_branch_id')
+            data={'title':p.get('title','真实生成片段'),'demo':False,
+                  'status':'branch_ready' if branch_id else 'pending','narration':p['prompt'],
                   'events':[],'entry_state':{},'assets':[],'annotated':False,'source_task':task_id,
                   'director_id':p.get('director_id'),'director_version':p.get('director_version'),
-                  'shot_id':p.get('shot_id'),'input_snapshot':p.get('input_snapshot')}
+                  'shot_id':p.get('shot_id') or p.get('branch_shot_id'),'input_snapshot':p.get('input_snapshot'),
+                  **({'reader_branch_id':branch_id,'reader_branch_version':p.get('reader_branch_version'),
+                      'automatic_technical_check':True} if branch_id else {})}
             clip=Record(id=clip_id,kind='clip',data=data);db.add(clip)
         attach_artifact(clip,artifact)
         duration=artifact.data['source']['properties']['duration']
@@ -61,7 +72,8 @@ def save_video_result(task_id,owner,p,result,source):
         current.result=saved
     from .provider_usage import finish_video
     finish_video(task_id,{'duration':duration})
-    patch(task_id,owner,status='completed',progress=100,message='独立视频及素材来源已保存，等待审片与选取区间',result=saved)
+    patch(task_id,owner,status='completed',progress=100,
+          message='分支片段已通过媒体检查，可以按顺序播放' if p.get('reader_branch_id') else '独立视频及素材来源已保存，等待审片与选取区间',result=saved)
 
 
 def run_task(task_id,owner):
@@ -79,6 +91,12 @@ def run_task(task_id,owner):
         from .authors import flow
         done=flow(task_id,p)
         patch(task_id,owner,status='completed' if done else 'waiting',lease=time.time()+5,progress=100 if done else 30,message='本轮完成，等待作者确认' if done else '后台正在自动调度，请查看各项真实任务进度')
+    elif kind=='reader_branch_plan':
+        from .reader_branch import run_plan
+        planned=run_plan(task_id,p)
+        patch(task_id,owner,status='completed',progress=100,
+              message='改写超出锁定视觉范围，已返回可调整原因' if planned.get('rejected') else '因果规划已完成，分支视频正在分段生成',
+              result=planned)
     elif kind in ('art_design','creative_revision','creative_watch'):
         from .creative import run_design,run_revision,run_watch
         if kind=='art_design':run_design(task_id,p)
@@ -99,7 +117,7 @@ def run_task(task_id,owner):
                 if current.status!='running' or current.owner!=owner:raise ProviderError('导演任务已停止。')
                 project=db.get(Record,p['project_id'])
                 project.data={**project.data,key:value};project.version+=1
-                message=value if key=='phase' else {'treatment':'导演阐述已保存','treatment_diagnostics':'导演阐述输出问题已保存，正在自动重试','board':'分镜已保存','board_plan':'专业镜头计划已保存，正在编写生成提示词','prompt_diagnostics':'生成提示词问题已保存，正在自动重试','board_diagnostics':'分镜输出问题已保存，正在自动重试','board_repairs':'分镜素材绑定已按唯一场景名称校正'}[key]
+                message=value if key=='phase' else {'treatment':'导演阐述已保存','treatment_diagnostics':'导演阐述输出问题已保存，正在自动重试','board':'分镜已保存','board_plan':'专业镜头计划已保存，正在编写生成提示词','prompt_diagnostics':'生成提示词问题已保存，正在自动重试','board_diagnostics':'分镜输出问题已保存，正在自动重试','board_repairs':'分镜参考已按确定映射去重、补场景或条件拼接'}[key]
                 project.data={**project.data,'events':[*project.data.get('events',[]),{'at':time.time(),'message':message}]}
                 current.progress=progress;current.message=message
         review=run_director(p,task_id,save_stage)
@@ -168,9 +186,27 @@ def run_task(task_id,owner):
             else: provider_id=submit_video(p['prompt'],task_id,p.get('image_url'),config=video_config)
             result={**result,'provider_id':provider_id,'submitted':time.time()}
             with Session.begin() as db:
-                db.execute(update(Task).where(Task.id==task_id,Task.owner==owner).values(result=result))
                 current=db.get(Task,task_id)
-                if current.status!='running':return
+                if current.status!='running' or current.owner!=owner:return
+                current.result=result
+                branch_id=p.get('reader_branch_id')
+                if branch_id:
+                    # Submit every segment in this branch before spending worker time polling any one of them.
+                    siblings=[row for row in db.scalars(select(Task).where(
+                        Task.kind=='video',Task.status.in_(['queued','running','waiting'])))
+                        if row.payload.get('reader_branch_id')==branch_id]
+                    unsubmitted=any(row.id!=task_id and row.status in ('queued','running')
+                        and not row.result.get('provider_id') for row in siblings)
+                    now=time.time()
+                    current.status='waiting';current.progress=30
+                    current.message=('分支片段已提交，正在优先派发同一分支的其余片段' if unsubmitted
+                                     else '分支片段均已提交，正在并行生成并优先等待首段')
+                    current.lease=now+(12 if unsubmitted else 2)
+                    if not unsubmitted:
+                        for sibling in siblings:
+                            if sibling.status=='waiting' and sibling.result.get('provider_id'):
+                                sibling.lease=min(sibling.lease,now+2)
+                    return
         # Resume ingestion from a completed local source without a second paid
         # submission, even when the provider's download URL has expired.
         clip_id=f'{task_id}_clip'
@@ -209,11 +245,14 @@ def run_task(task_id,owner):
         elif time.time()-result['submitted']>3600:
             patch(task_id,owner,status='needs_review',message='等待超过一小时，已保留任务编号供核实',result=result)
         else:
-            patch(task_id,owner,status='waiting',progress=45,message='供应商正在生成，已保存任务编号',result=result,lease=time.time()+10)
+            interactive=bool(p.get('reader_branch_id'))
+            patch(task_id,owner,status='waiting',progress=45,
+                  message='分支片段正在生成，播放器会在就绪后自动衔接' if interactive else '供应商正在生成，已保存任务编号',
+                  result=result,lease=time.time()+(2 if interactive else 10))
     else:raise ProviderError('未知任务类型')
 
-def process_one(owner):
-    task_id=claim(owner)
+def process_one(owner,lane='any'):
+    task_id=claim(owner,lane)
     if not task_id:return False
     with Session() as db:access_id=db.get(Task,task_id).session_id
     stop=threading.Event();thread=threading.Thread(target=heartbeat,args=(task_id,owner,stop),daemon=True);thread.start()
@@ -230,12 +269,28 @@ def process_one(owner):
     finally:stop.set();thread.join(timeout=1)
     return True
 
+def _reader_branch_worker_count():
+    try:count=int(os.getenv('READER_BRANCH_WORKERS','2'))
+    except (TypeError,ValueError):count=2
+    return max(1,min(count,4))
+
+def _branch_loop(owner):
+    while True:
+        try:worked=process_one(owner,'branch')
+        except Exception as exc:
+            print(f'Reader branch worker recovered after {type(exc).__name__}',flush=True)
+            time.sleep(1)
+            continue
+        if not worked:time.sleep(.5)
+
 if __name__=='__main__':
-    init_db();owner=uid('worker')
-    print('Story worker ready',flush=True)
+    init_db();owner=uid('worker');branch_workers=_reader_branch_worker_count()
+    for index in range(branch_workers):
+        threading.Thread(target=_branch_loop,args=(uid(f'branchworker{index+1}'),),daemon=True).start()
+    print(f'Story worker ready; reader branch lanes: {branch_workers}',flush=True)
     while True:
         with Session.begin() as db:
             row=db.get(Record,'worker_heartbeat')
             if row:row.data={'at':time.time()}
             else:db.add(Record(id='worker_heartbeat',kind='system',data={'at':time.time()}))
-        if not process_one(owner):time.sleep(1)
+        if not process_one(owner,'general'):time.sleep(1)

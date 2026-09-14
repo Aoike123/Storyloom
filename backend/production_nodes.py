@@ -11,6 +11,7 @@ NODES = {
 ACTIVE_KINDS = {node['kind'] for node in NODES.values()}
 KINDS = ACTIVE_KINDS | {'author_composite'}
 BUSY = ('queued','running','waiting')
+PROBLEM = ('failed','needs_review')
 PHASE_STATES = {
     'storyboarding': ('assets_review','fittings_review','trials_review','composites_ready','references_ready','storyboarding','storyboard_ready'),
     'rendering': ('storyboard_ready','samples_review','frames_review','videos_review'),
@@ -78,6 +79,76 @@ def node_snapshots(db,work):
         task=db.get(Task,work.data.get('production_nodes',{}).get(phase,''))
         result.append({'id':phase,'name':node['name'],'hint':node['hint'],'task':task_dict(task) if task else None})
     return result if work.data.get('production_nodes') else []
+
+
+def retry_current_node(db,work):
+    """Create a fresh coordinator for the failed current node while retaining prior records."""
+    phase=work.data.get('stage')
+    if phase not in NODES:raise HTTPException(409,'当前步骤不是可重新运行的制作节点。')
+    prior=db.get(Task,work.data.get('production_nodes',{}).get(phase,''))
+    sid=work.data.get('director_id','');related=_related(db,sid)
+    replaced={task.payload.get('revision_of') for task in related if task.payload.get('revision_of')}
+    current=[task for task in related if task.id not in replaced and saved_task_phase(task)==phase
+             and task.status not in ('cancelled','superseded')]
+    problems=[task for task in current if task.status in PROBLEM]
+    if not (prior and prior.status in PROBLEM) and not problems:
+        raise HTTPException(409,'当前节点没有可重新运行的错误。')
+    if prior and prior.status in ('queued','running'):
+        raise HTTPException(409,'当前制作节点仍在运行。')
+    if any(task.status in BUSY for task in current):
+        raise HTTPException(409,'当前节点仍有子任务在运行，请等待结束后重试。')
+    feedback_items=list(dict.fromkeys(task.message for task in [*problems,*([prior] if prior and prior.status in PROBLEM else [])]
+                                     if task and task.message))
+    if prior and prior.status=='waiting':
+        prior.status='needs_review'
+        prior.message='子任务已报错，正在建立新的当前节点任务。'
+    run=db.get(Record,'creative_'+sid)
+    if not run:raise HTTPException(409,'当前制作轮次不存在，不能重新运行节点。')
+    if phase=='storyboarding':
+        project=db.get(Record,sid)
+        raw=(project.data.get('board_diagnostics') or {}).get('raw') if project else None
+        source_task=next((task for task in problems if task.kind=='director' and task.payload.get('source',{}).get('content')),None)
+        if raw is not None and source_task:
+            from . import director
+            from pydantic import ValidationError
+            try:
+                saved=director.Board.model_validate(raw)
+                saved,_=director.repair_board_causality(saved)
+                for issue in director.check_board(saved,source_task.payload['source']['content']):
+                    if issue not in feedback_items:feedback_items.append(issue)
+            except ValidationError:
+                pass
+        feedback='；'.join(feedback_items)[:1200]
+        for task in problems:
+            task.status='superseded';task.message='已由重新运行的分镜节点接替；原错误与输出保留。'
+        data={key:value for key,value in run.data.items() if key!='watch'}
+        run.data={**data,'stage':'references_ready','storyboard_retry_feedback':feedback}
+        run.version+=1
+        replacement=queue_node(db,work,phase)
+        replacement.message='分镜生成已重新排队，将参考上次错误重新生成'
+        replacements=[]
+    else:
+        feedback='；'.join(feedback_items)[:1200]
+        replacement=queue_node(db,work,phase)
+        replacements=[]
+        for task in problems:
+            if task.kind not in ('image','video'):
+                task.status='superseded';task.message='已由重新运行的漫剧节点接替；原错误与输出保留。'
+                continue
+            if task.status=='needs_review' and task.result.get('provider_id'):
+                task.status='queued';task.lease=0;task.owner=''
+                task.payload={**task.payload,'production_phase':phase,'production_node':replacement.id}
+                task.message='正在重新核实已提交的供应商任务，不重复提交'
+                replacements.append(task.id);continue
+            new_task=Task(id=uid(task.kind),kind=task.kind,
+                message='失败任务已重新排队',payload={**task.payload,'production_phase':phase,
+                    'production_node':replacement.id,'revision_of':task.id})
+            db.add(new_task);task.status='superseded';task.message='已由新的重试任务接替；原错误与输出保留。'
+            replacements.append(new_task.id)
+    db.add(Record(id=uid('audit'),kind='audit',data={'target':work.id,'action':'current_production_node_retried',
+        'phase':phase,'previous_node_id':prior.id if prior else None,'replacement_node_id':replacement.id,
+        'replacement_task_ids':replacements,'previous_error':feedback}))
+    return replacement
 
 
 def _related(db,sid):

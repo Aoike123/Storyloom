@@ -104,7 +104,7 @@ export default function ModelConfig({onSaved}: {onSaved?: () => Promise<void>}) 
         <div className="model-access-options">
           <button type="button" className={'model-access-option ' + (mode === 'public' ? 'is-selected' : '')} disabled={!status?.pool.available} onClick={() => setMode('public')} aria-pressed={mode === 'public'}>
             <span>共享体验池<em>{status?.pool.available ? '可用' : '不可用'}</em></span>
-            <strong>{status ? '三个 Key 独立计量' : '读取中…'}</strong>
+            <strong>{status ? '共享额度' : '读取中…'}</strong>
             <p>{status?.pool.reason || '正在核对今日额度与供应商状态'}</p>
             {status && <div className="model-access-pool-quotas">{status.pool.providers.map(provider => <span key={provider.kind}>
               <b>{provider.provider}<em>{provider.available ? '可用' : provider.reason}</em></b>

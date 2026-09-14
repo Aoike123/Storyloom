@@ -91,6 +91,22 @@ def test_causality_and_source_checks():
     assert len(issues)==3
 
 
+def test_causality_error_gives_a_concrete_model_correction():
+    b=board();b['shots'][1]['purpose']='reveal';b['shots'][1]['setup_ids']=[]
+    issues=d.check_board(d.Board.model_validate(b),TEXT)
+    issue=next(item for item in issues if '揭示或回收缺少前序铺垫' in item)
+    assert 'setup_ids' in issue and 'S01' in issue
+    assert 'purpose' in issue and 'rule' in issue
+
+
+def test_board_rejects_source_order_rollback():
+    b=board()
+    for shot,source_ref in zip(b['shots'],['P001','P004','P002','P003']):shot['source_ref']=source_ref
+    issues=d.check_board(d.Board.model_validate(b),TEXT)
+    assert any('S03 原文顺序倒退' in issue and 'S02（P004）' in issue for issue in issues)
+    assert any('S04 原文顺序倒退' in issue and '保持原著因果顺序' in issue for issue in issues)
+
+
 def test_other_tags_and_paid_gate(setup_source):
     client=setup_source
     assert client.post('/api/director',json={'source_id':'source_test'}).status_code==422
@@ -144,8 +160,38 @@ def test_invalid_board_preserves_diagnostics(setup_source,monkeypatch):
     assert len(diagnostic['attempts'])==4
 
 
+def test_storyboard_schema_and_retry_feedback_enforce_three_reference_limit(setup_source,monkeypatch):
+    assert d.Shot.model_json_schema()['properties']['assets']['maxItems']==12
+    treatment={k:'设计依据' for k in ['premise','dramatic_question','protagonist_goal','excerpt_scope','visual_strategy','information_strategy']}
+    treatment.update(rules=[{'rule':'规则','quote':TEXT,'consequence':'后果'}],boundaries=['未知'])
+    prep=reference_prep();prep['assets'].update({
+        'other':{'role':'character','name':'跟踪者','identity_asset_id':'other','requires_costume':False},
+        'third':{'role':'character','name':'同事甲','identity_asset_id':'third','requires_costume':False},
+        'fourth':{'role':'character','name':'同事乙','identity_asset_id':'fourth','requires_costume':False},
+    })
+    invalid=board();valid=board()
+    for shot in invalid['shots']:shot['assets']=['actor','costume','restroom']
+    invalid['shots'][0]['assets']=['actor','costume','other','third','restroom']
+    for shot in valid['shots']:shot['assets']=['actor','costume','restroom']
+    systems=[];board_payloads=[];answers=iter([invalid,valid,{
+        'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'}])
+    def chat(system,payload,*args,**kwargs):
+        systems.append(system)
+        if payload['schema']['title']=='Board':board_payloads.append(payload)
+        return next(answers),{}
+    monkeypatch.setattr(d,'chat_json',chat)
+    result=d.run_director({'stage':'board','source':{'content':TEXT},'brief':'测试','treatment':treatment,
+                           'preproduction':prep,'retry_feedback':'上一次节点的具体错误'},'retry-board',lambda *args:None)
+    assert result['approved'] is True and len(board_payloads)==2
+    assert board_payloads[0]['preproduction']['asset_binding_contract']['character_reference_sets']
+    assert board_payloads[0]['preproduction']['previous_node_error']=='上一次节点的具体错误'
+    assert 'S01 的 assets 完整绑定为 5 张' in systems[1]
+    assert '多人内容必须拆成单人反打或空场景镜头' in systems[1]
+
+
 def test_saved_board_skips_storyboard_model_and_repairs_unique_scene_binding(monkeypatch):
     raw=recoverable_board();prep=reference_prep();nodes=[];saved=[]
+    raw['shots'][1].update(purpose='reveal',setup_ids=[],continuity_in='承接 S01 已建立的异常规则')
     treatment={k:'设计依据' for k in ['premise','dramatic_question','protagonist_goal','excerpt_scope','visual_strategy','information_strategy']}
     treatment.update(rules=[{'rule':'女主看不清','quote':'女主看不清鬼怪','consequence':'认知错位'}],boundaries=['完整结局未知'])
     def node(_chat,name,payload,*args,**kwargs):
@@ -162,8 +208,10 @@ def test_saved_board_skips_storyboard_model_and_repairs_unique_scene_binding(mon
     assert result['approved'] is True and nodes==['shot_prompts','storyboard_review']
     repaired=next(value for key,value,*_ in saved if key=='board' and value['shots'][1]['id']=='S02')
     assert repaired['shots'][1]['assets']==['actor','costume','restroom']
+    assert repaired['shots'][1]['setup_ids']==['S01']
     changes=next(value for key,value,*_ in saved if key=='board_repairs')['changes']
-    assert {change['action'] for change in changes}=={'remove_duplicate_assets','bind_unique_named_scene'}
+    assert {change['action'] for change in changes}=={
+        'bind_explicit_setup_reference','remove_duplicate_assets','bind_unique_named_scene'}
 
 
 def test_frame_remake_points_to_the_previous_current_frame(client,monkeypatch):

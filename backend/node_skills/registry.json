@@ -312,6 +312,33 @@
       ],
       "adapter": "adapters/storyboard-review/SKILL.md"
     },
+    "reader_branch_plan": {
+      "title": "读者轻量分支因果规划",
+      "mode": "llm",
+      "schema": "BranchPlan",
+      "inputs": [
+        "story",
+        "cut",
+        "history",
+        "reader_intent",
+        "locked_visual",
+        "candidate_rejoins",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "shape-story-blueprint",
+          "sections": ["Workflow", "Boundaries"]
+        },
+        {
+          "bundle": "film",
+          "skill": "plan-camera-shots",
+          "sections": ["Workflow", "Boundaries"]
+        }
+      ],
+      "adapter": "adapters/reader-branch-plan/SKILL.md"
+    },
     "identity_revision": {
       "title": "人物身份属性修订",
       "mode": "llm",

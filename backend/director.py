@@ -13,7 +13,7 @@ VERSION='brainstorm-1.0'
 router=APIRouter(prefix='/api/director',tags=['director'])
 
 class Rule(BaseModel):
-    source_ref:str=Field(default='',max_length=20)
+    source_ref:str=Field(default='',max_length=20,description='对应原文 P 编号；镜头默认按 P 编号非递减排列，保持原著因果顺序。')
     rule:str=Field(min_length=1,max_length=500)
     quote:str=Field(min_length=2,max_length=300)
     consequence:str=Field(min_length=1,max_length=500)
@@ -32,7 +32,9 @@ class Shot(BaseModel):
     source_ref:str=Field(default='',max_length=20)
     id:str=Field(pattern=r'^S[0-9]{2}$')
     scene:str=Field(min_length=1,max_length=160)
-    purpose:Literal['hook','setup','rule','escalation','reveal','reaction','payoff','bridge']
+    purpose:Literal['hook','setup','rule','escalation','reveal','reaction','payoff','bridge']=Field(
+        description='首次建立或发现信息用 hook/setup/rule/escalation；reveal/payoff 仅用于回应前序镜头已经铺垫的信息，并必须填写 setup_ids。',
+    )
     source_quote:str=Field(min_length=2,max_length=300)
     dramatic_action:str=Field(min_length=1,max_length=600)
     size:Literal['EWS','WS','MS','MCU','CU','ECU','INSERT']
@@ -44,7 +46,11 @@ class Shot(BaseModel):
     viewer_knows:str=Field(min_length=1,max_length=400)
     character_knows:str=Field(min_length=1,max_length=400)
     withhold:str=Field(min_length=1,max_length=300)
-    setup_ids:list[str]=Field(default_factory=list,max_length=8)
+    setup_ids:list[str]=Field(
+        default_factory=list,
+        max_length=8,
+        description='所回应该信息的前序镜号。reveal/payoff 必填且只能引用本镜之前的 Sxx；若 continuity_in 明写承接某镜，须同步填写该镜号。',
+    )
     edit_seconds:float=Field(ge=1,le=15)
     generation_seconds:int=Field(ge=5,le=15)
     dialogue:str=Field(max_length=400)
@@ -52,7 +58,11 @@ class Shot(BaseModel):
     transition:str=Field(min_length=1,max_length=300)
     reference_prompt:str=Field(min_length=5,max_length=1500,validation_alias=AliasChoices('reference_prompt','first_frame'),description='镜头参考图设计，用于构图、人物定装与场景外观参考，不限定视频起止帧')
     motion_prompt:str=Field(min_length=5,max_length=1500)
-    assets:list[str]=Field(min_length=1,max_length=12)
+    assets:list[str]=Field(
+        min_length=1,
+        max_length=12,
+        description='从 preproduction.asset_binding_contract 复制完整语义素材 ID；不要为三图上限省略人物或服装，调用方会仅在超限时确定性拼接。',
+    )
     generation_risk:str=Field(min_length=1,max_length=400)
 
 class Board(BaseModel):
@@ -94,16 +104,64 @@ def bind_sources(items,passages,field):
             if item.source_ref not in passages:raise ProviderError(f'原文依据编号 {item.source_ref} 不存在，已保存草稿。')
             setattr(item,field,passages[item.source_ref])
 
+def repair_board_causality(board):
+    """Copy explicit continuity references into omitted structured causality links."""
+    repaired=board.model_copy(deep=True);changes=[];prior_ids=[]
+    for shot in repaired.shots:
+        if shot.purpose in ('reveal','payoff') and not shot.setup_ids:
+            explicit=list(dict.fromkeys(ref.upper() for ref in re.findall(r'(?<![A-Z0-9])S\d{2}(?!\d)',shot.continuity_in,re.I)
+                                    if ref.upper() in prior_ids))
+            if explicit:
+                shot.setup_ids=explicit
+                changes.append({'shot_id':shot.id,'action':'bind_explicit_setup_reference','setup_ids':explicit})
+        prior_ids.append(shot.id)
+    return repaired,changes
+
+
 def check_board(board,content):
-    issues=[];seen=set()
+    issues=[];seen=set();prior_ids=[];latest_source=None;latest_source_shot=None
     for shot in board.shots:
         if shot.id in seen:issues.append(f'{shot.id} 镜号重复')
         if not quote_exists(shot.source_quote,content):issues.append(f'{shot.id} 原文依据无法定位')
-        if any(x not in seen for x in shot.setup_ids):issues.append(f'{shot.id} 铺垫必须引用前序镜头')
-        if shot.purpose in ('reveal','payoff') and not shot.setup_ids:issues.append(f'{shot.id} 揭示或回收缺少前序铺垫')
+        invalid=[setup_id for setup_id in shot.setup_ids if setup_id not in seen]
+        if invalid:
+            available='、'.join(prior_ids) or '当前没有前序镜头'
+            issues.append(f'{shot.id} 铺垫必须引用前序镜头；无效 setup_ids：{"、".join(invalid)}；可引用：{available}')
+        if shot.purpose in ('reveal','payoff') and not shot.setup_ids:
+            available='、'.join(prior_ids) or '当前没有前序镜头'
+            issues.append(
+                f'{shot.id} 揭示或回收缺少前序铺垫：若它回应已建立的信息，请在 setup_ids 填对应前序镜号（可引用：{available}）；'
+                '若它是首次建立或发现信息，请把 purpose 改为 hook、setup、rule 或 escalation。'
+            )
+        source_match=re.fullmatch(r'P(\d+)',shot.source_ref,re.I)
+        if source_match:
+            source_index=int(source_match.group(1))
+            if latest_source is not None and source_index<latest_source:
+                issues.append(
+                    f'{shot.id} 原文顺序倒退：{shot.source_ref.upper()} 排在 '
+                    f'{latest_source_shot}（P{latest_source:03}）之后；请按 P 编号非递减排列镜头，保持原著因果顺序。'
+                )
+            else:latest_source=source_index;latest_source_shot=shot.id
         if shot.edit_seconds>shot.generation_seconds:issues.append(f'{shot.id} 剪辑时长超过生成素材时长')
-        seen.add(shot.id)
+        seen.add(shot.id);prior_ids.append(shot.id)
     return issues
+
+
+def board_validation_errors(exc,raw):
+    """Turn schema failures into retry feedback that tells the model what to change."""
+    errors=[]
+    shots=raw.get('shots',[]) if isinstance(raw,dict) and isinstance(raw.get('shots'),list) else []
+    for error in exc.errors(include_input=False,include_url=False):
+        location=error['loc'];reason=error['msg']
+        if (len(location)>=3 and location[0]=='shots' and isinstance(location[1],int)
+                and location[-1]=='assets' and error['type'] in ('too_long','list_too_long')):
+            shot=shots[location[1]] if location[1]<len(shots) and isinstance(shots[location[1]],dict) else {}
+            shot_id=shot.get('id') or f'第 {location[1]+1} 镜'
+            asset_count=len(shot.get('assets',[])) if isinstance(shot.get('assets'),list) else '超过上限'
+            reason=(f'{shot_id} 的 assets 列出了 {asset_count} 项，超过分镜语义素材上限 12 项。'
+                    '请缩小单镜内容或拆镜，并继续完整绑定每个角色的身份、服装与对应场景。')
+        errors.append({'field':'.'.join(str(x) for x in location),'reason':reason,'type':error['type']})
+    return errors
 
 def run_director(payload,task_id,save_stage):
     source=payload['source'];content=source['content']
@@ -136,17 +194,30 @@ def run_director(payload,task_id,save_stage):
         save_stage('treatment',treatment.model_dump(),30)
     if payload.get('stage')=='treatment':return {'stage':'awaiting_preproduction'}
     save_stage('phase','正在设计镜头调度、信息揭示与声音衔接',35)
+    preproduction=payload.get('preproduction')
+    model_preproduction=preproduction
+    if preproduction:
+        from .preproduction import storyboard_preproduction
+        model_preproduction=storyboard_preproduction(preproduction)
+        if payload.get('retry_feedback'):
+            model_preproduction={**model_preproduction,'previous_node_error':payload['retry_feedback']}
     board_attempts=[]
     def board_contract(raw):
-        errors=[];repairs=[]
+        errors=[];repairs=[];packing={}
         try:result=Board.model_validate(raw)
         except ValidationError as exc:
-            errors=[{'field':'.'.join(str(x) for x in e['loc']),'reason':e['msg'],'type':e['type']} for e in exc.errors(include_input=False,include_url=False)]
+            errors=board_validation_errors(exc,raw)
             result=None
-        if result is not None and payload.get('preproduction'):
+        if result is not None:
+            result,causality_repairs=repair_board_causality(result)
+            repairs.extend(causality_repairs)
+        if result is not None and preproduction:
             from .preproduction import repair_board_assets,validate_board
-            result,repairs=repair_board_assets(result,payload['preproduction'])
-            try:validate_board(result,payload['preproduction'])
+            result,asset_repairs=repair_board_assets(result,preproduction)
+            repairs.extend(asset_repairs)
+            from .preproduction import plan_board_asset_packing
+            packing=plan_board_asset_packing(result,preproduction)
+            try:validate_board(result,preproduction,packing)
             except HTTPException as exc:errors=[{'field':'assets','reason':str(exc.detail),'type':'asset_binding'}]
         if result is not None and not errors:
             try:bind_sources(result.shots,passages,'source_quote')
@@ -158,16 +229,24 @@ def run_director(payload,task_id,save_stage):
             save_stage('board_diagnostics',{'raw':raw,'errors':errors,'attempts':list(board_attempts)},35)
             details='；'.join(e['field']+'：'+e['reason'] for e in errors[:5])
             raise ModelOutputError('分镜未按结构、原文或素材绑定约定输出：'+details)
-        return result,repairs
+        return result,repairs,packing
     raw=payload.get('saved_board')
     if raw is None:
         validated,_=call_node(chat_json,'storyboard',
-            {'source':source,'source_passages':passages,'treatment':treatment.model_dump(),'brief':payload['brief'],'preproduction':payload.get('preproduction'),'schema':Board.model_json_schema()},task_id,
+            {'source':source,'source_passages':passages,'treatment':treatment.model_dump(),'brief':payload['brief'],'preproduction':model_preproduction,'schema':Board.model_json_schema()},task_id,
             validator=board_contract)
-        board,repairs=validated
+        board,repairs,packing=validated
     else:
-        try:board,repairs=board_contract(raw)
+        try:board,repairs,packing=board_contract(raw)
         except ModelOutputError as exc:raise ProviderError(str(exc)) from None
+    if packing:
+        from .preproduction import materialize_board_asset_packing,repair_board_assets,validate_board,storyboard_preproduction
+        try:preproduction,_=materialize_board_asset_packing(payload['project_id'],task_id,preproduction['stamp'],packing)
+        except HTTPException as exc:raise ProviderError(str(exc.detail)) from None
+        board,packed_repairs=repair_board_assets(board,preproduction);repairs.extend(packed_repairs)
+        try:validate_board(board,preproduction)
+        except HTTPException as exc:raise ProviderError(str(exc.detail)) from None
+        model_preproduction=storyboard_preproduction(preproduction)
     if repairs:save_stage('board_repairs',{'changes':repairs},35)
     save_stage('board',board.model_dump(),65)
     if payload.get('professional_prompts'):
@@ -189,7 +268,9 @@ def run_director(payload,task_id,save_stage):
                 save_stage('prompt_diagnostics',{'raw':compiled,'errors':errors,'attempts':list(prompt_attempts)},66)
                 raise ModelOutputError('镜头提示词未按镜号与格式约定输出：'+'；'.join(e['reason'] for e in errors[:5]))
             return prompts
-        prompts,_=call_node(chat_json,'shot_prompts',{'board':board.model_dump(),'preproduction':payload.get('preproduction'),'schema':ShotPromptBatch.model_json_schema()},task_id,
+        from .preproduction import shot_prompt_preproduction
+        prompt_preproduction=shot_prompt_preproduction(preproduction) if preproduction else None
+        prompts,_=call_node(chat_json,'shot_prompts',{'board':board.model_dump(),'preproduction':prompt_preproduction,'schema':ShotPromptBatch.model_json_schema()},task_id,
             validator=prompt_contract)
         if not isinstance(prompts,ShotPromptBatch):prompts=prompt_contract(prompts)
         try:
@@ -352,6 +433,7 @@ def project_history(project_id:str):
 class BoardStart(BaseModel):
     version:int
     confirm_paid:bool=False
+    retry_feedback:str|None=Field(default=None,max_length=1200)
 @router.post('/projects/{project_id}/storyboard')
 def start_storyboard(project_id:str,body:BoardStart):
     cfg=settings()
@@ -367,10 +449,12 @@ def start_storyboard(project_id:str,body:BoardStart):
         original=db.get(Task,row.data['task_id'])
         source=original.payload['source']
         tid=uid('direct')
-        t=Task(id=tid,kind='director',payload={'mode':'live','stage':'board','project_id':project_id,'source_id':row.data['source_id'],'source':source,'brief':row.data['brief'],'treatment':row.data['treatment'],'preproduction':prep,'professional_prompts':True})
+        t=Task(id=tid,kind='director',payload={'mode':'live','stage':'board','project_id':project_id,'source_id':row.data['source_id'],'source':source,'brief':row.data['brief'],'treatment':row.data['treatment'],'preproduction':prep,'professional_prompts':True,
+            **({'retry_feedback':body.retry_feedback} if body.retry_feedback else {})})
         # Retain old artifacts separately so a failed remake never destroys them.
         history=[*row.data.get('board_history',[])]
-        if row.data.get('board'):history.append({'board':row.data['board'],'review':row.data.get('review'),'version':row.version})
+        previous={key:row.data.get(key) for key in ('board','review','board_diagnostics') if row.data.get(key) is not None}
+        if previous:history.append({**previous,'version':row.version})
         row.data={k:v for k,v in row.data.items() if k not in ('board','review','board_diagnostics')}
         row.data={**row.data,'board_history':history,'requires_preproduction':True,'preproduction_stamp':prep['stamp'],'status':'generating','task_id':tid}
         row.version+=1;db.add(t);db.flush();return {'project_id':project_id,'task':task_dict(t)}

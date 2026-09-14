@@ -24,6 +24,7 @@ from .model_access import (
 from .preproduction import router as preproduction_router
 from .production import reader as reader_router
 from .production import router as production_router
+from .reader_branch import router as reader_branch_router
 from .providers import settings
 from .public_limits import request_retry_after
 from .video_files import StorageError
@@ -48,6 +49,7 @@ app.include_router(story_router)
 app.include_router(director_router)
 app.include_router(production_router)
 app.include_router(reader_router)
+app.include_router(reader_branch_router)
 app.include_router(catalog_router)
 app.include_router(storage_router)
 
@@ -100,9 +102,15 @@ async def local_only(request: Request, call_next):
                 return JSONResponse({"detail": "仅允许本地工作台发起操作"}, status_code=403)
         path = request.url.path
         response = await call_next(request)
-        if path.startswith("/api/") or path.startswith("/media/"):
+        if path.startswith("/api/"):
             streaming = response.headers.get("content-type", "").startswith("text/event-stream")
             response.headers["Cache-Control"] = "no-store, no-transform" if streaming else "no-store"
+        elif path.startswith("/media/clips/") or path.startswith("/media/clip_uses/"):
+            # These paths are content-addressed/immutable. Browser caching and range
+            # reuse prevent a branch transition from downloading the same clip twice.
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif path.startswith("/media/"):
+            response.headers["Cache-Control"] = "no-store"
         return response
 
 

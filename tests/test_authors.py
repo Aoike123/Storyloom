@@ -41,10 +41,15 @@ def test_author_flow_stops_only_for_assets_and_film(creative,monkeypatch,sample_
     assert a.post('/api/author/projects/work/generate',json={'confirm_paid':True}).status_code==422
     assert a.post('/api/author/projects/work/generate',json={'confirm':True,'confirm_paid':True}).status_code==200
     assert a.post('/api/author/projects/work/generate',json={'confirm':True,'confirm_paid':True}).status_code==409
-    # The storyboard coordinator binds the reviewed base sheets directly.
+    # A single-character shot stays as three separate identity, costume, and scene references.
     worker.process_one('author-test')
     pre=pp.get('pid')['config'];b=board()
-    for shot in b['shots']:shot['assets']=list(pre['assets'])
+    identity=next((aid for aid,spec in pre['assets'].items() if spec['role']=='character' and not spec.get('costume_asset_id')))
+    costume=next((aid for aid,spec in pre['assets'].items() if spec['role']=='costume' and spec.get('identity_asset_id')==identity))
+    scene=next((aid for aid,spec in pre['assets'].items() if spec['role']=='scene'))
+    packed=[aid for aid,spec in pre['assets'].items() if spec['role']=='character' and spec.get('costume_asset_id')]
+    assert packed==[]
+    for shot in b['shots']:shot['assets']=[identity,costume,scene]
     answers=iter([b,{'shots':[{k:s[k] for k in ('id','first_frame','motion_prompt')} for s in b['shots']]},{'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'}])
     monkeypatch.setattr(d,'chat_json',lambda *args:(next(answers),{}))
     # Advance supervisor leases without sleeping or calling any paid provider.
@@ -62,6 +67,8 @@ def test_author_flow_stops_only_for_assets_and_film(creative,monkeypatch,sample_
     assert c.get_status('pid')=='videos_review'
     with Session() as db:
         assert not [task for task in db.scalars(select(Task).where(Task.kind=='image')) if task.payload.get('preproduction_id')=='pid' or task.payload.get('asset_kind')=='dressed_character']
+        assert not [asset for asset in db.scalars(select(Record).where(Record.kind=='asset'))
+                    if asset.data.get('asset_kind')=='character_costume_reference']
     with Session.begin() as db:
         for t in db.scalars(select(Task).where(Task.kind=='video')):
             t.status='completed';t.result={'clip_id':t.id+'_clip','media':'/media/'+t.id+'.mp4'}

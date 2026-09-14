@@ -1,5 +1,6 @@
 """Probe and prepare independent video files using the bundled FFmpeg runtime."""
 import hashlib
+import math
 import os
 import re
 import shutil
@@ -192,6 +193,25 @@ def extract_boundary(source, index, destination):
                 '-frames:v', '1', '-fps_mode', 'passthrough', temp])
         if not temp.is_file():
             raise StorageError('无法提取实际剪辑边界帧。')
+        publish_file(temp, destination)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def extract_frame_at_second(source, second, destination):
+    """Save one immutable frame from an existing local video; no visual is generated."""
+    if not isinstance(second, (int, float)) or not math.isfinite(second) or second < 0:
+        raise StorageError('暂停时间无效。')
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        return
+    temp = destination.with_name('.' + uuid.uuid4().hex + '.png')
+    try:
+        ffmpeg(['-v', 'error', '-xerror', '-y', '-ss', f'{second:.6f}', '-i', source,
+                '-frames:v', '1', '-fps_mode', 'passthrough', temp])
+        if not temp.is_file():
+            raise StorageError('无法从暂停位置提取衔接画面。')
         publish_file(temp, destination)
     finally:
         temp.unlink(missing_ok=True)

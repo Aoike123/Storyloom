@@ -1,3 +1,18 @@
+export type ReleaseEntry = {
+  occurrence_id?: string;
+  clip_id: string;
+  media: string;
+  start: number;
+  end: number;
+  shot_id: string;
+  status?: 'ready' | 'pending' | 'failed';
+  kind?: 'original' | 'branch';
+  label?: string;
+  summary?: string;
+  original_index?: number;
+  message?: string;
+};
+
 export type Release = {
   id: string;
   source_work_id?: string;
@@ -6,7 +21,33 @@ export type Release = {
   source_title: string;
   author: string;
   description: string;
-  entries: {clip_id: string; media: string; start: number; end: number; shot_id: string}[];
+  entries: ReleaseEntry[];
+};
+
+export type ReaderBranch = {
+  id: string;
+  version: number;
+  release_id: string;
+  base_branch_id?: string;
+  branch_version: number;
+  status: 'planning' | 'generating' | 'ready' | 'rejected' | 'failed' | 'superseded';
+  message: string;
+  lock_forward_seek: boolean;
+  intent: string;
+  cut: {
+    manifest_index: number;
+    offset: number;
+    original_index: number;
+    original_shot_id?: string;
+    source_kind?: 'original' | 'branch';
+    at_story_end?: boolean;
+  };
+  summary?: string | null;
+  terminal?: boolean | null;
+  rejoin_index?: number | null;
+  entries: ReleaseEntry[];
+  ready_count: number;
+  generated_count: number;
 };
 
 export type CatalogItem = {

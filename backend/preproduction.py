@@ -1,5 +1,5 @@
 """Casting and sets are approved before shot design."""
-import hashlib,json,time
+import hashlib,json,re,time
 from fastapi import APIRouter,HTTPException
 from pydantic import BaseModel,Field
 from typing import Literal
@@ -90,23 +90,248 @@ def ready(db,pid):
         if not a or a.version!=v or a.data.get('status')!='approved':raise HTTPException(409,'参考图确认已失效。')
     return {**r.data,'stamp':token}
 
-def validate_board(board,prep):
-    known=set(prep['assets'])
-    for s in board.shots:
-        if not s.assets or len(s.assets)>3 or len(set(s.assets))!=len(s.assets) or not set(s.assets)<=known:raise HTTPException(422,f'{s.id} 引用了未选定的演员、影棚或道具，需调整分镜或返回搭景。')
-        if not any(prep['assets'][a]['role']=='scene' for a in s.assets):raise HTTPException(422,f'{s.id} 未绑定已批准影棚。')
-        from .asset_workflow import validate_shot_identities
-        validate_shot_identities(s.assets,prep['assets'])
+def storyboard_asset_contract(prep):
+    """Give the model copy-safe reference groups instead of making it infer ID relations."""
+    assets=prep.get('assets',{})
+    character_sets=[]
+    for character_id,character in assets.items():
+        if character.get('role')!='character':continue
+        if _is_condensed_character_reference(character,assets):continue
+        costumes=[(costume_id,costume) for costume_id,costume in assets.items()
+                  if costume.get('role')=='costume' and costume.get('identity_asset_id')==character_id]
+        choices=costumes if character.get('requires_costume') else [(None,None),*costumes]
+        for costume_id,costume in choices:
+            ids=[character_id,*([costume_id] if costume_id else [])]
+            if len(ids)<3:
+                character_sets.append({'character':character.get('name') or character_id,
+                    'costume':costume.get('name') if costume else None,'asset_ids':ids})
+    scenes=[{'name':spec.get('name') or asset_id,'asset_id':asset_id}
+            for asset_id,spec in assets.items() if spec.get('role')=='scene']
+    props=[{'name':spec.get('name') or asset_id,'asset_id':asset_id}
+           for asset_id,spec in assets.items() if spec.get('role')=='prop']
+    return {
+        'max_semantic_assets_per_shot':12,
+        'max_reference_files_after_packing':3,
+        'scene_required':True,
+        'scene_count_per_shot':1,
+        'character_reference_sets':character_sets,
+        'scene_references':scenes,
+        'prop_references':props,
+        'selection_rule':('assets 必须使用真实 ID。每个入镜角色完整复制一组 character_reference_sets.asset_ids，'
+                          '再追加一张 scene_references.asset_id；不要为了三图上限省略身份或服装。'
+                          '调用方仅在完整列表超过三张时，才会把同一角色的身份与服装确定性拼成一张参考板；'
+                          '若拼接后仍超过三张，校验会要求拆成反打或空场景镜头。'),
+    }
+
+
+def storyboard_preproduction(prep):
+    """Attach the normalized binding contract without mutating the saved setup."""
+    assets=prep.get('assets',{})
+    visible={asset_id:spec for asset_id,spec in assets.items() if not _is_condensed_character_reference(spec,assets)}
+    return {**prep,'assets':visible,'asset_binding_contract':storyboard_asset_contract(prep)}
+
+
+def shot_prompt_preproduction(prep):
+    """Prompt compilation must see any physical stitched references selected by the caller."""
+    return {**prep,'asset_binding_contract':storyboard_asset_contract(prep)}
+
+
+def _is_condensed_character_reference(spec,assets):
+    return (spec.get('role')=='character' and bool(spec.get('costume_asset_id'))
+            and spec.get('identity_asset_id') in assets and spec.get('costume_asset_id') in assets)
+
+
+def _asset_label(asset_id,assets):
+    spec=assets.get(asset_id,{})
+    return f'{spec.get("name") or asset_id}（{asset_id}）'
+
+
+def _shot_character_mentions(shot,assets):
+    """Resolve only unique approved-character names that visibly occur in the image prompt."""
+    prompt=getattr(shot,'reference_prompt','') or ''
+    base_characters={asset_id:spec for asset_id,spec in assets.items()
+                     if spec.get('role')=='character' and not spec.get('costume_asset_id')}
+    alias_owners={}
+    for asset_id,spec in base_characters.items():
+        name=(spec.get('name') or '').strip();aliases={name} if name else set()
+        if len(name)>=4 and re.fullmatch(r'[\u3400-\u9fff]+',name):
+            aliases.update(name[index:index+3] for index in range(len(name)-2))
+        for alias in aliases:alias_owners.setdefault(alias,[]).append(asset_id)
+    return [asset_id for asset_id in base_characters if any(
+        alias in prompt and owners==[asset_id] for alias,owners in alias_owners.items())]
+
+
+def _character_reference_coverage(ids,assets,character_id):
+    identity=False;costume=False
+    for asset_id in ids:
+        spec=assets.get(asset_id,{})
+        if spec.get('role')=='character' and (spec.get('identity_asset_id') or asset_id)==character_id:
+            identity=True
+            if spec.get('costume_asset_id'):costume=True
+        if spec.get('role')=='costume' and spec.get('identity_asset_id')==character_id:costume=True
+    return identity,costume
+
+
+def plan_board_asset_packing(board,prep):
+    """Plan the minimum identity+costume stitches needed per over-limit shot, without writing files."""
+    assets=prep['assets'];result={}
+    for shot in board.shots:
+        ids=list(dict.fromkeys(shot.assets))
+        needed=max(0,len(ids)-3)
+        if not needed:continue
+        pairs=[]
+        for character_id in ids:
+            spec=assets.get(character_id,{})
+            if spec.get('role')!='character' or spec.get('costume_asset_id'):continue
+            costumes=[costume_id for costume_id in ids if assets.get(costume_id,{}).get('role')=='costume'
+                      and assets[costume_id].get('identity_asset_id')==character_id]
+            if len(costumes)==1:pairs.append((character_id,costumes[0]))
+        if pairs:result[shot.id]=pairs[:needed]
+    return result
+
+
+def validate_board(board,prep,packing=None):
+    assets=prep['assets'];known=set(assets);issues=[]
+    packing=packing or {}
+    from .asset_workflow import validate_shot_identities
+    for shot in board.shots:
+        ids=list(shot.assets)
+        if not ids:
+            issues.append(f'{shot.id} 的 assets 为空，必须按 asset_binding_contract 绑定参考图。')
+            continue
+        packed_count=len(ids)-len(packing.get(shot.id,[]))
+        if packed_count>3:
+            labels='、'.join(_asset_label(asset_id,assets) for asset_id in ids)
+            issues.append(f'{shot.id} 的 assets 完整绑定为 {len(ids)} 张（{labels}），人物服装条件拼接后仍需 {packed_count} 张，'
+                          '当前模型每镜最多接收 3 张；多人内容必须拆成单人反打或空场景镜头。')
+        duplicates=list(dict.fromkeys(asset_id for index,asset_id in enumerate(ids) if asset_id in ids[:index]))
+        if duplicates:
+            issues.append(f'{shot.id} 的 assets 重复绑定：'+ '、'.join(duplicates)+'。每个 ID 只能出现一次。')
+        unknown=list(dict.fromkeys(asset_id for asset_id in ids if asset_id not in known))
+        if unknown:
+            issues.append(f'{shot.id} 的 assets 含未选定素材 ID：'+ '、'.join(unknown)+
+                          '。只能复制 preproduction.asset_binding_contract 中列出的真实 ID。')
+        selected=list(dict.fromkeys(asset_id for asset_id in ids if asset_id in known))
+        scenes=[asset_id for asset_id in selected if assets[asset_id]['role']=='scene']
+        if not scenes:
+            issues.append(f'{shot.id} 未绑定已批准场景；必须选择 scene_references 中与 scene 对应的一张图。')
+        elif len(scenes)>1:
+            issues.append(f'{shot.id} 同时绑定了多个场景：'+ '、'.join(scenes)+'。每镜只能使用一个场景。')
+        mentioned=_shot_character_mentions(shot,assets)
+        represented=[]
+        for asset_id in selected:
+            spec=assets[asset_id]
+            if spec.get('role')=='character':
+                represented.append(spec.get('identity_asset_id') or asset_id)
+        for character_id in dict.fromkeys([*mentioned,*represented]):
+            spec=assets.get(character_id,{})
+            has_identity,has_costume=_character_reference_coverage(selected,assets,character_id)
+            if character_id in mentioned and not has_identity:
+                issues.append(f'{shot.id} 的 reference_prompt 出现已确认角色“{spec.get("name") or character_id}”，'
+                              f'但 assets 未绑定其身份图 {character_id}；请完整绑定，或从画面描述移除未入镜角色。')
+            if has_identity and spec.get('requires_costume') and not has_costume:
+                costumes=[asset_id for asset_id,item in assets.items()
+                          if item.get('role')=='costume' and item.get('identity_asset_id')==character_id]
+                choices='、'.join(costumes) or '当前没有可用服装图'
+                issues.append(f'{shot.id} 已绑定角色“{spec.get("name") or character_id}”但缺少对应服装；'
+                              f'请从该角色服装中选择一张：{choices}。')
+        for asset_id in selected:
+            spec=assets[asset_id]
+            if not _is_condensed_character_reference(spec,assets):continue
+            expanded=list(dict.fromkeys([*(item for item in selected if item!=asset_id),
+                spec['identity_asset_id'],spec['costume_asset_id']]))
+            if len(expanded)<=3:
+                issues.append(f'{shot.id} 未达到三图上限却使用了人物服装拼接参考板 {asset_id}；'
+                              '请直接绑定原人物身份图与服装图，只有超限时才允许拼接。')
+        if not unknown:
+            try:validate_shot_identities(selected,assets)
+            except HTTPException as exc:issues.append(f'{shot.id} 人物与服装映射错误：{exc.detail}')
+    if issues:raise HTTPException(422,'；'.join(issues))
+
+
+def add_condensed_reference_alternatives(db,pid,pairs):
+    """Materialize only the identity+costume pairs selected by an over-limit shot plan."""
+    config=db.get(Record,'prep_'+pid)
+    if not config:raise HTTPException(409,'前期素材配置不存在，不能制作条件拼接参考。')
+    assets=dict(config.data['assets']);versions=dict(config.data['versions'])
+    dependencies={item['asset_revision_id']:item for item in config.data.get('source_dependencies',[])}
+    added=[]
+    from .asset_workflow import stitch_character_costume_reference
+    for identity_id,costume_id in dict.fromkeys(tuple(pair) for pair in pairs):
+        identity=db.get(Record,identity_id);costume=db.get(Record,costume_id)
+        identity_spec=assets.get(identity_id,{});costume_spec=assets.get(costume_id,{})
+        if (identity_spec.get('role')!='character' or costume_spec.get('role')!='costume'
+                or costume_spec.get('identity_asset_id')!=identity_id):
+            raise HTTPException(422,'条件拼接的人物与服装映射无效。')
+        combined=stitch_character_costume_reference(db,identity,costume,
+            (identity_spec.get('name') or identity_id)+' · '+(costume_spec.get('name') or costume_id))
+        assets[combined.id]={'role':'character','name':combined.data['name'],'notes':combined.data['description'],
+            'identity_asset_id':identity_id,'costume_asset_id':costume_id,'requires_costume':False}
+        versions[combined.id]=combined.version
+        if combined.id not in config.data['assets']:added.append(combined.id)
+        for dependency in combined.data['asset_dependencies']:
+            dependencies[dependency['asset_revision_id']]=dependency
+    if not added:return ready(db,pid),[]
+    config.data={**config.data,'assets':assets,'versions':versions,'source_dependencies':list(dependencies.values())}
+    config.version+=1
+    _,token=snapshot(db,pid)
+    gate=db.get(Record,'prep_gate_'+pid)
+    data={'stamp':token,'assets':dict(versions),'mode':'reference_images',
+          'note':'保留已确认原图；仅为实际超过三图上限的镜头添加本地人物服装拼接参考板。'}
+    if gate and gate.data.get('history'):data['history']=gate.data['history']
+    if gate:gate.data=data;gate.version+=1
+    else:db.add(Record(id='prep_gate_'+pid,kind='preproduction_gate',data=data))
+    db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'conditional_reference_stitching_added',
+        'asset_ids':added,'model_call':False,'preserved_base_assets':True}))
+    return ready(db,pid),added
+
+
+def materialize_board_asset_packing(pid,task_id,stamp,packing):
+    """Commit a validated per-shot packing plan and update the running board task to its new stamp."""
+    pairs=[pair for shot_pairs in packing.values() for pair in shot_pairs]
+    if not pairs:raise HTTPException(409,'没有需要拼接的超限镜头。')
+    with Session.begin() as db:
+        current=ready(db,pid)
+        if current['stamp']!=stamp:raise HTTPException(409,'已确认素材发生变化，不能应用条件拼接。')
+        current,added=add_condensed_reference_alternatives(db,pid,pairs)
+        project_row=project(db,pid);project_row.data={**project_row.data,'preproduction_stamp':current['stamp']};project_row.version+=1
+        task=db.get(Task,task_id)
+        if task and task.payload.get('project_id')==pid:task.payload={**task.payload,'preproduction':current}
+        run=db.get(Record,'creative_'+pid)
+        if run:run.data={**run.data,'reference_inputs':'base_sheets_with_conditional_stitching'};run.version+=1
+        return current,added
 
 
 def repair_board_assets(board,prep):
     """Repair only unambiguous reference-list mistakes; never infer creative content."""
     repaired=board.model_copy(deep=True);changes=[]
+    assets=prep['assets']
+    condensed={(spec.get('identity_asset_id'),spec.get('costume_asset_id')):asset_id
+               for asset_id,spec in assets.items() if _is_condensed_character_reference(spec,assets)}
     for shot in repaired.shots:
         unique=list(dict.fromkeys(shot.assets))
         if unique!=shot.assets:
             removed=[aid for index,aid in enumerate(shot.assets) if aid in shot.assets[:index]]
             changes.append({'shot_id':shot.id,'action':'remove_duplicate_assets','asset_ids':removed})
+        for character_id in _shot_character_mentions(shot,assets):
+            has_identity,_=_character_reference_coverage(unique,assets,character_id)
+            if not has_identity:
+                unique.append(character_id)
+                changes.append({'shot_id':shot.id,'action':'bind_named_character','asset_id':character_id})
+        represented=[]
+        for asset_id in unique:
+            spec=assets.get(asset_id,{})
+            if spec.get('role')=='character':represented.append(spec.get('identity_asset_id') or asset_id)
+        for character_id in dict.fromkeys(represented):
+            spec=assets.get(character_id,{})
+            _,has_costume=_character_reference_coverage(unique,assets,character_id)
+            if not spec.get('requires_costume') or has_costume:continue
+            costumes=[asset_id for asset_id,item in assets.items()
+                      if item.get('role')=='costume' and item.get('identity_asset_id')==character_id]
+            if len(costumes)==1:
+                unique.append(costumes[0])
+                changes.append({'shot_id':shot.id,'action':'bind_unique_character_costume',
+                                'asset_id':costumes[0],'identity_asset_id':character_id})
         has_scene=any(aid in prep['assets'] and prep['assets'][aid]['role']=='scene' for aid in unique)
         if not has_scene and len(unique)<3:
             location=shot.scene.strip();matches=[]
@@ -116,6 +341,22 @@ def repair_board_assets(board,prep):
                 if spec.get('role')=='scene' and name and (location==name or suffix and suffix in '，,、；;：:（( '):matches.append(aid)
             if len(matches)==1:
                 unique.append(matches[0]);changes.append({'shot_id':shot.id,'action':'bind_unique_named_scene','asset_id':matches[0]})
+        if len(unique)>3:
+            pairs=[]
+            for character_id in unique:
+                spec=assets.get(character_id,{})
+                if spec.get('role')!='character' or spec.get('costume_asset_id'):continue
+                costumes=[costume_id for costume_id in unique if assets.get(costume_id,{}).get('role')=='costume'
+                          and assets[costume_id].get('identity_asset_id')==character_id]
+                if len(costumes)==1 and (character_id,costumes[0]) in condensed:
+                    pairs.append((min(unique.index(character_id),unique.index(costumes[0])),character_id,costumes[0],condensed[(character_id,costumes[0])]))
+            for _,character_id,costume_id,reference_id in sorted(pairs):
+                if len(unique)<=3:break
+                position=min(unique.index(character_id),unique.index(costume_id))
+                unique=[asset_id for asset_id in unique if asset_id not in (character_id,costume_id)]
+                unique.insert(position,reference_id)
+                changes.append({'shot_id':shot.id,'action':'pack_identity_costume_reference','asset_id':reference_id,
+                    'source_asset_ids':[character_id,costume_id]})
         shot.assets=unique
     return repaired,changes
 
@@ -171,10 +412,10 @@ def save(pid:str,body:Setup):
                 identity_spec=body.assets.get(spec.identity_asset_id or '')
                 if spec.role!='costume' or not identity or not identity_spec or identity_spec.role!='character' or a.data.get('asset_spec',{}).get('character_ref')!=identity.data.get('asset_spec',{}).get('character_id'):
                     raise HTTPException(422,'独立服装必须绑定本次选定的正确人物身份图。')
-            if a.data.get('asset_kind')=='dressed_character':
+            if a.data.get('asset_kind') in ('dressed_character','character_costume_reference'):
                 spec=body.assets[aid]
                 if spec.role!='character' or spec.identity_asset_id!=a.data.get('identity_asset_id') or spec.costume_asset_id!=a.data.get('costume_asset_id'):
-                    raise HTTPException(422,'定装结果必须保留真实的人物身份和服装依赖，不能重新绑定。')
+                    raise HTTPException(422,'人物服装组合参考必须保留真实的身份和服装依赖，不能重新绑定。')
                 from .asset_workflow import validate_dependencies
                 validate_dependencies(db,a.data)
                 for dependency in a.data['asset_dependencies']:dependencies[dependency['asset_revision_id']]=dependency

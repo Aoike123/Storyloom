@@ -14,6 +14,14 @@ export function shouldPollProgress(connection: string, tracking: boolean) {
   return tracking && connection === 'fallback';
 }
 
+export function canRetryCurrentNode(work:any,stage:string|undefined) {
+  if(!stage||!['storyboarding','rendering'].includes(stage))return false;
+  const problem=(status:string|undefined)=>status==='failed'||status==='needs_review';
+  const node=(work?.production_steps||[]).find((item:any)=>item.id===stage);
+  return problem(node?.task?.status)||(work?.jobs||[]).some((task:ProgressTask)=>
+    task.production_phase===stage&&problem(task.status));
+}
+
 export function mergeTask(prior: ProgressTask | null | undefined, incoming: ProgressTask | null | undefined) {
   if (!prior || !incoming || prior.id !== incoming.id) return incoming;
   const priorUpdate = Math.max(prior.activity?.updated_at || 0, prior.result?.live?.updated_at || 0);

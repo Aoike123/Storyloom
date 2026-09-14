@@ -1,12 +1,36 @@
 import copy
 import pytest
 from fastapi import HTTPException
+from PIL import Image
 from pydantic import ValidationError
 from sqlalchemy import select
 from backend import asset_sheets as sheets, asset_workflow, creative as c, worker, preproduction as prep
-from backend.db import Record,Session,Task
+from backend.db import DATA,Record,Session,Task
 from test_creative import creative,drain,advance
 from asset_spec_fixtures import character,costume,scene,style,design_response
+
+
+def test_identity_costume_reference_is_a_local_side_by_side_stitch_without_model_task():
+    left=DATA/'media'/'identity-red.png';right=DATA/'media'/'costume-blue.png'
+    Image.new('RGB',(256,256),(220,10,10)).save(left)
+    Image.new('RGB',(256,256),(10,20,220)).save(right)
+    before=(left.read_bytes(),right.read_bytes())
+    with Session.begin() as db:
+        identity=Record(id='identity-red',kind='asset',data={'name':'人物','status':'approved','media':'/media/identity-red.png'})
+        clothing=Record(id='costume-blue',kind='asset',data={'name':'服装','status':'approved','media':'/media/costume-blue.png'})
+        db.add_all([identity,clothing]);db.flush()
+        combined=asset_workflow.stitch_character_costume_reference(db,identity,clothing,'人物 · 蓝衣')
+        combined_id=combined.id;media=combined.data['media']
+    assert (left.read_bytes(),right.read_bytes())==before
+    with Image.open(DATA/'media'/media.removeprefix('/media/')) as image:
+        assert image.width/image.height<=2
+        assert image.getpixel((20,image.height//2))==(220,10,10)
+        assert image.getpixel((image.width-20,image.height//2))==(10,20,220)
+    with Session() as db:
+        combined=db.get(Record,combined_id)
+        assert combined.data['derived_without_model'] is True
+        assert len(combined.data['asset_dependencies'])==2
+        assert not list(db.scalars(select(Task)))
 
 
 @pytest.mark.parametrize('phrase',['因为她很穷所以穿旧衣','为了体现恐怖氛围','黑色或者白色短发','普通漫画风格，像主角一样','主观视角始终失焦','她拥抱小孩','Maybe a young woman'])
