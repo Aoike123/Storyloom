@@ -1,6 +1,6 @@
 # 专业 Skill 节点绑定
 
-流程版本：`author-brainstorm-v6`。项目节点适配版本：`1.6.1`。
+流程版本：`author-brainstorm-v6`。项目节点适配版本：`1.7.0`。
 
 ## 实际调用路径
 
@@ -23,7 +23,9 @@ flowchart TD
     M --> N[成片人工验收]
 ```
 
-设计模型只输出规格，`asset_prompts` 是独立的模型节点，接收已经通过校验的静态描述和固定版式，输出最终生图 Prompt。原文、剧情气质、事实说明和改编备注不会传入这个提示词写作节点。
+设计模型只输出规格。角色身份图由独立的 `character_prompts` 节点调用 Picsart `gen-ai-persona-creation` 的 style routing、frozen appearance block 和 casting-card consistency 方法；服装与场景继续由 `asset_prompts` 处理。两个节点都只接收已经通过校验的静态描述和固定版式，原文、剧情气质、事实说明和改编备注不会进入提示词写作节点。
+
+非人角色使用显式头身分区：`body_plan` 与 `body_nature` 先区分人身、兽身、妖身和混合身体，再分别锁定头部、躯干、臂手、腿足的类别、解剖、体表和固有色。“兽首人身”会额外生成禁止完整兽身、全身兽毛和兽爪兽腿的硬约束。“写实影视摄影”和两种三维渲染是不同媒介；没有明确 3D/三维/CG 的写实输入不能落入三维枚举。
 
 分镜规划和提示词编译也分别调用：`storyboard` 产出镜头计划，`shot_prompts` 只能更新对应镜号的镜头参考图与单镜运动文字，不能改写事件、资产、身份或时长。随后由 `storyboard_review` 做文字预审；真实画面由作者验收。
 
@@ -33,12 +35,13 @@ flowchart TD
 | --- | --- | --- |
 | style_options | NolanX director-visual-language | 电影视觉方向、剧情气质、适配原因、全片镜头/光影/调色规则 |
 | story_treatment | structure-screenplay + shape-story-blueprint | 有原文依据的剧情阐述 |
-| style_spec | Replicate prompt-images | 供人物、服装和场景设定图共用的基础美术渲染参数 |
-| identity_spec | design-production-assets | 人类、类人异族及非人形神话生物的唯一身份 |
+| style_spec | Replicate prompt-images + Picsart style routing | 区分写实摄影、绘画与三维的基础成像参数 |
+| identity_spec | design-production-assets + Picsart gen-ai-persona-creation | 带 frozen appearance block 式头身分区的人类及神话角色唯一身份 |
 | costume_spec | design-production-assets + prompt-images | 独立服装及身份绑定 |
 | scene_spec | design-production-assets + prompt-images | 静态物理场景 |
-| asset_prompts | prompt-images + compile-generation-prompts | 逐项生图 Prompt |
-| identity_revision / costume_revision / scene_revision | design-production-assets + prompt-images | 按意见修订完整静态规格，再交给 asset_prompts 重新生图 |
+| character_prompts | Picsart gen-ai-persona-creation | 保留人身/兽身/妖身分区与媒介路由的角色身份图 Prompt |
+| asset_prompts | prompt-images + compile-generation-prompts | 服装与场景逐项生图 Prompt |
+| identity_revision / costume_revision / scene_revision | design-production-assets + prompt-images | 按意见修订完整静态规格，再按角色或非角色类型交给对应提示词节点重新生图 |
 | shot_revision / video_revision | compile-generation-prompts | 把意见整合进完整镜头图或视频 Prompt，创建新的生成任务 |
 | fitting | prompt-images 的参考图一致性方法 | 定装参考合成请求模板；新流程不再调用 scene_trial |
 | storyboard | plan-camera-shots | 机位、动作、连续性、时长和资产绑定 |
@@ -76,6 +79,7 @@ flowchart TD
 ## 上游来源
 
 - [NolanX director-visual-language](https://github.com/nolanx-ai/nolanx.ai/blob/595d86364377f654e24ddf2c9e875496d85e8246/skills/director-visual-language/SKILL.md)：MIT。
+- [Picsart gen-ai-persona-creation](https://github.com/PicsArt/gen-ai-skills/blob/37b71319c93f47ae8493bedb9167e12920bc915e/skills/gen-ai-persona-creation/SKILL.md)：MIT。
 - [Replicate prompt-images](https://github.com/replicate/skills/blob/2f36e415965ae63baa1c9f6635888092bcd771d3/skills/prompt-images/SKILL.md)：Apache-2.0。
 - [film-production-skills](https://github.com/zhangzhangco/film-production-skills/tree/47b2a6a432235e716fa2aa0d08eefae76fdb34fd)：MIT。
 

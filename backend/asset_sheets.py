@@ -2,9 +2,9 @@
 from typing import Annotated
 from pydantic import Field, model_validator
 from .visual_specs import (Spec, VisualStyle, CharacterSheet, CostumeSheet, SceneSheet, CreatureAppearance,
-                           description, style_prompt, validate_description_budget)
+                           description, style_prompt, validate_description_budget, validate_style_intent)
 
-VERSION = 'asset-sheets-v3'
+VERSION = 'asset-sheets-v4'
 KINDS = {'character': 'character_sheet', 'costume': 'costume_sheet', 'scene': 'scene_sheet'}
 MODELS = {'character': CharacterSheet, 'costume': CostumeSheet, 'scene': SceneSheet}
 MAX_CHARACTERS = 6
@@ -87,12 +87,13 @@ class AssetSheetPlan(Spec):
 def frame(kind,item=None):
     if kind == 'character_sheet':
         if item is not None and isinstance(item.appearance,CreatureAppearance):
-            if item.appearance.form=='类人神话生物' and item.costume_mode!='none':
+            if item.appearance.body_plan in ('拟人双足','兽首人身') and item.costume_mode!='none':
                 clothing='不添加剧情服装、盔甲、法器或饰品；仅使用无标识、低遮挡的中性基础短装，不遮住体表和物种结构。'
             else:
                 clothing='不添加人类服装、盔甲、法器或饰品，完整展示该物种自然体表与身体结构。'
             return ('神话生物或非人角色身份三视图设定板。正面、左侧面、背面三个全身或全体视图从左到右并排；'
-                    '同一物种、头部结构、体表、肢体、尾翼角及固定特征，等比例、等尺寸、同一地面基线，主体完整可见。'
+                    '同一物种、同一头身分区、体表、肢体、尾翼角及固定特征，等比例、等尺寸、同一地面基线，主体完整可见。'
+                    '头部和颈部以下身体必须分别服从结构化分区，不得把头部物种特征扩散到人身或把妖身替换成人身。'
                     '中立静止姿态，不做剧情动作，不得改成人类，不得用人类脸型、发型或肤色覆盖物种特征。'+clothing+
                     '浅灰纯色背景、均匀中性灯光、正交视角，每个视图清晰对焦。')
         return ('人物身份三视图设定板。正面、左侧面、背面三个全身视图从左到右并排；'

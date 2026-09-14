@@ -28,6 +28,14 @@ does not replace those terms.
 - Local copy: `backend/node_skills/vendor/nolanx/`
 - License text: `backend/node_skills/vendor/nolanx/LICENSE`
 
+## Picsart gen-ai-persona-creation
+
+- Source: `PicsArt/gen-ai-skills`
+- Pinned commit: `37b71319c93f47ae8493bedb9167e12920bc915e`
+- License: MIT
+- Local copy: `backend/node_skills/vendor/picsart/`
+- License text: `backend/node_skills/vendor/picsart/LICENSE`
+
 The complete file list and integrity hashes are recorded in
 `backend/node_skills/vendor-lock.json`.
 

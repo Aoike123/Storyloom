@@ -207,8 +207,12 @@ def run_design(task_id,payload):
         if identity is None:
             style=checkpoints.get('style_plan')
             if style is None:
+                def style_contract(raw):
+                    result=validate_spec(asset_sheets.StylePlan,raw)
+                    asset_sheets.validate_style_intent(result.visual_style,payload['art'])
+                    return result
                 style,_=call_node(chat_json,'style_spec',{'art_preference':payload['art'],'schema':asset_sheets.StylePlan.model_json_schema()},task_id,
-                    validator=lambda raw:validate_spec(asset_sheets.StylePlan,raw))
+                    validator=style_contract)
                 checkpoint('style_plan',style.model_dump())
             else:style=validate_spec(asset_sheets.StylePlan,style)
             people=checkpoints.get('character_plan')
@@ -244,7 +248,7 @@ def run_design(task_id,payload):
         raw={'visual_style':identity.visual_style.model_dump(),'items':[p.model_dump() for p in identity.characters]+[i.model_dump() for i in materials.items]}
         checkpoint('raw_design',raw)
     plan,bindings=validate_design(raw,passages,payload.get('asset_schema'))
-    prompts,prompt_fallbacks=write_asset_prompts(task_id,payload,plan) if payload.get('skill_pipeline') else ({},set())
+    prompts,prompt_fallbacks,prompt_nodes=write_asset_prompts(task_id,payload,plan) if payload.get('skill_pipeline') else ({},set(),{})
     with Session.begin() as db:
         current=db.get(Task,task_id)
         if current.status!='running':return
@@ -258,10 +262,10 @@ def run_design(task_id,payload):
                 'asset_role':item.role,'asset_spec':item.model_dump(),'visual_style':plan.visual_style.model_dump(),
                 'character_key':getattr(item,'character_id',getattr(item,'character_ref',None)),
                 'costume_key':getattr(item,'costume_id',None),
-                'prompt_source':'validated_render_contract' if index in prompt_fallbacks else 'asset_prompts'}
-            if prompts and index not in prompt_fallbacks:
+                'prompt_source':'validated_render_contract' if index in prompt_fallbacks else prompt_nodes.get(index,'asset_prompts')}
+            if index in prompt_nodes and index not in prompt_fallbacks:
                 from .skill_runtime import public
-                metadata['node_skill']=public(current.payload['node_skill_pins']['asset_prompts'])
+                metadata['node_skill']=public(current.payload['node_skill_pins'][prompt_nodes[index]])
             t=Task(id=uid('image'),kind='image',payload={'mode':'live','creative_id':payload['creative_id'],'title':item.name,'prompt':prompt,**metadata})
             saved={**item.model_dump(),'design':asset_sheets.description(item),'prompt':prompt,**metadata}
             db.add(t);items.append({**saved,'source_refs':refs,'source_quote':'\n'.join(passages[ref] for ref in refs),'task_id':t.id})
@@ -275,70 +279,81 @@ def run_design(task_id,payload):
         'ready','人物身份、服装与场景规格已通过校验',preview(json.dumps(raw,ensure_ascii=False)),force=True)
 
 
+def asset_prompt_node(item):
+    return 'character_prompts' if item.role=='character' else 'asset_prompts'
+
+
 def write_asset_prompts(task_id,payload,plan):
-    """Dedicated prompt-writing node; sees only approved static contracts, never prose."""
+    """Role-specific prompt nodes see only approved static contracts, never prose."""
     from .environment import model_config
-    cfg=model_config();prompts={};fallbacks=set()
+    cfg=model_config();prompts={};fallbacks=set();prompt_nodes={}
     with Session() as db:cached=dict(get_run(db,payload['creative_id']).data.get('image_prompt_batches',{}))
-    # Small batches keep the actual output inside the configured model context.
-    for start in range(0,len(plan.items),asset_sheets.PROMPT_BATCH_SIZE):
-        assets=[{'asset_index':i,'role':plan.items[i].role,
-                 'render_contract':asset_sheets.compose_prompt(plan.visual_style,plan.items[i])}
-                for i in range(start,min(start+asset_sheets.PROMPT_BATCH_SIZE,len(plan.items)))]
-        key=str(start)
-        target={'provider':cfg.get('IMAGE_PROVIDER'),'model':cfg.get('IMAGE_MODEL'),'image_size':'1024x1024'}
-        request_hash=hashlib.sha256(json.dumps([assets,target],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
-        prior=cached.get(key)
-        if prior and prior.get('request_sha256')!=request_hash:
-            raise ProviderError('已保存的提示词与当前素材规格或模型配置不一致，请创建新修订，未重复提交。')
-        fallback_reason=prior.get('fallback_reason') if prior else None
-        raw=prior.get('response') if prior else None
-        batch=None
-        if raw is None and fallback_reason is None:
-            schema=asset_sheets.AssetPromptBatch.model_json_schema()
-            schema['properties']['items'].update(minItems=len(assets),maxItems=len(assets))
-            expected={asset['asset_index'] for asset in assets}
-            def prompt_contract(value):
-                result=validate_spec(asset_sheets.AssetPromptBatch,value)
-                indexes=[item.asset_index for item in result.items]
-                if len(indexes)!=len(expected) or set(indexes)!=expected:
-                    raise ModelOutputError('图片提示词必须逐项且仅对应本批素材编号。')
-                return result
-            try:
-                batch,_=call_node(chat_json,'asset_prompts',{'assets':assets,
-                    'target':target,
-                    'schema':schema},task_id,validator=prompt_contract)
-                raw=batch.model_dump()
-            except ModelOutputError as exc:
-                raw={};fallback_reason=str(exc)
-            with Session.begin() as db:
-                run=get_run(db,payload['creative_id'])
-                if run.data.get('watch')!=task_id:raise ProviderError('提示词任务已更新。')
-                entry={'request_sha256':request_hash,'response':raw}
-                if fallback_reason:entry['fallback_reason']=fallback_reason
-                cached={**cached,key:entry};run.data={**run.data,'image_prompt_batches':cached}
-        if fallback_reason is None:
-            try:
-                if batch is None:
-                    batch=validate_spec(asset_sheets.AssetPromptBatch,raw)
-            except ProviderError as exc:fallback_reason=str(exc)
-        batch_fallbacks=[]
-        for asset in assets:
-            matches=[item.prompt for item in batch.items if item.asset_index==asset['asset_index']] if batch else []
-            if len(matches)==1:
-                prompts[asset['asset_index']]=matches[0]
-            else:
-                prompts[asset['asset_index']]=asset['render_contract']
-                fallbacks.add(asset['asset_index'])
-                batch_fallbacks.append(asset['asset_index'])
-        if batch_fallbacks and (not prior or prior.get('fallback_indices')!=batch_fallbacks or fallback_reason and prior.get('fallback_reason')!=fallback_reason):
-            with Session.begin() as db:
-                run=get_run(db,payload['creative_id'])
-                if run.data.get('watch')!=task_id:raise ProviderError('提示词任务已更新。')
-                entry={**cached[key],'fallback_indices':batch_fallbacks}
-                if fallback_reason:entry['fallback_reason']=fallback_reason
-                cached={**cached,key:entry};run.data={**run.data,'image_prompt_batches':cached}
-    return prompts,fallbacks
+    groups=(
+        ('character_prompts',[index for index,item in enumerate(plan.items) if item.role=='character']),
+        ('asset_prompts',[index for index,item in enumerate(plan.items) if item.role!='character']),
+    )
+    # Small role-homogeneous batches keep character expertise out of costume/set prompts.
+    for node,indexes in groups:
+        for offset in range(0,len(indexes),asset_sheets.PROMPT_BATCH_SIZE):
+            selected=indexes[offset:offset+asset_sheets.PROMPT_BATCH_SIZE]
+            assets=[{'asset_index':index,'role':plan.items[index].role,
+                     'render_contract':asset_sheets.compose_prompt(plan.visual_style,plan.items[index])}
+                    for index in selected]
+            key=node+':'+','.join(str(index) for index in selected)
+            target={'provider':cfg.get('IMAGE_PROVIDER'),'model':cfg.get('IMAGE_MODEL'),'image_size':'1024x1024'}
+            request_hash=hashlib.sha256(json.dumps([node,assets,target],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+            prior=cached.get(key)
+            if prior and prior.get('request_sha256')!=request_hash:
+                raise ProviderError('已保存的提示词与当前素材规格或模型配置不一致，请创建新修订，未重复提交。')
+            fallback_reason=prior.get('fallback_reason') if prior else None
+            raw=prior.get('response') if prior else None
+            batch=None
+            if raw is None and fallback_reason is None:
+                schema=asset_sheets.AssetPromptBatch.model_json_schema()
+                schema['properties']['items'].update(minItems=len(assets),maxItems=len(assets))
+                expected={asset['asset_index'] for asset in assets}
+                def prompt_contract(value):
+                    result=validate_spec(asset_sheets.AssetPromptBatch,value)
+                    indexes=[item.asset_index for item in result.items]
+                    if len(indexes)!=len(expected) or set(indexes)!=expected:
+                        raise ModelOutputError('图片提示词必须逐项且仅对应本批素材编号。')
+                    return result
+                try:
+                    batch,_=call_node(chat_json,node,{'assets':assets,
+                        'target':target,
+                        'schema':schema},task_id,validator=prompt_contract)
+                    raw=batch.model_dump()
+                except ModelOutputError as exc:
+                    raw={};fallback_reason=str(exc)
+                with Session.begin() as db:
+                    run=get_run(db,payload['creative_id'])
+                    if run.data.get('watch')!=task_id:raise ProviderError('提示词任务已更新。')
+                    entry={'node':node,'request_sha256':request_hash,'response':raw}
+                    if fallback_reason:entry['fallback_reason']=fallback_reason
+                    cached={**cached,key:entry};run.data={**run.data,'image_prompt_batches':cached}
+            if fallback_reason is None:
+                try:
+                    if batch is None:
+                        batch=validate_spec(asset_sheets.AssetPromptBatch,raw)
+                except ProviderError as exc:fallback_reason=str(exc)
+            batch_fallbacks=[]
+            for asset in assets:
+                matches=[item.prompt for item in batch.items if item.asset_index==asset['asset_index']] if batch else []
+                if len(matches)==1:
+                    prompts[asset['asset_index']]=matches[0]
+                    prompt_nodes[asset['asset_index']]=node
+                else:
+                    prompts[asset['asset_index']]=asset['render_contract']
+                    fallbacks.add(asset['asset_index'])
+                    batch_fallbacks.append(asset['asset_index'])
+            if batch_fallbacks and (not prior or prior.get('fallback_indices')!=batch_fallbacks or fallback_reason and prior.get('fallback_reason')!=fallback_reason):
+                with Session.begin() as db:
+                    run=get_run(db,payload['creative_id'])
+                    if run.data.get('watch')!=task_id:raise ProviderError('提示词任务已更新。')
+                    entry={**cached[key],'fallback_indices':batch_fallbacks}
+                    if fallback_reason:entry['fallback_reason']=fallback_reason
+                    cached={**cached,key:entry};run.data={**run.data,'image_prompt_batches':cached}
+    return prompts,fallbacks,prompt_nodes
 
 
 def write_revised_asset_prompt(task_id,style,item):
@@ -353,10 +368,11 @@ def write_revised_asset_prompt(task_id,style,item):
         if len(result.items)!=1 or result.items[0].asset_index!=0:
             raise ModelOutputError('重做提示词没有准确对应当前素材。')
         return result
-    batch,_=call_node(chat_json,'asset_prompts',{'assets':assets,
+    node=asset_prompt_node(item)
+    batch,_=call_node(chat_json,node,{'assets':assets,
         'target':{'provider':cfg.get('IMAGE_PROVIDER'),'model':cfg.get('IMAGE_MODEL'),'image_size':'1024x1024'},
         'schema':schema},task_id,validator=prompt_contract)
-    return batch.items[0].prompt
+    return batch.items[0].prompt,node
 
 def image_asset(db,tid):
     t=db.get(Task,tid);a=db.get(Record,t.result.get('asset_id','')) if t else None
@@ -570,7 +586,7 @@ def run_revision(task_id,p):
         get_project(db,p['creative_id']);old=db.get(Task,p['target'])
         if not old:raise ProviderError('需要重做的素材不存在。')
         old_payload=dict(old.payload);kind=old.kind
-    updated_spec=None
+    updated_spec=None;prompt_node=None
     if kind=='image' and old_payload.get('creative_id') and not old_payload.get('director_id'):
         if old_payload.get('asset_schema')!=asset_sheets.VERSION or not old_payload.get('asset_spec'):
             raise ProviderError('旧版人物与服装尚未分离，请先重做本轮素材。')
@@ -584,7 +600,7 @@ def run_revision(task_id,p):
         updated_spec,_=call_node(chat_json,{'character':'identity_revision','costume':'costume_revision','scene':'scene_revision'}[original_spec['role']],
             {'existing_spec':original_spec,'feedback':p['feedback'],'schema':schema.model_json_schema()},task_id,
             validator=revision_contract)
-        prompt=write_revised_asset_prompt(task_id,old_payload['visual_style'],updated_spec)
+        prompt,prompt_node=write_revised_asset_prompt(task_id,old_payload['visual_style'],updated_spec)
     else:
         revision_node='video_revision' if kind=='video' else 'shot_revision'
         revision,_=call_node(chat_json,revision_node,
@@ -605,7 +621,7 @@ def run_revision(task_id,p):
                 payload.pop(key,None)
             from .skill_runtime import public
             payload.update(asset_spec=updated_spec.model_dump(),input_mode='text_to_image',
-                node_skill=public(current.payload['node_skill_pins']['asset_prompts']))
+                prompt_source=prompt_node,node_skill=public(current.payload['node_skill_pins'][prompt_node]))
         else:
             from .skill_runtime import public
             payload['node_skill']=public(current.payload['node_skill_pins'][revision_node])

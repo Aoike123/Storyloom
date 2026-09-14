@@ -32,7 +32,7 @@ def test_consecutive_edits_replace_current_card_and_reference_latest_image(creat
         with Session() as db:
             task=db.get(Task,current['task']['id'])
             assert task.payload['input_mode']=='text_to_image'
-            assert task.payload['node_skill']['node']=='asset_prompts'
+            assert task.payload['node_skill']['node']=='character_prompts'
             assert task.payload['revision_of']==old['task']['id']
             assert 'reference_media' not in task.payload and 'style_reference' not in task.payload
             assert db.get(Record,old['asset']['id']) is not None

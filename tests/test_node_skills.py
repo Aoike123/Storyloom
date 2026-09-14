@@ -33,7 +33,15 @@ def test_style_choice_uses_cinematic_language_before_asset_rendering_style():
     assert [source['name'] for source in cinematic['sources']]==['director-visual-language']
     assert 'framing scale' in cinematic['system'] and 'lighting logic' in cinematic['system']
     assert rendering['title']=='基础美术渲染参数'
-    assert [source['name'] for source in rendering['sources']]==['prompt-images']
+    assert [source['name'] for source in rendering['sources']]==['prompt-images','gen-ai-persona-creation']
+
+
+def test_character_prompt_node_is_bound_to_the_versioned_persona_skill():
+    identity=skills.snapshot('identity_spec');prompts=skills.snapshot('character_prompts')
+    assert [source['name'] for source in identity['sources']]==['design-production-assets','gen-ai-persona-creation']
+    assert [source['name'] for source in prompts['sources']]==['gen-ai-persona-creation']
+    assert 'frozen appearance block' in prompts['system']
+    assert '不得把“写实”翻译成 3D' in prompts['system'] and '兽首人身' in prompts['system']
 
 
 def test_missing_binding_and_out_of_scope_story_input_never_call_model():
@@ -131,7 +139,8 @@ def test_prompt_writer_output_is_the_image_request_and_never_receives_story(crea
         images=list(db.scalars(select(Task).where(Task.kind=='image')))
         assert len(images)==3
         assert all(t.payload['prompt'].startswith('专业提示词成品：') for t in images)
-        assert all(t.payload['node_skill']['node']=='asset_prompts' for t in images)
+        assert {t.payload['asset_role']:t.payload['node_skill']['node'] for t in images}=={
+            'character':'character_prompts','costume':'asset_prompts','scene':'asset_prompts'}
     assert seen[:4]==['StylePlan','CharacterPlan','CostumePlan','ScenePlan']
 
 
@@ -146,7 +155,7 @@ def test_incomplete_prompt_batch_uses_validated_contract_for_only_the_missing_as
     assert worker.process_one('node-tester')
     with Session() as db:
         parent=db.get(Task,task['id'])
-        assert parent.status=='completed' and parent.result['prompt_fallbacks']==[0,1]
+        assert parent.status=='completed' and parent.result['prompt_fallbacks']==[1,2]
         run=db.get(Record,'creative_pid');assert run.data['raw_design']
         images=list(db.scalars(select(Task).where(Task.kind=='image')))
         assert len(images)==3
@@ -158,7 +167,7 @@ def test_incomplete_prompt_batch_uses_validated_contract_for_only_the_missing_as
                 assert 'node_skill' not in image.payload
             else:
                 assert image.payload['prompt'].startswith('专业提示词成品：')
-                assert image.payload['node_skill']['node']=='asset_prompts'
+                assert image.payload['node_skill']['node']=='character_prompts'
 
 
 def test_unparseable_prompt_output_falls_back_without_blocking_images(creative,monkeypatch):

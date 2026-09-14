@@ -58,6 +58,18 @@
         "skills/director-visual-language/SKILL.md": "0177c2997d852c8fe89f2e9859ae0a1966156fe6cb7673347bc6c4a480473d95"
       }
     },
+    "picsart": {
+      "repo": "PicsArt/gen-ai-skills",
+      "commit": "37b71319c93f47ae8493bedb9167e12920bc915e",
+      "license": "MIT",
+      "skills": [
+        "gen-ai-persona-creation"
+      ],
+      "files": {
+        "LICENSE": "86eaafb76f5bc3b920c0e3761cd1e841b1880422fc11b3591bae449437d72cb4",
+        "skills/gen-ai-persona-creation/SKILL.md": "c06899eefebb894138baae46ef4f22b83a761550bbd3b2f53452e93f535a39bf"
+      }
+    },
     "replicate": {
       "repo": "replicate/skills",
       "commit": "2f36e415965ae63baa1c9f6635888092bcd771d3",

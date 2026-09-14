@@ -1,5 +1,5 @@
 {
-  "version": "1.6.1",
+  "version": "1.7.0",
   "nodes": {
     "style_options": {
       "title": "电影视觉风格提案",
@@ -70,6 +70,13 @@
             "Writing prompts",
             "Style transfer"
           ]
+        },
+        {
+          "bundle": "picsart",
+          "skill": "gen-ai-persona-creation",
+          "sections": [
+            "Style routing"
+          ]
         }
       ],
       "adapter": "adapters/style-spec/SKILL.md",
@@ -94,6 +101,14 @@
           "sections": [
             "Workflow",
             "Boundaries"
+          ]
+        },
+        {
+          "bundle": "picsart",
+          "skill": "gen-ai-persona-creation",
+          "sections": [
+            "Style routing",
+            "Pipeline"
           ]
         }
       ],
@@ -171,8 +186,29 @@
         "数据与渲染分离"
       ]
     },
+    "character_prompts": {
+      "title": "专业角色身份图提示词编写",
+      "mode": "llm",
+      "schema": "AssetPromptBatch",
+      "inputs": [
+        "assets",
+        "target",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "picsart",
+          "skill": "gen-ai-persona-creation",
+          "sections": [
+            "Style routing",
+            "Pipeline"
+          ]
+        }
+      ],
+      "adapter": "adapters/character-prompts/SKILL.md"
+    },
     "asset_prompts": {
-      "title": "资产生图提示词编写",
+      "title": "服装与场景生图提示词编写",
       "mode": "llm",
       "schema": "AssetPromptBatch",
       "inputs": [

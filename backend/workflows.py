@@ -42,7 +42,8 @@ WORKFLOWS['author-brainstorm-v3']={
         {'id':'identity','name':'唯一人物身份','executor':'art_design','skill_node':'identity_spec','checkpoint':'character_plan','depends_on':['source','style']},
         {'id':'costumes','name':'独立服装规格','executor':'art_design','skill_node':'costume_spec','checkpoint':'costume_plan','depends_on':['identity']},
         {'id':'scenes','name':'物理场景规格','executor':'art_design','skill_node':'scene_spec','checkpoint':'scene_plan','depends_on':['source','style']},
-        {'id':'asset_prompts','name':'资产生图提示词编写','executor':'art_design','skill_node':'asset_prompts','checkpoint':'image_prompt_batches','depends_on':['identity','costumes','scenes']},
+        {'id':'character_prompts','name':'专业角色身份图提示词编写','executor':'art_design','skill_node':'character_prompts','depends_on':['identity']},
+        {'id':'asset_prompts','name':'服装与场景生图提示词编写','executor':'art_design','skill_node':'asset_prompts','checkpoint':'image_prompt_batches','depends_on':['character_prompts','costumes','scenes']},
         {'id':'author_assets','name':'确认基础素材','gate':'author','skill_node':'asset_review','depends_on':['asset_prompts']},
         {'id':'fittings','name':'身份与服装合成','executor':'image','skill_node':'fitting','depends_on':['author_assets']},
         {'id':'trial','name':'定装与场景试拍','executor':'image','skill_node':'scene_trial','depends_on':['fittings']},
@@ -76,7 +77,7 @@ WORKFLOWS['author-brainstorm-v5']={
 
 WORKFLOWS['author-brainstorm-v6']={
     **WORKFLOWS['author-brainstorm-v5'],
-    'name':'脑洞 · 基础参考图直接分镜','node_skill_version':'1.6.1',
+    'name':'脑洞 · 基础参考图直接分镜','node_skill_version':'1.7.0','asset_schema':'asset-sheets-v4',
     'modules':[{**module,**({'depends_on':['author_assets']} if module['id']=='board' else {})} for module in WORKFLOWS['author-brainstorm-v5']['modules'] if module['id'] not in ('fittings','trial')],
     'production_coordinators':[
         {'id':'storyboarding','name':'分镜生成','executor':'author_storyboard','modules':['board','shot_prompts','board_review'],'output':'直接组合人物身份、服装与场景参考图的分镜及提示词'},
