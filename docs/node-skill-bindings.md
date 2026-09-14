@@ -1,12 +1,12 @@
 # 专业 Skill 节点绑定
 
-流程版本：`author-brainstorm-v6`。项目节点适配版本：`1.4.3`。
+流程版本：`author-brainstorm-v6`。项目节点适配版本：`1.6.0`。
 
 ## 实际调用路径
 
 ```mermaid
 flowchart TD
-    A[风格建议：每个方案附可用画风 Prompt] --> B[专业画风参数]
+    A[电影视觉风格建议：每个方案附全片视觉规则] --> B[基础美术渲染参数]
     S[剧情改编与原文依据] --> C[唯一人物身份规格]
     B --> C
     C --> D[独立服装规格]
@@ -31,9 +31,9 @@ flowchart TD
 
 | 节点 | 专业能力来源 | 输出 |
 | --- | --- | --- |
-| style_options | Replicate prompt-images | 风格名称、剧情气质、适配原因、独立画风 Prompt |
+| style_options | NolanX director-visual-language | 电影视觉方向、剧情气质、适配原因、全片镜头/光影/调色规则 |
 | story_treatment | structure-screenplay + shape-story-blueprint | 有原文依据的剧情阐述 |
-| style_spec | Replicate prompt-images | 专业画风参数 |
+| style_spec | Replicate prompt-images | 供人物、服装和场景设定图共用的基础美术渲染参数 |
 | identity_spec | design-production-assets | 唯一人物身份 |
 | costume_spec | design-production-assets + prompt-images | 独立服装及身份绑定 |
 | scene_spec | design-production-assets + prompt-images | 静态物理场景 |
@@ -75,6 +75,7 @@ flowchart TD
 
 ## 上游来源
 
+- [NolanX director-visual-language](https://github.com/nolanx-ai/nolanx.ai/blob/595d86364377f654e24ddf2c9e875496d85e8246/skills/director-visual-language/SKILL.md)：MIT。
 - [Replicate prompt-images](https://github.com/replicate/skills/blob/2f36e415965ae63baa1c9f6635888092bcd771d3/skills/prompt-images/SKILL.md)：Apache-2.0。
 - [film-production-skills](https://github.com/zhangzhangco/film-production-skills/tree/47b2a6a432235e716fa2aa0d08eefae76fdb34fd)：MIT。
 

@@ -1,8 +1,8 @@
 {
-  "version": "1.4.3",
+  "version": "1.6.0",
   "nodes": {
     "style_options": {
-      "title": "风格提案提示词",
+      "title": "电影视觉风格提案",
       "mode": "llm",
       "schema": "Options",
       "inputs": [
@@ -11,11 +11,14 @@
       ],
       "sources": [
         {
-          "bundle": "replicate",
-          "skill": "prompt-images",
+          "bundle": "nolanx",
+          "skill": "director-visual-language",
           "sections": [
-            "Writing prompts",
-            "Style transfer"
+            "Goals",
+            "Translate Style Into Decisions",
+            "Cinematic Rules",
+            "Prompting Heuristics",
+            "Consistency Rules"
           ]
         }
       ],
@@ -52,7 +55,7 @@
       "adapter": "adapters/story-treatment/SKILL.md"
     },
     "style_spec": {
-      "title": "专业画风参数",
+      "title": "基础美术渲染参数",
       "mode": "llm",
       "schema": "StylePlan",
       "inputs": [

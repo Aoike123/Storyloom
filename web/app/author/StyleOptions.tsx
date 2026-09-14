@@ -13,7 +13,7 @@ export default function StyleOptions({task, options, art, tone, onSelect}: {task
   const draft = active || (!!live && task?.status !== 'completed');
   const items = live && (draft || live.phase === 'ready') ? live.options : active ? [] : options;
   const count = active ? Math.max(3, items.length) : items.length;
-  return <div className="author-options" aria-label={draft ? '正在生成的风格草稿' : '可选风格方案'}>
+  return <div className="author-options" aria-label={draft ? '正在生成的电影视觉草稿' : '可选电影视觉方案'}>
     {Array.from({length: count}, (_, index) => {
       const option = items[index];
       const selected = !draft && !!option && (art === option.prompt || art === option.art) && tone === option.tone;
@@ -24,7 +24,7 @@ export default function StyleOptions({task, options, art, tone, onSelect}: {task
         <strong>{option?.art || <i className="style-option-placeholder" aria-hidden="true"/>}</strong>
         <p>{option?.tone || <i className="style-option-placeholder" aria-hidden="true"/>}</p>
         <small>{option?.reason ? <StreamText text={option.reason} active={active} streamKey={(task?.id || 'saved') + ':reason:' + index} instant={!active && draft}/> : <i className="style-option-placeholder is-paragraph" aria-hidden="true"/>}</small>
-      </button>{option?.prompt&&<details className="style-choice-prompt" name="style-option-prompts"><summary>画风提示词{draft?' · 草稿':''}</summary><pre>{option.prompt}</pre>
+      </button>{option?.prompt&&<details className="style-choice-prompt" name="style-option-prompts"><summary>电影视觉提示词{draft?' · 草稿':''}</summary><pre>{option.prompt}</pre>
         {!draft&&<button type="button" onClick={async()=>{try{await navigator.clipboard.writeText(option.prompt!);setCopy({prompt:option.prompt!,message:'已复制'});}catch{setCopy({prompt:option.prompt!,message:'请选中上方文字复制'});}}}>复制提示词</button>}
         {copy?.prompt===option.prompt&&<small role="status">{copy.message}</small>}
       </details>}</article>;

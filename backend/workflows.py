@@ -38,7 +38,7 @@ WORKFLOWS['author-brainstorm-v3']={
     'name':'脑洞 · 专业 Skill 节点制作','node_skill_version':'1.0.0',
     'modules':[
         {'id':'source','name':'剧情改编与原文依据','executor':'director','skill_node':'story_treatment'},
-        {'id':'style','name':'专业画风参数','executor':'art_design','skill_node':'style_spec','checkpoint':'style_plan'},
+        {'id':'style','name':'基础美术渲染参数','executor':'art_design','skill_node':'style_spec','checkpoint':'style_plan'},
         {'id':'identity','name':'唯一人物身份','executor':'art_design','skill_node':'identity_spec','checkpoint':'character_plan','depends_on':['source','style']},
         {'id':'costumes','name':'独立服装规格','executor':'art_design','skill_node':'costume_spec','checkpoint':'costume_plan','depends_on':['identity']},
         {'id':'scenes','name':'物理场景规格','executor':'art_design','skill_node':'scene_spec','checkpoint':'scene_plan','depends_on':['source','style']},
@@ -65,7 +65,7 @@ WORKFLOWS['author-brainstorm-v4']={
 
 WORKFLOWS['author-brainstorm-v5']={
     **WORKFLOWS['author-brainstorm-v4'],
-    'name':'脑洞 · 分节点制作','node_skill_version':'1.4.3','revision_mode':'full_prompt_regeneration',
+    'name':'脑洞 · 分节点制作','node_skill_version':'1.6.0','revision_mode':'full_prompt_regeneration',
     'modules':[{**module,**({'depends_on':['fittings']} if module['id']=='board' else {})} for module in WORKFLOWS['author-brainstorm-v4']['modules'] if module['id']!='trial'],
     'production_coordinators':[
         {'id':'compositing','name':'图像合成','executor':'author_composite','modules':['fittings'],'output':'已确认定装与场景参考图'},
@@ -76,7 +76,7 @@ WORKFLOWS['author-brainstorm-v5']={
 
 WORKFLOWS['author-brainstorm-v6']={
     **WORKFLOWS['author-brainstorm-v5'],
-    'name':'脑洞 · 基础参考图直接分镜','node_skill_version':'1.4.3',
+    'name':'脑洞 · 基础参考图直接分镜','node_skill_version':'1.6.0',
     'modules':[{**module,**({'depends_on':['author_assets']} if module['id']=='board' else {})} for module in WORKFLOWS['author-brainstorm-v5']['modules'] if module['id'] not in ('fittings','trial')],
     'production_coordinators':[
         {'id':'storyboarding','name':'分镜生成','executor':'author_storyboard','modules':['board','shot_prompts','board_review'],'output':'直接组合人物身份、服装与场景参考图的分镜及提示词'},

@@ -7,7 +7,7 @@ from .style_progress import partial_json
 MODEL_KINDS={'director','art_design','creative_revision','plan'}
 CALL_TITLES={'Treatment':'梳理故事与改编方向','Board':'设计分镜与镜头衔接','Review':'检查故事与镜头连续性','AssetSheetPlan':'检查身份与服装绑定',
              'IdentityPlan':'锁定专业画风与唯一人物身份','WardrobeScenePlan':'设计独立服装与物理场景',
-             'StylePlan':'专业画风参数','CharacterPlan':'锁定人物身份','CostumePlan':'设计独立服装','ScenePlan':'设计物理场景',
+             'StylePlan':'基础美术渲染参数','CharacterPlan':'锁定人物身份','CostumePlan':'设计独立服装','ScenePlan':'设计物理场景',
              'AssetPromptBatch':'编写资产生图提示词','ShotPromptBatch':'编写分镜图像与视频提示词',
              'CharacterSheet':'修改人物身份属性','CostumeSheet':'修改独立服装属性','SceneSheet':'修改物理场景属性',
              'ArtPlan':'设计人物与场景','Revision':'整理修改方向','Plan':'构思剧情变化'}

@@ -208,10 +208,10 @@ def recommend(pid: str, body: creative.Publish):
         db.add(task);row.data={**row.data,'recommend_task':task.id};db.flush();return task_dict(task)
 
 class StyleOption(BaseModel):
-    art: str = Field(min_length=2,max_length=500)
+    art: str = Field(min_length=2,max_length=500,description='简短的电影视觉方向名称')
     tone: str = Field(min_length=2,max_length=300)
     reason: str = Field(min_length=2,max_length=500)
-    prompt: str = Field(min_length=10,max_length=500,description='可直接复用的纯画风提示词，只写媒介、线稿、明暗、色板、材质，不含人物或剧情')
+    prompt: str = Field(min_length=10,max_length=500,description='可复用的全片电影视觉规则，包含成像媒介、构图、焦段、运动、灯光、调色与纹理，不编写具体镜头或新增剧情')
 
 class Options(BaseModel):
     approach: str = Field(default='',max_length=1200,description='给作者看的简短构思摘要，先于风格方案输出')
@@ -410,7 +410,7 @@ def flow(task_id, payload):
         # Recover a director created before a supervisor interruption, rather than enqueue a duplicate.
         request_key=row.id+':'+data['run_id'] if data.get('run_id') else None
         existing=director.projects(data['source_id']) if not request_key else []
-        result={'project_id':existing[0]['id']} if existing else director.create(director.Create(source_id=data['source_id'],brief='作者画风：'+data['art']+'；剧情气质：'+data['tone']+'。保留原著因果，完成一个起承转合明确的短场景。',confirm_paid=True,request_key=request_key))
+        result={'project_id':existing[0]['id']} if existing else director.create(director.Create(source_id=data['source_id'],brief='作者电影视觉方向：'+data['art']+'；剧情气质：'+data['tone']+'。保留原著因果，完成一个起承转合明确的短场景。',confirm_paid=True,request_key=request_key))
         with Session.begin() as db:
             row=db.get(Record,payload['work_id']);row.data={**row.data,'director_id':result['project_id']}
         return False

@@ -46,6 +46,18 @@
         "skills/structure-screenplay/schemas/output.schema.json": "a9594cae80511e57afba2243f780455a8f833e3810c319a93ac1a8abc8e25545"
       }
     },
+    "nolanx": {
+      "repo": "nolanx-ai/nolanx.ai",
+      "commit": "595d86364377f654e24ddf2c9e875496d85e8246",
+      "license": "MIT",
+      "skills": [
+        "director-visual-language"
+      ],
+      "files": {
+        "LICENSE": "207872ca8a98ec049530932e768c30a34e7b225d709c92d22329c82b8c96778a",
+        "skills/director-visual-language/SKILL.md": "0177c2997d852c8fe89f2e9859ae0a1966156fe6cb7673347bc6c4a480473d95"
+      }
+    },
     "replicate": {
       "repo": "replicate/skills",
       "commit": "2f36e415965ae63baa1c9f6635888092bcd771d3",

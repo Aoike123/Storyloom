@@ -26,6 +26,16 @@ def test_every_production_node_has_a_real_versioned_skill_binding(client):
     assert client.get('/api/node-skills/unknown').status_code==404
 
 
+def test_style_choice_uses_cinematic_language_before_asset_rendering_style():
+    cinematic=skills.snapshot('style_options')
+    rendering=skills.snapshot('style_spec')
+    assert cinematic['title']=='电影视觉风格提案'
+    assert [source['name'] for source in cinematic['sources']]==['director-visual-language']
+    assert 'framing scale' in cinematic['system'] and 'lighting logic' in cinematic['system']
+    assert rendering['title']=='基础美术渲染参数'
+    assert [source['name'] for source in rendering['sources']]==['prompt-images']
+
+
 def test_missing_binding_and_out_of_scope_story_input_never_call_model():
     calls=[]
     chat=lambda *a,**k:calls.append(a)

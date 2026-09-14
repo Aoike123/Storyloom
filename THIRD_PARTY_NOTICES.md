@@ -20,6 +20,14 @@ does not replace those terms.
 - Local copy: `backend/node_skills/vendor/replicate/`
 - License text: `backend/node_skills/vendor/replicate/LICENSE`
 
+## NolanX director-visual-language
+
+- Source: `nolanx-ai/nolanx.ai`
+- Pinned commit: `595d86364377f654e24ddf2c9e875496d85e8246`
+- License: MIT
+- Local copy: `backend/node_skills/vendor/nolanx/`
+- License text: `backend/node_skills/vendor/nolanx/LICENSE`
+
 The complete file list and integrity hashes are recorded in
 `backend/node_skills/vendor-lock.json`.
 
