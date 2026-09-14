@@ -51,6 +51,11 @@ test('completed task state and newer summaries survive older snapshots', () => {
   assert.equal(mergeTask(completed, {id:'task', status:'running', activity:{updated_at:20}}), completed);
   assert.equal(mergeTask(completed, {id:'task', status:'completed', activity:{updated_at:10}}), completed);
 });
+test('a resumed task replaces its previous needs-review state', () => {
+  const stopped = {id:'task', status:'needs_review', message:'旧校验错误', activity:{updated_at:20}};
+  const resumed = {id:'task', status:'running', message:'正在继续处理', activity:{updated_at:20}};
+  assert.equal(mergeTask(stopped, resumed), resumed);
+});
 test('switching work never carries summaries or previews across stories', () => {
   const incoming = {id:'other', progress_at:1, jobs:[], outputs:[]};
   assert.equal(mergeWorkspace({id:'work', progress_at:20, outputs:[{id:'private'}]}, incoming), incoming);

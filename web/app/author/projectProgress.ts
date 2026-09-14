@@ -1,6 +1,7 @@
 import type {ProgressTask} from '../ProgressFeedback';
 
 const activeStatuses = ['queued', 'running', 'waiting'];
+const finalStatuses = ['completed', 'cancelled', 'superseded'];
 
 export function hasActiveProgress(work: any) {
   return [...(work?.jobs || []), work?.task, work?.recommend_task_status].some(
@@ -17,7 +18,7 @@ export function mergeTask(prior: ProgressTask | null | undefined, incoming: Prog
   if (!prior || !incoming || prior.id !== incoming.id) return incoming;
   const priorUpdate = Math.max(prior.activity?.updated_at || 0, prior.result?.live?.updated_at || 0);
   const nextUpdate = Math.max(incoming.activity?.updated_at || 0, incoming.result?.live?.updated_at || 0);
-  if (priorUpdate > nextUpdate || (!activeStatuses.includes(prior.status) && activeStatuses.includes(incoming.status))) return prior;
+  if (priorUpdate > nextUpdate || (finalStatuses.includes(prior.status) && activeStatuses.includes(incoming.status))) return prior;
   return incoming;
 }
 
