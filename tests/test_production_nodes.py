@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from backend import creative, worker
 from backend.db import Session,Record,Task
-from backend.production_nodes import queue_node,retry_current_node,run_node,NODES
+from backend.production_nodes import queue_node,retry_node,redo_node,run_node,NODES
 from backend.asset_workflow import validate_shot_identities
 from test_creative import creative as _creative_fixture  # noqa: F401  (registers the fixture)
 
@@ -82,8 +82,13 @@ def review_rejected_project(pid,issues):
                   'dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'}})
 
 
-def test_rejected_pre_review_is_retried_with_the_reviewer_issues():
-    """The reported failure: a rejected pre-review used to stop the run and ask for manual digging."""
+def test_a_rejected_pre_review_is_recorded_for_the_author_and_never_fed_back():
+    """The reported failure: the reviewer's creative notes came back as "必须逐条修正" instructions.
+
+    The text pre-review has no ground truth, so its findings are opinions. Feeding them to the
+    storyboard model made it argue with the reviewer and rewrite the whole film on every attempt.
+    They are recorded for the author instead, and a retry hands back only structural errors.
+    """
     from test_director import board
     raw=board()
     issues=['S03 缺少对 S01 已建立规则的回应','S02 的服装与前镜不一致']
@@ -94,21 +99,22 @@ def test_rejected_pre_review_is_retried_with_the_reviewer_issues():
                     review_rejected_project('review-director',issues),
                     Record(id='review-project',kind='director',data={'review':{'approved':False,'issues':issues}})])
         db.flush();previous=queue_node(db,work,'storyboarding');previous.status='needs_review'
-        previous.message='分镜生成暂停：分镜专业预审发现问题，已停止后续生成。（错误编号 E-386558）'
-    # The pause wording must not be mistaken for a non-recoverable cause.
-    assert worker.is_retryable_failure(previous.message) is True
+        previous.message='分镜生成暂停：S02 的镜头未按片段时间轴输出。（错误编号 E-386558）'
     assert worker.auto_retry_node(previous.id) is True
     with Session() as db:
         work=db.get(Record,'review-work');run=db.get(Record,'creative_review-director')
         replacement=db.get(Task,work.data['supervisor'])
         assert replacement.id!=previous.id and replacement.status=='queued'
-        feedback=run.data['storyboard_retry_feedback']
-        assert 'S03 缺少对 S01 已建立规则的回应' in feedback
-        assert 'S02 的服装与前镜不一致' in feedback
-        assert '逐条修正' in feedback
-        # A film-wide rejection rewrites every segment instead of reusing validated ones.
-        assert run.data['storyboard_reuse_chunks'] is False
         assert run.data['stage']=='references_ready'
+        # The node's own structural error is handed back; the reviewer's opinion is not.
+        feedback=run.data['storyboard_retry_feedback']
+        assert 'S02 的镜头未按片段时间轴输出' in feedback
+        assert 'S03 缺少对 S01 已建立规则的回应' not in feedback
+        assert '逐条修正' not in feedback
+    # The reviewer's findings are still recorded, beside the board, for the author to judge.
+    with Session() as db:
+        notes=creative.review_notes(db.get(Record,'review-director'))
+    assert notes['issues']==issues and notes['continuity']=='S02 与 S03 之间缺少反应镜头'
 
 
 def test_repeated_failure_message_keeps_only_the_newest_error_code():
@@ -127,13 +133,15 @@ def test_budget_and_provider_blocks_still_skip_automatic_recovery():
         assert worker.is_retryable_failure(message) is True
 
 
-def test_review_rejection_becomes_a_warning_after_the_retry_budget(_creative_fixture,monkeypatch):
-    """A strict text review must not strand a film that is otherwise ready to render."""
+def test_a_rejected_pre_review_never_blocks_the_film(_creative_fixture,monkeypatch):
+    """A strict text review must not strand a film that is otherwise ready to render.
+
+    The review used to raise twice before giving way, which spent two full storyboard regenerations
+    on opinions. Now it records its findings and the film continues on the first pass.
+    """
     from backend import creative as c, director as d
     from test_director import board as sample_board
     issues=['S02 与 S03 之间缺少反应镜头']
-    # Only the review branch matters here; the render steps after it are stubbed so the test pins
-    # one decision instead of re-driving the whole pipeline.
     monkeypatch.setattr(d,'approve',lambda pid,body:{'id':pid,'version':2})
     monkeypatch.setattr(c.visual,'get_config',lambda pid:{'config':None})
     monkeypatch.setattr(c.visual,'save',lambda pid,body:None)
@@ -151,22 +159,15 @@ def test_review_rejection_becomes_a_warning_after_the_retry_budget(_creative_fix
             'stage':'storyboarding','watch':'watch-task','items':[]}))
         db.add(Task(id='watch-task',kind='creative_watch',status='running',owner='w',
                     payload={'mode':'live','creative_id':'pid','child':'watch-child'}))
-    # First pass: the reviewer's problems go back to the storyboard model.
-    with pytest.raises(Exception) as raised:
-        c.run_watch('watch-task',{'creative_id':'pid','child':'watch-child'})
-    assert '分镜专业预审未通过' in str(raised.value)
-    assert issues[0] in str(raised.value)
-    # After the retry budget is spent, the same rejection continues with a recorded warning.
-    with Session.begin() as db:
-        run=db.get(Record,'creative_pid');run.data={**run.data,'storyboard_review_attempts':c.REVIEW_RETRY_ATTEMPTS}
-    c.run_watch('watch-task',{'creative_id':'pid','child':'watch-child'})
+    assert c.run_watch('watch-task',{'creative_id':'pid','child':'watch-child'}) is True
     with Session() as db:
         run=db.get(Record,'creative_pid')
-        assert run.data['storyboard_review_degraded']['issues']==issues
-        assert run.data['storyboard_review_degraded']['continuity']=='缺少反应镜头'
+        assert run.data['storyboard_review_notes']['issues']==issues
+        assert run.data['storyboard_review_notes']['continuity']=='缺少反应镜头'
+        assert run.data['storyboard_review_notes']['approved'] is False
         assert run.data['stage']=='storyboard_ready'
         audit=[row for row in db.query(Record).filter(Record.kind=='audit').all()
-               if row.data.get('action')=='storyboard_review_degraded']
+               if row.data.get('action')=='storyboard_review_recorded']
         assert audit and audit[0].data['issues']==issues
 
 
@@ -211,7 +212,7 @@ def test_failed_storyboard_child_exposes_a_fresh_current_node_retry_with_feedbac
         watch=Task(id='retry-watch',kind='creative_watch',status='needs_review',message='自动分镜未完成',payload={
             'creative_id':'retry-director','child':child.id,'production_phase':'storyboarding','production_node':previous.id})
         db.add_all([child,watch]);run.data={**run.data,'watch':watch.id};db.flush()
-        replacement=retry_current_node(db,work)
+        replacement=retry_node(db,work)
         assert replacement.id!=previous.id and replacement.status=='queued'
         assert replacement.payload['revision_of']==previous.id
         assert work.data['supervisor']==replacement.id

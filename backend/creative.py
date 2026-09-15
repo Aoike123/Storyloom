@@ -10,9 +10,6 @@ from . import asset_sheets
 from .skill_runtime import call_node
 router=APIRouter(prefix='/api/creative',tags=['creative'])
 BUSY=('queued','running','waiting')
-# How many times a rejected text pre-review is sent back before the film continues with the
-# problems recorded. A strict reviewer with no ground truth must not be able to strand a demo.
-REVIEW_RETRY_ATTEMPTS=2
 
 def get_project(db,pid):return prep.project(db,pid)
 def get_run(db,pid):
@@ -526,35 +523,44 @@ def start_storyboard_stage(pid):
 def get_status(pid):
     with Session() as db:return get_run(db,pid).data['stage']
 
+def review_notes(project):
+    """The text pre-review's findings, kept for the author and never fed back as instructions.
+
+    A reviewer with no ground truth reports creative opinions as well as real problems. They are
+    worth showing and useless as "必须修正" instructions, so they are recorded here and displayed
+    beside the board instead of being handed to the storyboard model.
+    """
+    if not project:return None
+    review=project.data.get('review') or {}
+    issues=[str(issue).strip() for issue in (review.get('issues') or []) if str(issue).strip()]
+    if review.get('approved') is not False and not issues:return None
+    return {'issues':issues,'continuity':review.get('continuity'),'dramatic_logic':review.get('dramatic_logic'),
+            'editability':review.get('editability'),'production_feasibility':review.get('production_feasibility'),
+            'approved':bool(review.get('approved')),'at':time.time()}
+
 def run_watch(task_id,payload):
+    """Finish one storyboard node: record the text pre-review, then hand the film to rendering.
+
+    The pre-review is a text opinion with no ground truth, so it never sends the film back. It used
+    to raise a retry (twice) and then hand the reviewer's creative notes to the storyboard model as
+    "必须逐条修正", which made the model argue with the reviewer and rewrite the whole film each
+    time. Its findings are recorded for the author instead; re-running the node is an explicit
+    author action.
+    """
     pid=payload['creative_id']
-    degraded=None
     with Session() as db:
         get_project(db,pid);child=db.get(Task,payload['child'])
         if child.status in BUSY:return False
         if child.status!='completed':raise ProviderError('自动分镜未完成，请查看导演诊断。已有图片保留。')
         p=db.get(Record,pid)
-        review=p.data.get('review') or {}
-        if not review.get('approved'):
-            issues=[str(issue).strip() for issue in (review.get('issues') or []) if str(issue).strip()]
-            attempts=int(get_run(db,pid).data.get('storyboard_review_attempts') or 0)
-            if attempts < REVIEW_RETRY_ATTEMPTS:
-                # The reviewer named concrete problems, so hand them back instead of stopping cold.
-                raise ProviderError('分镜专业预审未通过：'+(('；'.join(issues[:5])) if issues else '评审没有返回具体问题。'))
-            # Degraded continuation: the film keeps going with the problems recorded, so a strict
-            # text review cannot strand a demo that is otherwise ready to render. The record is
-            # written after this read session closes, to avoid holding a read transaction open.
-            degraded={'issues':issues,'continuity':review.get('continuity'),
-                'dramatic_logic':review.get('dramatic_logic'),'editability':review.get('editability'),
-                'production_feasibility':review.get('production_feasibility'),'at':time.time(),
-                'attempts':attempts}
+        notes=review_notes(p)
         version=p.version;board=director.Board.model_validate(p.data['board'])
-    if degraded is not None:
+    if notes is not None:
         with Session.begin() as db:
             run=get_run(db,pid)
-            run.data={**run.data,'storyboard_review_degraded':degraded,'storyboard_review_attempts':0}
-            db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'storyboard_review_degraded',
-                'attempts':degraded['attempts'],'issues':degraded['issues'][:8]}))
+            run.data={**run.data,'storyboard_review_notes':notes}
+            db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'storyboard_review_recorded',
+                'approved':notes['approved'],'issues':notes['issues'][:8]}))
     # Format and semantic text checks succeeded; this is not an image review.
     approved=director.approve(pid,director.Approve(version=version,confirm=True,note='系统分镜结构与模型文本预审通过；后续图片仍须管理员审核'))
     pre=prep.get(pid)['config']

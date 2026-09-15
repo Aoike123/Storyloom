@@ -13,7 +13,7 @@ import type {SkillCall} from './NodeSkills';
 import ProviderError from './ProviderError';
 import type {ProviderFailure} from './ProviderError';
 
-export type ProgressTask = {production_phase?: string | null; id: string; kind: string; status: string; progress?: number; message?: string; created?: number; work_id?: string | null; label?: string | null; preview?: string | null; revision_of?: string | null; activity?: ActivityDisplay | null; generation?: GenerationInfo | null; provider_error?:ProviderFailure|null; skill_calls?:SkillCall[]; result?: {live?: StyleLive; replaced_assets?: string[]; media?: string}};
+export type ProgressTask = {production_phase?: string | null; production_node?: string | null; id: string; kind: string; status: string; progress?: number; message?: string; created?: number; work_id?: string | null; label?: string | null; preview?: string | null; revision_of?: string | null; activity?: ActivityDisplay | null; generation?: GenerationInfo | null; provider_error?:ProviderFailure|null; skill_calls?:SkillCall[]; result?: {live?: StyleLive; replaced_assets?: string[]; media?: string}};
 export const activeStatuses = ['queued', 'running', 'waiting'];
 export const problemStatuses = ['failed', 'needs_review'];
 export const taskNames: Record<string, string> = {author_styles: '推荐创作风格', author_flow: '推进制作流程', author_storyboard: '分镜生成', author_render: '漫剧生成', reader_branch_plan: '规划读者分支', director: '剧本与分镜', art_design: '人物与场景设计', image: '生成画面', video: '生成视频', creative_watch: '编排镜头', creative_revision: '按意见修改', plan: '理解剧情想法', render: '制作过渡片段', bridge: '衔接故事', export: '导出作品'};

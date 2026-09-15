@@ -15,8 +15,11 @@ from . import creative, director
 from . import zhihu_stories
 from .catalog import labels
 from .skill_runtime import call_node
-from .production_nodes import (NODES, queue_node, node_snapshots, is_node_task,
-                               retry_current_node, stopped_stage_media)
+from .production_nodes import (NODES, queue_node, node_snapshots, is_node_task, stopped_node,
+                               stopped_stage_media)
+# Imported under different names: the HTTP handlers below are also called retry_node / redo_node,
+# and a handler that shadows the function it calls recurses into itself.
+from .production_nodes import retry_node as retry_stage_node, redo_node as redo_stage_node
 
 router = APIRouter(prefix='/api/author', tags=['author'])
 open_lock = Lock()
@@ -130,13 +133,9 @@ def workspace(pid: str):
         data['segments']=current.data.get('segments') if current else None
         repairs=current.data.get('board_repairs') if current else None
         data['board_repairs']=repairs if repairs else None
-        review=(current.data.get('review') or {}) if current else {}
-        issues=[str(issue).strip() for issue in (review.get('issues') or []) if str(issue).strip()]
-        # Surface the text pre-review where the operator already is, instead of "请看高级详情".
-        data['storyboard_review']=({'approved':bool(review.get('approved')),'issues':issues,
-            'continuity':review.get('continuity'),'dramatic_logic':review.get('dramatic_logic'),
-            'editability':review.get('editability'),'production_feasibility':review.get('production_feasibility')}
-            if review else None)
+        # The text pre-review's findings are opinions for the author, not errors: showing them here
+        # is why the panel calls them 复核提示 rather than a failed step.
+        data['storyboard_review']=creative.review_notes(current)
     data['creative'] = creative.workspace(sid) if sid else None
     data['display_stage']=data['stage']
     if data.get('stage') in ('film_review','published'):
@@ -424,6 +423,12 @@ async def recommendation_events(pid:str,task_id:str,request:Request):
 
 @router.post('/projects/{pid}/resume')
 def resume(pid: str):
+    """Continue a stopped run without touching what it already saved.
+
+    Continuing used to call the node-retry path, so a button that promised to reuse saved results
+    re-ran the node and rebuilt its media. It now only continues: anything that needs re-running
+    says so and points at 重试 or 重做, which are the two actions that deliberately change work.
+    """
     with attempt_lock,Session.begin() as db:
         row=get_work(db,pid)
         if row.data['stage'] not in ('preparing',*NODES):raise HTTPException(409,'当前无需恢复')
@@ -435,12 +440,12 @@ def resume(pid: str):
             creative.resume_saved_design(db,row.data['director_id'])
         if row.data['stage'] not in NODES:
             schedule(db,row,row.data['stage'])
-        elif stopped_stage_media(db,row):
-            # Continuing must re-queue every stopped picture and clip of this stage: the stage is
-            # only re-runnable once its own items are back, so a fresh coordinator alone left the
-            # film stopping again on whichever item failed first.
-            retry_current_node(db,row)
         else:
+            # Only stopped pictures and clips force that choice: they need a decision about whether
+            # to re-run or throw away. A node whose saved result can carry on is continued below.
+            if stopped_stage_media(db,row):
+                raise HTTPException(409,'当前节点还有停下的画面或片段：请用「重试本节点」带上错误重跑，'
+                                        '或用「重做本节点」删除本轮记录后重新开始。')
             if row.data['stage']=='storyboarding' and row.data.get('director_id'):
                 creative.resume_saved_storyboard(db,row.data['director_id'])
             queue_node(db,row,row.data['stage'])
@@ -460,7 +465,21 @@ def retry_node(pid:str,body:NodeRetry):
     creative.paid(body,*(('video',) if phase=='rendering' else ('llm',)))
     with attempt_lock,Session.begin() as db:
         row=get_work(db,pid)
-        task=retry_current_node(db,row)
+        task=retry_stage_node(db,row)
+        db.flush()
+        return {'queued':True,'task':task_dict(task)}
+
+
+@router.post('/projects/{pid}/redo-node')
+def redo(pid:str,body:NodeRetry):
+    """Delete this node's work and everything after it, then run the node again from scratch."""
+    with Session() as db:
+        row=get_work(db,pid)
+    phase=row.data.get('stage')
+    creative.paid(body,*(('video',) if phase=='rendering' else ('llm',)))
+    with attempt_lock,Session.begin() as db:
+        row=get_work(db,pid)
+        task=redo_stage_node(db,row)
         db.flush()
         return {'queued':True,'task':task_dict(task)}
 

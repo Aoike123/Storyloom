@@ -163,6 +163,7 @@ def task_dict(row):
     preview=preview if isinstance(preview,str) and preview.startswith('/media/') else None
     return {'id': row.id, 'kind': row.kind, 'status': row.status, 'session_id': row.session_id,
             'production_phase':row.payload.get('production_phase') or row.payload.get('phase'),
+            'production_node':row.payload.get('production_node'),
             'revision': row.revision, 'progress': row.progress, 'message': completed_message(row.payload) if row.kind=='image' and row.status=='completed' else row.message,
             'result': row.result, 'created': row.created, 'attempts': row.attempts,
             'mode': row.payload.get('mode', 'demo'), 'label': row.payload.get('title') or row.payload.get('shot_id'),

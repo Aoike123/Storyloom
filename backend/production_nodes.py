@@ -2,7 +2,7 @@
 import time
 from fastapi import HTTPException
 from sqlalchemy import select
-from .db import Record, Task, Session, uid, task_dict
+from .db import DATA, Record, Task, Session, uid, task_dict
 
 NODES = {
     'storyboarding': {'kind':'author_storyboard','name':'分镜生成','hint':'直接编写参考图组合分镜、镜头提示词并完成文本预审'},
@@ -113,81 +113,118 @@ def failure_summary(failed,limit=800,listed=6):
     return '；'.join(dict.fromkeys(labels))[:limit]
 
 
-def retry_current_node(db,work):
-    """Create a fresh coordinator for the failed current node while retaining prior records."""
-    phase=work.data.get('stage')
-    if phase not in NODES:raise HTTPException(409,'当前步骤不是可重新运行的制作节点。')
-    prior=db.get(Task,work.data.get('production_nodes',{}).get(phase,''))
+def stage_payer(db,work):
+    """The payer this run is spending, so a requeue never loses it.
+
+    A node queued from a browser request carries the access session that request used. A node
+    requeued by the worker has no browser in scope: without this the replacement was created with
+    an empty payer and refused every call with "请先用知乎账号登录领取算力豆", even for a browser
+    that had already attached its own key.
+    """
+    from .model_access import current_access_id
+
+    scoped=current_access_id()
+    if scoped:return scoped
+    for phase in NODES:
+        node=db.get(Task,work.data.get('production_nodes',{}).get(phase,'') or '')
+        if node and node.session_id:return node.session_id
+    for task in _related(db,work.data.get('director_id','')):
+        if task.session_id:return task.session_id
+    return ''
+
+
+def blocking_feedback(db,work,project=None,problems=()):
+    """Only the errors a rewrite can act on, in the order the model should read them.
+
+    Structural checks are decidable by code — shot numbers, source references, bound assets, the
+    schema shape — so they are handed back as instructions for the next attempt. The text
+    pre-review's creative opinions are not: sending them back as "必须逐条修正" made the storyboard
+    model argue with the reviewer instead of producing a board, and every attempt rewrote the whole
+    film. Those opinions are recorded for the author instead (see ``review_notes``).
+    """
+    sid=work.data.get('director_id','')
+    if project is None:project=db.get(Record,sid) if sid else None
+    # The node's own failure messages are written by the validators, so they are safe to hand back.
+    # Anything the reviewer said is excluded even if it reached a message on the way here.
+    items=[task.message for task in problems
+           if task.message and '分镜专业预审' not in task.message]
+    if project:
+        chunk=project.data.get('board_chunk_diagnostics') or {}
+        if chunk.get('errors'):
+            detail='；'.join(f"{error.get('field')}：{error.get('reason')}" for error in chunk['errors'][:6])
+            items.append(f"{chunk.get('segment_id') or '本片段'} 上一次输出未通过结构检查，必须修正：{detail}")
+        raw=(project.data.get('board_diagnostics') or {}).get('raw')
+        if raw is not None:
+            from . import director
+            from pydantic import ValidationError
+            source=next((task.payload.get('source',{}).get('content','') for task in _related(db,sid)
+                         if task.kind=='director' and task.payload.get('source',{}).get('content')),'')
+            try:
+                saved=director.Board.model_validate(raw)
+                saved,_=director.repair_board_causality(saved)
+                if source:items.extend(director.check_board(saved,source))
+            except ValidationError:
+                pass
+    return list(dict.fromkeys(item for item in items if item))[:12]
+
+
+def stopped_node(db,work,phase=None):
+    """The coordinator of one stage plus the media it owns that still needs a new version."""
+    phase=phase or work.data.get('stage')
+    if phase not in NODES:return None,[],[]
+    prior=db.get(Task,work.data.get('production_nodes',{}).get(phase,'') or '')
     sid=work.data.get('director_id','');related=_related(db,sid)
     replaced={task.payload.get('revision_of') for task in related if task.payload.get('revision_of')}
     current=[task for task in related if task.id not in replaced and saved_task_phase(task)==phase
              and task.status not in ('cancelled','superseded')]
     problems=[task for task in current if task.status in PROBLEM]
-    if not (prior and prior.status in PROBLEM) and not problems:
+    if prior and prior.status in PROBLEM and prior not in problems:problems.append(prior)
+    return prior,current,problems
+
+
+def retry_node(db,work):
+    """Run the stopped node again with the errors it should fix, and change nothing else.
+
+    A retry keeps the node's inputs, its saved results and the records of earlier attempts. Work
+    that already reached a provider is re-checked rather than submitted a second time. Throwing the
+    node away and starting over is ``redo_node``; the two are deliberately separate, because mixing
+    them meant "继续/重试" silently destroyed saved work.
+    """
+    phase=work.data.get('stage')
+    if phase not in NODES:raise HTTPException(409,'当前步骤不是可重新运行的制作节点。')
+    prior,current,problems=stopped_node(db,work,phase)
+    if not problems:
         raise HTTPException(409,'当前节点没有可重新运行的错误。')
     if prior and prior.status in ('queued','running'):
         raise HTTPException(409,'当前制作节点仍在运行。')
     if any(task.status in BUSY for task in current):
         raise HTTPException(409,'当前节点仍有子任务在运行，请等待结束后重试。')
-    feedback_items=list(dict.fromkeys(task.message for task in [*problems,*([prior] if prior and prior.status in PROBLEM else [])]
-                                     if task and task.message))
     if prior and prior.status=='waiting':
         prior.status='needs_review'
         prior.message='子任务已报错，正在建立新的当前节点任务。'
+    sid=work.data.get('director_id','')
     run=db.get(Record,'creative_'+sid)
     if not run:raise HTTPException(409,'当前制作轮次不存在，不能重新运行节点。')
+    feedback='；'.join(blocking_feedback(db,work,problems=problems))[:1200]
     if phase=='storyboarding':
         project=db.get(Record,sid)
-        raw=(project.data.get('board_diagnostics') or {}).get('raw') if project else None
         chunk=(project.data.get('board_chunk_diagnostics') or {}) if project else {}
-        review=(project.data.get('review') or {}) if project else {}
-        # A rejected text pre-review is a recoverable failure: the reviewer already named the
-        # concrete problems, so they are handed to the storyboard model instead of stopping cold
-        # with "请看高级详情".
-        review_issues=list(dict.fromkeys(str(issue) for issue in (review.get('issues') or []) if str(issue).strip()))
-        review_rejected=review.get('approved') is False and bool(review_issues)
-        if review_rejected:
-            details=[f'分镜专业预审未通过（{key}：{value}）' for key,value in
-                (('连续性',review.get('continuity')),('戏剧逻辑',review.get('dramatic_logic')),
-                 ('可剪辑性',review.get('editability')),('制作可行性',review.get('production_feasibility')))
-                if isinstance(value,str) and value.strip() and value.strip() not in ('通过','可衔接','成立','可剪辑','待视觉审核')]
-            feedback_items.append('上一次分镜专业预审发现了这些问题，本次必须逐条修正：'
-                +'；'.join(review_issues[:8])+(('。评审结论：'+'；'.join(details)) if details else ''))
-        if chunk.get('errors'):
-            detail='；'.join(str(error.get('field'))+'：'+str(error.get('reason')) for error in chunk['errors'][:5])
-            feedback_items.append(f"{chunk.get('segment_id') or '片段'} 上一次分镜输出问题：{detail}")
-        source_task=next((task for task in problems if task.kind=='director' and task.payload.get('source',{}).get('content')),None)
-        if raw is not None and source_task:
-            from . import director
-            from pydantic import ValidationError
-            try:
-                saved=director.Board.model_validate(raw)
-                saved,_=director.repair_board_causality(saved)
-                for issue in director.check_board(saved,source_task.payload['source']['content']):
-                    if issue not in feedback_items:feedback_items.append(issue)
-            except ValidationError:
-                pass
-        feedback='；'.join(feedback_items)[:1200]
-        # A failure that happened inside one segment must not throw away the segments that
-        # already passed validation; only a whole-board failure regenerates everything. A rejected
-        # pre-review judges the film as a whole, so every segment is rewritten.
-        reuse_valid_chunks=bool(chunk.get('errors')) and not raw and not review_rejected
+        # Only the segments that failed are rewritten; a segment that already passed every check is
+        # kept, so a retry never pays for the whole film a second time.
+        reuse_valid_chunks=bool(chunk.get('errors'))
         for task in problems:
             task.status='superseded';task.message='已由重新运行的分镜节点接替；原错误与输出保留。'
         data={key:value for key,value in run.data.items() if key!='watch'}
-        attempts=int(run.data.get('storyboard_review_attempts') or 0)
-        if review_rejected:attempts+=1
         run.data={**data,'stage':'references_ready','storyboard_retry_feedback':feedback,
-                  'storyboard_review_attempts':attempts,
                   'storyboard_reuse_chunks':reuse_valid_chunks}
         run.version+=1
         replacement=queue_node(db,work,phase)
-        replacement.message='分镜生成已重新排队，将参考上次错误重新生成'
+        replacement.message='分镜生成已重新排队，只带结构错误重做未通过的片段'
         replacements=[]
     else:
-        feedback='；'.join(feedback_items)[:1200]
         replacement=queue_node(db,work,phase)
         replacements=[]
+        payer=stage_payer(db,work)
         for task in problems:
             if task.kind not in ('image','video'):
                 task.status='superseded';task.message='已由重新运行的漫剧节点接替；原错误与输出保留。'
@@ -200,11 +237,94 @@ def retry_current_node(db,work):
             new_task=Task(id=uid(task.kind),kind=task.kind,
                 message='失败任务已重新排队',payload={**task.payload,'production_phase':phase,
                     'production_node':replacement.id,'revision_of':task.id})
+            # The rerun is billed to the same payer as the node it replaces, never to nobody.
+            if payer:new_task.session_id=payer
             db.add(new_task);task.status='superseded';task.message='已由新的重试任务接替；原错误与输出保留。'
             replacements.append(new_task.id)
     db.add(Record(id=uid('audit'),kind='audit',data={'target':work.id,'action':'current_production_node_retried',
         'phase':phase,'previous_node_id':prior.id if prior else None,'replacement_node_id':replacement.id,
         'replacement_task_ids':replacements,'previous_error':feedback}))
+    return replacement
+
+
+def _delete_task_outputs(db,task):
+    """Remove the media one task produced, so a redo does not leave orphaned clips behind."""
+    result=task.result or {}
+    clip=db.get(Record,result.get('clip_id','') or '')
+    if clip:
+        artifact=db.get(Record,clip.data.get('artifact_id','') or '')
+        if artifact:
+            for field in ('source','playback'):
+                media=(artifact.data.get(field) or {}).get('media')
+                if isinstance(media,str) and media.startswith('/media/'):
+                    path=(DATA/'media'/media.removeprefix('/media/')).resolve()
+                    if path.is_relative_to((DATA/'media').resolve()):path.unlink(missing_ok=True)
+            db.delete(artifact)
+        for use in db.scalars(select(Record).where(Record.kind=='clip_use')):
+            if use.data.get('clip_id')==clip.id:db.delete(use)
+        media=clip.data.get('media')
+        if isinstance(media,str) and media.startswith('/media/'):
+            path=(DATA/'media'/media.removeprefix('/media/')).resolve()
+            if path.is_relative_to((DATA/'media').resolve()):path.unlink(missing_ok=True)
+        db.delete(clip)
+    asset=db.get(Record,result.get('asset_id','') or '')
+    if asset:db.delete(asset)
+
+
+def redo_node(db,work):
+    """Delete this node and everything after it, then start the node over from its entry state.
+
+    A redo is the explicit "throw it away and begin again" action. The node's own products — the
+    board, the review, the compiled prompts, the clips and their artifacts — are deleted instead of
+    archived, and the downstream node loses its work too, so the node runs against exactly the
+    upstream inputs it had the first time and nothing from the discarded attempt can leak into the
+    new one.
+    """
+    phase=work.data.get('stage')
+    if phase not in NODES:raise HTTPException(409,'当前步骤不是可重做的制作节点。')
+    prior,current,problems=stopped_node(db,work,phase)
+    if any(task.status in BUSY for task in current) or (prior and prior.status in ('queued','running')):
+        raise HTTPException(409,'当前制作节点仍在运行，请等待结束后重做。')
+    sid=work.data.get('director_id','')
+    run=db.get(Record,'creative_'+sid)
+    project=db.get(Record,sid)
+    if not run or not project:raise HTTPException(409,'当前制作轮次不存在，不能重做节点。')
+    downstream=('rendering',) if phase=='storyboarding' else ()
+    for name in (phase,*downstream):
+        node=db.get(Task,work.data.get('production_nodes',{}).get(name,'') or '')
+        if node and node.status in BUSY:raise HTTPException(409,f'{NODES[name]["name"]}仍在运行，请等待结束后重做。')
+    # Everything this node and the nodes after it produced.
+    discard=list(current)
+    if prior:discard.append(prior)
+    for name in downstream:
+        _,_,problems_after=stopped_node(db,work,name)
+        discard.extend(problems_after)
+        mapping=work.data.get('production_nodes',{})
+        discard.extend(task for task in _related(db,sid)
+                       if task.id==mapping.get(name) and task not in discard)
+    for task in discard:
+        _delete_task_outputs(db,task)
+        db.delete(task)
+    # What the node wrote into the run and the director project.
+    data={key:value for key,value in run.data.items()
+          if key not in ('watch','storyboard_retry_feedback','storyboard_reuse_chunks',
+                         'storyboard_review_attempts','storyboard_review_degraded','storyboard_review_notes')}
+    run.data={**data,'stage':'references_ready' if phase=='storyboarding' else 'storyboard_ready'}
+    run.version+=1
+    if phase=='storyboarding':
+        project.data={key:value for key,value in project.data.items()
+                      if key not in ('board','review','board_diagnostics','board_chunk_diagnostics',
+                                     'board_progress','board_repairs','board_recovery','board_history',
+                                     'prompts','preproduction_stamp')}
+        project.data={**project.data,'status':'awaiting_preproduction'}
+        project.version+=1
+    mapping={key:value for key,value in work.data.get('production_nodes',{}).items() if key not in (phase,*downstream)}
+    work.data={**work.data,'production_nodes':mapping}
+    replacement=queue_node(db,work,phase)
+    replacement.message=f'{NODES[phase]["name"]}已重新开始，本轮之前的记录已删除'
+    db.add(Record(id=uid('audit'),kind='audit',data={'target':work.id,'action':'current_production_node_redone',
+        'phase':phase,'discarded_task_ids':[task.id for task in discard],
+        'replacement_node_id':replacement.id}))
     return replacement
 
 
@@ -274,16 +394,9 @@ def run_node(task_id,payload,owner):
         if state=='storyboarding':
             with Session() as db:
                 run=db.get(Record,'creative_'+sid);watch=db.get(Task,run.data.get('watch',''))
-            # Point at the reviewer's own words instead of asking the operator to dig for them.
-            project=db.get(Record,sid)
-            issues=[str(issue).strip() for issue in ((project.data.get('review') or {}).get('issues') or []) if str(issue).strip()]
-            detail=('；'.join(issues[:5])) if issues else (watch.message if watch else '分镜任务记录缺失')
-            run_row=db.get(Record,'creative_'+sid)
-            attempts=int((run_row.data.get('storyboard_review_attempts') if run_row else 0) or 0)
-            if attempts<creative.REVIEW_RETRY_ATTEMPTS:
-                detail+=f'（预审重做上限 {creative.REVIEW_RETRY_ATTEMPTS} 次，下一次是第 {attempts+1} 次）'
-            else:
-                detail+='（已重做满次数，继续当前节点会带着这些问题往下做，不会一直停在这里）'
+            # The node stopped before it could produce a board, so point at the reason it stopped:
+            # a structural error the model can act on, otherwise the task's own message.
+            detail='；'.join(blocking_feedback(db,work,problems=[watch] if watch else [])) or '分镜任务记录缺失'
             raise HTTPException(409,'分镜生成暂停：'+detail)
         return _finish(task_id,owner,payload,'rendering')
     if state=='storyboard_ready':
