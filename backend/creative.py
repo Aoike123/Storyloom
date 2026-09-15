@@ -11,6 +11,9 @@ from . import asset_sheets
 from .skill_runtime import call_node
 router=APIRouter(prefix='/api/creative',tags=['creative'])
 BUSY=('queued','running','waiting')
+# How many times a rejected text pre-review is sent back before the film continues with the
+# problems recorded. A strict reviewer with no ground truth must not be able to strand a demo.
+REVIEW_RETRY_ATTEMPTS=2
 
 def get_project(db,pid):return prep.project(db,pid)
 def get_run(db,pid):
@@ -616,6 +619,7 @@ def get_status(pid):
 
 def run_watch(task_id,payload):
     pid=payload['creative_id']
+    degraded=None
     with Session() as db:
         get_project(db,pid);child=db.get(Task,payload['child'])
         if child.status in BUSY:return False
@@ -624,8 +628,24 @@ def run_watch(task_id,payload):
         review=p.data.get('review') or {}
         if not review.get('approved'):
             issues=[str(issue).strip() for issue in (review.get('issues') or []) if str(issue).strip()]
-            raise ProviderError('分镜专业预审未通过：'+(('；'.join(issues[:5])) if issues else '评审没有返回具体问题。'))
+            attempts=int(get_run(db,pid).data.get('storyboard_review_attempts') or 0)
+            if attempts < REVIEW_RETRY_ATTEMPTS:
+                # The reviewer named concrete problems, so hand them back instead of stopping cold.
+                raise ProviderError('分镜专业预审未通过：'+(('；'.join(issues[:5])) if issues else '评审没有返回具体问题。'))
+            # Degraded continuation: the film keeps going with the problems recorded, so a strict
+            # text review cannot strand a demo that is otherwise ready to render. The record is
+            # written after this read session closes, to avoid holding a read transaction open.
+            degraded={'issues':issues,'continuity':review.get('continuity'),
+                'dramatic_logic':review.get('dramatic_logic'),'editability':review.get('editability'),
+                'production_feasibility':review.get('production_feasibility'),'at':time.time(),
+                'attempts':attempts}
         version=p.version;board=director.Board.model_validate(p.data['board'])
+    if degraded is not None:
+        with Session.begin() as db:
+            run=get_run(db,pid)
+            run.data={**run.data,'storyboard_review_degraded':degraded,'storyboard_review_attempts':0}
+            db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'storyboard_review_degraded',
+                'attempts':degraded['attempts'],'issues':degraded['issues'][:8]}))
     # Format and semantic text checks succeeded; this is not an image review.
     approved=director.approve(pid,director.Approve(version=version,confirm=True,note='系统分镜结构与模型文本预审通过；后续图片仍须管理员审核'))
     pre=prep.get(pid)['config']

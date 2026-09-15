@@ -162,7 +162,10 @@ def retry_current_node(db,work):
         for task in problems:
             task.status='superseded';task.message='已由重新运行的分镜节点接替；原错误与输出保留。'
         data={key:value for key,value in run.data.items() if key!='watch'}
+        attempts=int(run.data.get('storyboard_review_attempts') or 0)
+        if review_rejected:attempts+=1
         run.data={**data,'stage':'references_ready','storyboard_retry_feedback':feedback,
+                  'storyboard_review_attempts':attempts,
                   'storyboard_reuse_chunks':reuse_valid_chunks}
         run.version+=1
         replacement=queue_node(db,work,phase)
@@ -270,6 +273,12 @@ def run_node(task_id,payload,owner):
             project=db.get(Record,sid)
             issues=[str(issue).strip() for issue in ((project.data.get('review') or {}).get('issues') or []) if str(issue).strip()]
             detail=('；'.join(issues[:5])) if issues else (watch.message if watch else '分镜任务记录缺失')
+            run_row=db.get(Record,'creative_'+sid)
+            attempts=int((run_row.data.get('storyboard_review_attempts') if run_row else 0) or 0)
+            if attempts<creative.REVIEW_RETRY_ATTEMPTS:
+                detail+=f'（预审重做上限 {creative.REVIEW_RETRY_ATTEMPTS} 次，下一次是第 {attempts+1} 次）'
+            else:
+                detail+='（已重做满次数，继续当前节点会带着这些问题往下做，不会一直停在这里）'
             raise HTTPException(409,'分镜生成暂停：'+detail)
         return _finish(task_id,owner,payload,'rendering')
     if state in ('storyboard_ready','samples_review','frames_review'):

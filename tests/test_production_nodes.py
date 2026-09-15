@@ -6,6 +6,7 @@ from backend import creative, worker
 from backend.db import Session,Record,Task
 from backend.production_nodes import queue_node,retry_current_node,run_node,NODES
 from backend.asset_workflow import validate_shot_identities
+from test_creative import creative as _creative_fixture  # noqa: F401  (registers the fixture)
 
 
 def test_storyboard_finishes_before_any_image_or_video_is_started(monkeypatch):
@@ -137,6 +138,49 @@ def test_budget_and_provider_blocks_still_skip_automatic_recovery():
         assert worker.is_retryable_failure(message) is False
     for message in ('分镜生成暂停：分镜专业预审发现问题。','分镜未按原文约定输出'):
         assert worker.is_retryable_failure(message) is True
+
+
+def test_review_rejection_becomes_a_warning_after_the_retry_budget(_creative_fixture,monkeypatch):
+    """A strict text review must not strand a film that is otherwise ready to render."""
+    from backend import creative as c, director as d
+    from test_director import board as sample_board
+    issues=['S02 与 S03 之间缺少反应镜头']
+    # Only the review branch matters here; the render steps after it are stubbed so the test pins
+    # one decision instead of re-driving the whole pipeline.
+    monkeypatch.setattr(d,'approve',lambda pid,body:{'id':pid,'version':2})
+    monkeypatch.setattr(c.visual,'get_config',lambda pid:{'config':None})
+    monkeypatch.setattr(c.visual,'save',lambda pid,body:None)
+    monkeypatch.setattr(c.prep,'get',lambda pid:{'config':{'style':'固定二维漫画画风和冷色光线'}})
+    monkeypatch.setattr(c,'start_reference_videos',lambda pid:None)
+    with Session.begin() as db:
+        project=db.get(Record,'pid')
+        project.data={**project.data,'board':sample_board(),
+            'review':{'approved':False,'issues':issues,'continuity':'缺少反应镜头',
+                      'dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'},
+            'status':'pending_review','version':1}
+        db.add(Task(id='watch-child',kind='director',status='completed',payload={'creative_id':'pid'},
+                    result={'project_id':'pid'}))
+        db.add(Record(id='creative_pid',kind='creative_run',data={
+            'stage':'storyboarding','watch':'watch-task','items':[]}))
+        db.add(Task(id='watch-task',kind='creative_watch',status='running',owner='w',
+                    payload={'mode':'live','creative_id':'pid','child':'watch-child'}))
+    # First pass: the reviewer's problems go back to the storyboard model.
+    with pytest.raises(Exception) as raised:
+        c.run_watch('watch-task',{'creative_id':'pid','child':'watch-child'})
+    assert '分镜专业预审未通过' in str(raised.value)
+    assert issues[0] in str(raised.value)
+    # After the retry budget is spent, the same rejection continues with a recorded warning.
+    with Session.begin() as db:
+        run=db.get(Record,'creative_pid');run.data={**run.data,'storyboard_review_attempts':c.REVIEW_RETRY_ATTEMPTS}
+    c.run_watch('watch-task',{'creative_id':'pid','child':'watch-child'})
+    with Session() as db:
+        run=db.get(Record,'creative_pid')
+        assert run.data['storyboard_review_degraded']['issues']==issues
+        assert run.data['storyboard_review_degraded']['continuity']=='缺少反应镜头'
+        assert run.data['stage']=='storyboard_ready'
+        audit=[row for row in db.query(Record).filter(Record.kind=='audit').all()
+               if row.data.get('action')=='storyboard_review_degraded']
+        assert audit and audit[0].data['issues']==issues
 
 
 def test_automatic_board_repairs_are_named_instead_of_silent():
