@@ -21,9 +21,16 @@ export type ZhihuStatus = {
   authorized: boolean;
   account: ZhihuAccount | null;
   wallet: ZhihuWallet | null;
+  /** Server's answer for this browser: whether a generation call may be paid for at all. */
+  can_generate: boolean;
+  /** Whether the payer is the visitor's own attached keys rather than the account wallet. */
+  own_keys: boolean;
 };
 
-export const emptyZhihuStatus: ZhihuStatus = {configured: false, authorized: false, account: null, wallet: null};
+export const emptyZhihuStatus: ZhihuStatus = {
+  configured: false, authorized: false, account: null, wallet: null,
+  can_generate: false, own_keys: false,
+};
 
 export async function readZhihuStatus(signal?: AbortSignal): Promise<ZhihuStatus> {
   const response = await fetch('/api/zhihu/status', {cache: 'no-store', signal});
@@ -34,6 +41,8 @@ export async function readZhihuStatus(signal?: AbortSignal): Promise<ZhihuStatus
     authorized: data?.authorized === true,
     account: data?.account ?? null,
     wallet: data?.wallet ?? null,
+    can_generate: data?.can_generate === true,
+    own_keys: data?.own_keys === true,
   };
 }
 

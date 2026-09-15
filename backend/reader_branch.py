@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from .db import DATA, Record, Session, Task, uid
 from .environment import model_config
-from .providers import chat_json, settings
+from .providers import chat_json, paid_gate, settings
 from .skill_runtime import call_node, render_node
 from .video_files import extract_frame_at_second, media_path
 from .video_storage import file_info, snapshot_asset, verify_file
@@ -296,10 +296,9 @@ def create_branch(body: BranchCommand, x_reader_session: str = Header(alias='X-R
     cfg = settings()
     if not body.confirm_generation:
         raise HTTPException(422, '请确认生成读者分支。')
-    if not cfg.get('llm_paid_enabled', cfg.get('paid_enabled')) or not cfg.get('video_paid_enabled', cfg.get('paid_enabled')):
-        raise HTTPException(422, '文字规划或视频生成尚未获得模型使用权限。')
-    if not cfg.get('llm_configured') or not cfg.get('video_configured'):
-        raise HTTPException(422, '请先配置文字与视频模型。')
+    refusal = paid_gate(cfg, 'llm', 'video')
+    if refusal:
+        raise HTTPException(422, refusal)
     if model_config().get('VIDEO_PROVIDER', 'ark') != 'minimax':
         raise HTTPException(422, '当前轻量分支需要支持多参考图的 MiniMax H3 视频模型。')
     branch_id = uid('branch')

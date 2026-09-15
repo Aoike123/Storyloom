@@ -4,7 +4,7 @@ from fastapi import APIRouter,HTTPException
 from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .db import Session,Record,Task,uid,task_dict,record_dict
-from .providers import settings
+from .providers import paid_gate,settings
 from .consistency import config,stamp,ready
 from .video_storage import (generation_snapshot, create_use, use_entry, export_manifest, storage_view)
 
@@ -89,7 +89,9 @@ class Command(BaseModel):
 @router.post('/{pid}/shots/{sid}/video')
 def generate_video(pid:str,sid:str,body:Command):
     cfg=settings()
-    if not body.confirm_paid or not cfg.get('video_paid_enabled',cfg['paid_enabled']) or not cfg['video_configured']:raise HTTPException(422,'请确认视频生成费用，并配置视频模型。')
+    if not body.confirm_paid:raise HTTPException(422,'请确认视频生成费用。')
+    refusal=paid_gate(cfg,'video')
+    if refusal:raise HTTPException(422,refusal)
     if cfg.get('editable',{}).get('VIDEO_PROVIDER')!='minimax':raise HTTPException(422,'当前图片参考视频流程使用 MiniMax H3。')
     with Session.begin() as db:
         p=project(db,pid)

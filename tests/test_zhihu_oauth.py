@@ -50,7 +50,10 @@ def test_login_reports_configuration_state(client, monkeypatch):
     monkeypatch.delenv('ZHIHU_OAUTH_APP_KEY', raising=False)
     monkeypatch.delenv('ZHIHU_OAUTH_REDIRECT_URI', raising=False)
     body = client.get('/api/zhihu/status').json()
-    assert body == {'configured': False, 'authorized': False, 'account': None, 'wallet': None}
+    assert body['configured'] is False and body['authorized'] is False
+    assert body['account'] is None and body['wallet'] is None
+    # Local runs pay with the operator's own keys, so a browser can generate without signing in.
+    assert body['can_generate'] is True and body['own_keys'] is False
     assert client.get('/api/zhihu/login', follow_redirects=False).status_code == 409
 
 

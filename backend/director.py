@@ -7,7 +7,7 @@ from pydantic import AliasChoices,BaseModel,Field,ValidationError
 from fastapi import APIRouter,HTTPException
 from sqlalchemy import select
 from .db import HISTORY_LIMIT, Record, Session, Task, record_dict, task_dict, uid
-from .providers import settings,chat_json,ProviderError,ModelOutputError
+from .providers import paid_gate,settings,chat_json,ProviderError,ModelOutputError
 from .skill_runtime import call_node
 from . import segments
 
@@ -514,7 +514,9 @@ def projects(source_id:str):
 @router.post('')
 def create(body:Create):
     cfg=settings()
-    if not body.confirm_paid or not cfg.get('llm_paid_enabled',cfg['paid_enabled']) or not cfg['llm_configured']:raise HTTPException(422,'请配置语言模型并确认本次导演阐述收费调用。')
+    if not body.confirm_paid:raise HTTPException(422,'请确认本次导演阐述的模型调用。')
+    refusal=paid_gate(cfg,'llm')
+    if refusal:raise HTTPException(422,refusal)
     with Session.begin() as db:
         source=db.get(Record,body.source_id)
         if not source or source.kind!='story_source':raise HTTPException(404,'请先保存故事到本地工作台。')
@@ -623,7 +625,9 @@ class BoardStart(BaseModel):
 @router.post('/projects/{project_id}/storyboard')
 def start_storyboard(project_id:str,body:BoardStart):
     cfg=settings()
-    if not body.confirm_paid or not cfg.get('llm_paid_enabled',cfg['paid_enabled']) or not cfg['llm_configured']:raise HTTPException(422,'请配置文本模型并确认分镜与预审调用。')
+    if not body.confirm_paid:raise HTTPException(422,'请确认分镜与预审调用。')
+    refusal=paid_gate(cfg,'llm')
+    if refusal:raise HTTPException(422,refusal)
     from .preproduction import ready
     with Session.begin() as db:
         row=db.get(Record,project_id)

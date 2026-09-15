@@ -200,12 +200,17 @@ def _token_from(payload: dict) -> tuple[str, int | None]:
 def status(request: Request):
     account = current_account(request)
     from . import beans
+    from .model_access import current_access_mode, has_payer
     wallet = beans.summary(account['uid']) if account else None
     return {
         'configured': configured(),
         'authorized': account is not None,
         'account': public_account(account) if account else None,
         'wallet': wallet,
+        # Authoritative answer for this browser. The front end must not guess from local storage:
+        # a leftover token from a retired mode would otherwise look like a payer.
+        'can_generate': has_payer(),
+        'own_keys': current_access_mode() == 'own',
     }
 
 

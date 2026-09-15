@@ -2,7 +2,7 @@
 import {useEffect, useRef, useState} from 'react';
 import {Coins, KeyRound, LogOut, X} from 'lucide-react';
 import {clearModelAccess, readModelAccess} from './model-access';
-import {readZhihuStatus, zhihuLoginLink, zhihuLogout, type ZhihuStatus} from './zhihu-account';
+import {emptyZhihuStatus, readZhihuStatus, zhihuLoginLink, zhihuLogout, type ZhihuStatus} from './zhihu-account';
 import {isBeansProblem, onBeansProblem, saveOwnKeys, type OwnKeyInput} from './account-dock';
 import './account-dock.css';
 
@@ -29,7 +29,7 @@ export default function AccountDock({next = '/'}: {next?: string}) {
     try {
       setStatus(await readZhihuStatus());
     } catch {
-      setStatus({configured: false, authorized: false, account: null, wallet: null});
+      setStatus({...emptyZhihuStatus});
     }
   }
 
@@ -72,7 +72,8 @@ export default function AccountDock({next = '/'}: {next?: string}) {
     }
   }
 
-  const usingOwnKeys = !!readModelAccess();
+  // The server is authoritative about the payer; local storage is only a hint.
+  const usingOwnKeys = status?.own_keys ?? !!readModelAccess();
   const account = status?.account ?? null;
   const wallet = status?.wallet ?? null;
   const beans = wallet ? Number(wallet.beans) : null;

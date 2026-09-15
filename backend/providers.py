@@ -96,6 +96,20 @@ def payment_message(*kinds, cfg=None):
     return '这一步需要的模型调用未开启或额度不足：'+'、'.join(PROVIDER_LABELS.get(kind,kind) for kind in missing)+'。'
 
 
+def paid_gate(cfg, *kinds):
+    """Why this step may not spend anything, or None when it may.
+
+    Kept in one place so every paid endpoint refuses with the real reason — no payer, own key
+    missing, or the operator's model not configured — instead of a single catch-all sentence.
+    """
+    message=payment_message(*kinds,cfg=cfg)
+    if message:return message
+    missing=[kind for kind in kinds if not cfg.get(f'{kind}_configured')]
+    if missing:
+        return '这一步需要的模型尚未配置：'+'、'.join(PROVIDER_LABELS.get(kind,kind) for kind in missing)+'。'
+    return None
+
+
 def endpoint(kind,config=None):
     cfg=config or model_config()
     value=cfg.get('LLM_BASE_URL','').rstrip('/')+'/chat/completions' if kind=='llm' else cfg.get(kind.upper()+'_ENDPOINT','')

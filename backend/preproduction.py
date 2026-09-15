@@ -6,7 +6,7 @@ from typing import Literal
 from sqlalchemy import select
 from .db import HISTORY_LIMIT, Session, Record, Task, bounded, record_dict, task_dict, uid
 from .image_provider import local_frame_data
-from .providers import settings
+from .providers import paid_gate,settings
 from .reference_image_model import REFERENCE_IMAGE_MODEL, REFERENCE_IMAGE_STEPS
 from .skill_runtime import render_node
 router=APIRouter(prefix='/api/preproduction',tags=['preproduction'])
@@ -113,6 +113,12 @@ def storyboard_asset_contract(prep):
             for asset_id,spec in assets.items() if spec.get('role')=='scene']
     props=[{'name':spec.get('name') or asset_id,'asset_id':asset_id}
            for asset_id,spec in assets.items() if spec.get('role')=='prop']
+    # Characters whose costume stage answered with the empty-clothing mode: they keep the same
+    # identity+scene binding as any other character and must not be given a garment reference.
+    bare=[{'character':spec.get('name') or asset_id,'asset_id':asset_id,
+           'note':(spec.get('clothing_note') or '该角色为天然体表，不添加任何衣物')[:400]}
+          for asset_id,spec in assets.items()
+          if spec.get('role')=='character' and spec.get('clothing_mode')=='bare']
     return {
         'max_semantic_assets_per_shot':12,
         'max_reference_images_per_shot':MAX_REFERENCE_IMAGES,
@@ -121,10 +127,13 @@ def storyboard_asset_contract(prep):
         'character_reference_sets':character_sets,
         'scene_references':scenes,
         'prop_references':props,
+        'bare_characters':bare,
         'selection_rule':('assets 必须使用真实 ID。每个入镜角色完整复制一组 character_reference_sets.asset_ids，'
                           '再追加一张 scene_references.asset_id；不要为了数量上限省略身份或服装。'
                           f'程序把完整列表原样附给视频模型，每镜最多 {MAX_REFERENCE_IMAGES} 张；'
-                          '超过上限的多人内容请拆成反打、近景或空场景镜头。'),
+                          '超过上限的多人内容请拆成反打、近景或空场景镜头。'
+                          'bare_characters 里的角色已经由空衣服模式确认不着衣物：只绑定身份图与场景图，'
+                          '不要为它们选择服装，也不要在画面里添加衣物、盔甲、法器或饰品。'),
     }
 
 
@@ -387,6 +396,10 @@ class AssetSpec(BaseModel):
     identity_asset_id:str|None=None
     costume_asset_id:str|None=None
     requires_costume:bool=False
+    # Character -> costume -> set always runs: a character either owns a garment sheet or was
+    # explicitly answered with the empty-clothing mode.
+    clothing_mode:Literal['garment','bare']|None=None
+    clothing_note:str|None=Field(default=None,max_length=800)
 class Setup(BaseModel):
     expected_version:int=0
     style:str=Field(min_length=10,max_length=2000)
@@ -443,6 +456,11 @@ def save(pid:str,body:Setup):
             asset=db.get(Record,aid)
             if spec.role!='character' or not asset or asset.data.get('asset_kind')!='character_sheet':continue
             has_costume=any(item.role=='costume' and item.identity_asset_id==aid for item in body.assets.values())
+            if spec.clothing_mode=='bare':
+                # The empty-clothing mode already answered the costume stage for this character.
+                if has_costume:raise HTTPException(422,f'「{spec.name}」已确认为空衣服模式，不能同时绑定服装图。')
+                spec.requires_costume=False
+                continue
             costume_mode=asset.data.get('asset_spec',{}).get('costume_mode','required')
             if costume_mode=='required' and not has_costume:
                 raise HTTPException(422,'人物身份参考缺少对应的独立服装图。')
@@ -471,7 +489,8 @@ def trial(pid:str,body:Trial):
         if run and run.data.get('direct_reference_inputs'):raise HTTPException(409,'当前流程不再创建试拍，直接使用基础参考图生成分镜。')
     if not body.confirm_paid:raise HTTPException(422,'请确认试拍生图费用。')
     cfg=settings()
-    if not cfg.get('image_paid_enabled',cfg['paid_enabled']) or not cfg['image_configured']:raise HTTPException(422,'请配置生图接口。')
+    refusal=paid_gate(cfg,'image')
+    if refusal:raise HTTPException(422,refusal)
     with Session.begin() as db:
         project(db,pid);r,token=snapshot(db,pid)
         if token!=body.stamp:raise HTTPException(409,'设定已变更。')

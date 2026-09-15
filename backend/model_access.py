@@ -177,7 +177,7 @@ def payer_requirement_message() -> str | None:
         return None
     if not public_demo_mode():
         return None
-    return "请先用知乎账号登录领取算力豆；如果想用自己的额度，也可以在模型使用方式页面填写自己的 API Key。"
+    return "请先用知乎账号登录领取算力豆；如果要用自己的额度，请在右上角的账号面板里填写自己的 API Key。"
 
 
 def _secret_material() -> str:
@@ -371,7 +371,9 @@ def authorize_call(kind: str, duration_seconds=None, task_id: str | None = None)
         return {"mode": "own"}
     if mode == "account":
         return _reserve_account_call(record, kind, duration_seconds, task_id)
-    raise ModelAccessError("模型使用会话无效，请重新配置。")
+    # An unknown or retired mode — for example a session created for the removed shared pool — must
+    # never be treated as a payer. Say what to do rather than reporting a broken session.
+    raise ModelAccessError(payer_requirement_message() or "模型使用会话无效，请重新配置。")
 
 
 def affordable_shot_budget() -> tuple[int, str] | None:
