@@ -201,31 +201,53 @@ class Start(creative.Style):
 
 
 def retryable_images(db,work):
-    from .image_errors import can_retry
+    from .image_errors import can_retry,needs_prompt_edit,task_error
     sid=work.data.get('director_id')
     run=db.get(Record,'creative_'+sid) if sid else None
     if work.data['stage'] not in ('preparing','assets_review') or not run or run.data.get('stage')!='assets_review':return []
     if run.data.get('asset_schema')!=creative.asset_sheets.VERSION:return []
-    return [{'task_id':item['task_id'],'name':item['name']} for item in run.data.get('items',[])
-        if (task:=db.get(Task,item['task_id'])) and can_retry(task)]
+    images=[]
+    for item in run.data.get('items',[]):
+        task=db.get(Task,item['task_id'])
+        if not task or not can_retry(task):continue
+        error=task_error(task) or {}
+        saved=task.result.get('generation_request') or {}
+        images.append({'task_id':task.id,'name':item['name'],'category':error.get('category',''),
+            # A prompt the author may rewrite is sent back so the repair panel can offer the editor.
+            'prompt':(saved.get('prompt') or task.payload.get('prompt') or '') if needs_prompt_edit(error) else '',
+            'needs_prompt_edit':needs_prompt_edit(error)})
+    return images
 
 
 class ImageRetry(BaseModel):
     confirm_paid:bool=False
+    # An optional replacement prompt: the provider repeats a content-policy rejection until the
+    # author rewrites what the picture asks for.
+    prompt:str|None=Field(default=None,min_length=10,max_length=6000)
 
 
-def requeue_image(db,row,tid):
-    """Queue one fresh version of a rejected base picture, keeping its saved prompt and design."""
+def requeue_image(db,row,tid,prompt=None):
+    """Queue one fresh version of a rejected base picture, keeping its design.
+
+    The saved prompt is reused unless the author rewrote it; an edited prompt no longer follows the
+    validated render contract, so the new task records that the text was changed by hand.
+    """
     sid=row.data['director_id'];run=creative.get_run(db,sid);old=db.get(Task,tid)
     saved=old.result.get('generation_request') or {}
-    prompt=saved.get('prompt') or old.payload.get('prompt')
-    if not prompt:raise HTTPException(409,'没有可恢复的图片提示词，请重新准备素材。')
-    task=Task(id=uid('image'),kind='image',payload={**old.payload,'prompt':prompt,'revision_of':tid})
+    edited=(prompt or '').strip()
+    chosen=edited or saved.get('prompt') or old.payload.get('prompt')
+    if not chosen:raise HTTPException(409,'没有可恢复的图片提示词，请重新准备素材。')
+    payload={**old.payload,'prompt':chosen,'revision_of':tid}
+    if edited:payload.update({'prompt_source':'manual_edit','prompt_edited':True})
+    task=Task(id=uid('image'),kind='image',payload=payload)
     db.add(task)
     creative.prep.invalidate_downstream_references(db,sid,'失败的基础素材已重试并建立新版本',task.id)
     run.data={**run.data,'items':[{**item,'task_id':task.id} if item['task_id']==tid else item for item in run.data['items']]}
     run.version+=1
     old.status='superseded'  # Keep the original rejection and request for history.
+    if edited:
+        db.add(Record(id=uid('audit'),kind='audit',data={'target':task.id,'action':'image_prompt_edited',
+            'replaced_task':tid,'note':'用户按供应商的内容限制手动修改了生图提示词','prompt':edited[:1500]}))
     return task
 
 
@@ -239,14 +261,21 @@ def open_repair_round(db,row):
 
 @router.post('/projects/{pid}/images/{tid}/retry')
 def retry_image(pid:str,tid:str,body:ImageRetry):
-    """Retry one rejected base image, keeping the approved design and other images."""
+    """Retry one rejected base image, keeping the approved design and other images.
+
+    A content-policy rejection (HTTP 451) is refused by every resubmission of the same text, so the
+    author may send a rewritten prompt with this request; other failures keep their saved prompt.
+    """
     creative.paid(body,'image')
     with attempt_lock,Session.begin() as db:
         row=get_work(db,pid)
-        if tid not in {item['task_id'] for item in retryable_images(db,row)}:
+        entry=next((item for item in retryable_images(db,row) if item['task_id']==tid),None)
+        if not entry:
             raise HTTPException(409,'该图片当前不能单独重试；请检查是否已被替换、属于旧轮次，或调用结果仍不确定。')
+        if body.prompt is not None and not entry['needs_prompt_edit']:
+            raise HTTPException(409,'这次失败不需要改写提示词：请直接重试这张图片；若要改画面，请在图片卡片填写修改意见。')
         sid=row.data['director_id'];creative.get_project(db,sid);creative.no_active(db,sid)
-        task=requeue_image(db,row,tid)
+        task=requeue_image(db,row,tid,body.prompt)
         open_repair_round(db,row)
         # The supervisor can only finish once every rejected picture is back, so it is queued with
         # the last repair. Queueing it earlier left it waiting on the other pictures and refused the
@@ -262,19 +291,23 @@ def retry_images(pid:str,body:ImageRetry):
 
     The panel lists one button per picture, so a stopped run of several pictures used to be
     repaired one click at a time; a single visitor action must be able to bring the whole set back.
+    Pictures whose prompt the provider already rejected are left to their own editor: resubmitting
+    the same prompt would only be refused again.
     """
     creative.paid(body,'image')
     with attempt_lock,Session.begin() as db:
         row=get_work(db,pid)
-        images=retryable_images(db,row)
+        retryable=retryable_images(db,row)
+        images=[item for item in retryable if not item['needs_prompt_edit']]
+        skipped=[item['task_id'] for item in retryable if item['needs_prompt_edit']]
         if not images:
-            raise HTTPException(409,'当前没有可重试的失败图片；请检查是否已被替换、属于旧轮次，或调用结果仍不确定。')
+            raise HTTPException(409,'当前没有可以直接重试的失败图片：内容违规的图片需要先修改提示词。')
         sid=row.data['director_id'];creative.get_project(db,sid);creative.no_active(db,sid)
         tasks=[requeue_image(db,row,item['task_id']) for item in images]
         open_repair_round(db,row)
         schedule(db,row,'preparing')
         db.flush()
-        return {'queued':True,'tasks':[task_dict(task) for task in tasks]}
+        return {'queued':True,'tasks':[task_dict(task) for task in tasks],'needs_prompt_edit':skipped}
 
 
 @router.post('/projects/{pid}/redesign')

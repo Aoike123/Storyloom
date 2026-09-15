@@ -11,9 +11,13 @@ REJECTIONS={
     403:('permission','生图权限不足','请检查账户实名认证和模型使用权限。'),
     404:('not_found','生图模型或接口不存在','请检查生图接口地址和模型名称。'),
     429:('rate_limit','生图服务暂时限流','请按供应商说明等待后重试这张图片。'),
-    451:('rejected','生图请求被服务商拒绝','请查看供应商说明；仅凭 HTTP 451 不能判定余额不足。'),
+    # 451 是内容策略拒绝：供应商判定提示词或它要求的画面违规（例如要求裸露的自然体表），
+    # 因此不返回图片。同样的提示词再提交一次仍会被拒绝，必须改写提示词。
+    451:('content_policy','提示词或它要求的画面被服务商判定违规','请按供应商说明修改提示词后重试；仅凭 HTTP 451 不能判定余额不足。'),
 }
 RETRYABLE_STATUS={400,401,402,403,404,409,422,429,451}
+# Failures the provider repeats until the prompt itself changes, so the author must edit it.
+PROMPT_EDIT_STATUS={451}
 # A refusal raised before anything reached the provider. Nothing can have been billed, so the
 # picture may be generated again; it is the one failure that carries no provider response.
 NOT_SUBMITTED='not_submitted'
@@ -89,6 +93,11 @@ def response_error(response,config):
 def error_message(error):
     if not error.get('http_status'):return f"{error['summary']}。{error['advice']}"
     return f"{error['summary']}（HTTP {error['http_status']}）。{error['advice']}"
+
+
+def needs_prompt_edit(error) -> bool:
+    """Whether this failure changes only when the author rewrites the prompt."""
+    return bool(error) and error.get('http_status') in PROMPT_EDIT_STATUS
 
 
 def save_error(task_id,error):

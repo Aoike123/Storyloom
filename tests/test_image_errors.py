@@ -18,7 +18,7 @@ def image_call(monkeypatch):
     return cfg
 
 
-@pytest.mark.parametrize('status,category,summary',[(402,'balance','余额'),(451,'rejected','不能判定'),(429,'rate_limit','等待')])
+@pytest.mark.parametrize('status,category,summary',[(402,'balance','余额'),(451,'content_policy','不能判定'),(429,'rate_limit','等待')])
 def test_rejection_is_recorded_once_with_diagnostics_and_terminal_activity(image_call,monkeypatch,client,status,category,summary):
     calls=[]
     def post(*args,**kwargs):
@@ -40,6 +40,21 @@ def test_rejection_is_recorded_once_with_diagnostics_and_terminal_activity(image
     with Session() as db:
         public=task_dict(db.get(Task,'error-image'))
     assert public['provider_error']==error
+
+
+def test_a_content_policy_rejection_says_the_prompt_is_the_problem():
+    """HTTP 451 is a content decision, not a balance problem: the prompt has to change."""
+    from backend.image_errors import describe,error_message,needs_prompt_edit
+    error={**describe(451),'source':'response','provider_message':'It appears to contain prohibited or sensitive content.'}
+    assert error['category']=='content_policy'
+    assert '提示词' in error['summary'] and '违规' in error['summary']
+    message=error_message(error)
+    assert '修改提示词' in message and '不能判定余额不足' in message
+    # Only this failure repeats until the author rewrites the text.
+    assert needs_prompt_edit(error) is True
+    for other in (describe(402),describe(429),describe(503)):
+        assert needs_prompt_edit(other) is False
+    assert needs_prompt_edit(None) is False
 
 
 def test_only_safe_message_fields_are_persisted_and_exposed(image_call,monkeypatch,client):
