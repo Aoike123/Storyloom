@@ -205,7 +205,7 @@ def test_shot_prompt_compiler_cannot_change_story_or_asset_bindings(monkeypatch)
         return {'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'},{}
     monkeypatch.setattr(d,'chat_json',chat)
     result=d.run_director({'source':{'content':TEXT},'brief':'短场景','stage':'board','treatment':treatment,'professional_prompts':True,
-                           'segments':segment_plan()},'direct-node',lambda key,value,progress:saved.update({key:value}))
+                           'segments':segment_plan(),'segment_id':'G01'},'direct-node',lambda key,value,progress:saved.update({key:value}))
     assert seen==['Board','ShotPromptBatch','Review'] and result['approved']
     unchanged=('reference_prompt','motion_prompt','segment_id')
     for before,after in zip(d.Board.model_validate(original).model_dump()['shots'],saved['board']['shots']):

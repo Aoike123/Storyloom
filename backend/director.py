@@ -32,7 +32,7 @@ class Treatment(BaseModel):
 
 class Shot(BaseModel):
     source_ref:str=Field(default='',max_length=20)
-    id:str=Field(pattern=r'^S[0-9]{2}$')
+    id:str=Field(pattern=r'^G[0-9]{2}-S[0-9]{2}$',description='情节内镜号：情节编号加镜号，例如 G03-S02。每个情节都从 S01 重新开始编号。')
     segment_id:str=Field(default='',max_length=12,description='本镜所属的微小说片段编号；由调用方在合并分块结果时写入。')
     scene:str=Field(min_length=1,max_length=160)
     purpose:Literal['hook','setup','rule','escalation','reveal','reaction','payoff','bridge']=Field(
@@ -84,7 +84,7 @@ class Review(BaseModel):
 
 
 class ShotPrompt(BaseModel):
-    id:str=Field(pattern=r'^S[0-9]{2}$')
+    id:str=Field(pattern=r'^G[0-9]{2}-S[0-9]{2}$')
     reference_prompt:str=Field(min_length=5,max_length=1500,validation_alias=AliasChoices('reference_prompt','first_frame'),description='单镜静态构图说明，配合已绑定项目参考图直接生成视频；不重复统一画风，不指定视频首尾帧')
     motion_prompt:str=Field(min_length=5,max_length=1500)
 
@@ -259,9 +259,9 @@ def chunk_issues(chunk,segment,passages,preproduction,expected_ids=None,earlier_
     return issues
 
 
-def segment_board(payload,plan,index,segment,passages,task_id,save_stage,model_preproduction,previous_chunk,treatment):
+def segment_board(payload,plan,index,segment,passages,task_id,save_stage,model_preproduction,previous_chunk,treatment,earlier_ids):
     """Plan one segment's shots from that segment's original text only."""
-    starts=segments.shot_starts(plan);text=segments.segment_text(segment,passages)
+    text=segments.segment_text(segment,passages)
     references=segments.references_of(segment)
     previous=None
     if previous_chunk is not None:
@@ -274,7 +274,6 @@ def segment_board(payload,plan,index,segment,passages,task_id,save_stage,model_p
         item=plan.segments[index+1]
         following={'segment_id':item.id,'title':item.title,'beat':item.beat,'purpose':item.purpose}
     attempts=[];repairs=[]
-    earlier_ids=segments.earlier_shot_ids(plan,index)
     def chunk_contract(raw):
         errors=[];result=None
         try:result=Board.model_validate(raw)
@@ -283,14 +282,14 @@ def segment_board(payload,plan,index,segment,passages,task_id,save_stage,model_p
         if result is not None:
             result,changes=repair_board_causality(result);repairs.extend(changes)
         if result is not None:
-            # Shots are numbered on the whole-film timeline so a cross-segment reference is never
-            # confused with a local one. A wrong block is reported, never silently relabelled.
-            expected=segments.shot_ids_for(plan,index,len(result.shots))
+            # Numbering is local to this episode and carries its prefix, so a wrong block is
+            # reported rather than silently relabelled.
+            expected=segments.shot_ids_for(segment,len(result.shots))
             actual=[shot.id for shot in result.shots]
             if actual!=expected:
                 errors=[{'field':'shots.id','type':'shot_numbering','reason':
-                    f'本片段的镜号必须接着上一片段连续编号：应为 {"、".join(expected)}，实际是 {"、".join(actual)}。'
-                    f'调用方给出的 shot_start 是 S{segments.shot_starts(plan)[segment.id]:02}，请从它开始编号，不要每段都从 S01 重来。'}]
+                    f'本片段的镜号必须使用调用方给出的编号：应为 {"、".join(expected)}，实际是 {"、".join(actual)}。'
+                    f'{segment.id} 的镜号从 {segment.id}-S01 起顺序递增；每个情节都从 S01 重新开始，不要跨情节连续编号。'}]
         if result is not None:
             invalid=[shot.id for shot in result.shots if shot.source_ref and shot.source_ref.upper() not in references]
             if invalid:
@@ -320,49 +319,50 @@ def segment_board(payload,plan,index,segment,passages,task_id,save_stage,model_p
     board,_=call_node(chat_json,'storyboard',{'source':{'title':plan.title,'content':text},
         'source_passages':{reference:passages[reference] for reference in references},
         'treatment':treatment,'brief':payload.get('brief',''),'preproduction':model_preproduction,
-        'segment':{**segment.model_dump(),'index':index+1,'shot_start':starts[segment.id],
-                   'shot_ids':segments.shot_ids_for(plan,index,segment.shot_budget),
+        'segment':{**segment.model_dump(),'index':index+1,
+                   'shot_ids':segments.shot_ids_for(segment,segment.shot_budget),
                    'referenceable_shot_ids':earlier_ids},
         'segment_outline':segments.segment_outline(plan,index),'previous_segment':previous,'next_segment':following,
         'schema':chunk_schema(segment.shot_budget)},task_id,validator=chunk_contract)
     return board,repairs
 
 
-def generate_chunks(payload,plan,cut,passages,task_id,save_stage,model_preproduction,treatment):
-    """Plan one storyboard chunk per segment; already validated chunks are reused."""
-    progress=payload.get('board_progress');reuse={};stamp=(model_preproduction or {}).get('stamp')
-    # Reuse stays off for a whole-board retry, but a segment-scoped retry keeps every segment that
-    # already passed validation so a retry does not repay for work that is still correct.
-    allow_reuse=not payload.get('retry_feedback') or bool(payload.get('retry_reuse_chunks'))
-    if (isinstance(progress,dict) and progress.get('fingerprint')==cut['fingerprint']
-            and progress.get('preproduction_stamp')==stamp and allow_reuse):
-        reuse={key:value for key,value in (progress.get('chunks') or {}).items() if isinstance(value,dict)}
-    chunks=[];repairs=[];reused=[]
-    saved_chunks={}
-    for index,segment in enumerate(plan.segments):
-        chunk=None
-        if segment.id in reuse:
-            try:candidate=Board.model_validate(reuse[segment.id])
-            except ValidationError:candidate=None
-            expected=segments.shot_ids_for(plan,index,len(candidate.shots)) if candidate is not None else None
-            if candidate is not None and not chunk_issues(candidate,segment,passages,model_preproduction,
-                    expected,segments.earlier_shot_ids(plan,index),payload.get('source',{}).get('content','')):
-                chunk=candidate;reused.append(segment.id)
-        if chunk is None:
-            chunk,chunk_repairs=segment_board(payload,plan,index,segment,passages,task_id,save_stage,model_preproduction,
-                chunks[-1] if chunks else None,treatment)
-            repairs.extend(chunk_repairs)
-        chunks.append(chunk)
-        saved_chunks[segment.id]=chunk.model_dump()
-        save_stage('board_progress',{'fingerprint':cut['fingerprint'],'segments':cut['segments'],
-            'preproduction_stamp':stamp,'chunks':{**reuse,**saved_chunks},'reused':reused,'updated_at':time.time()},
-            38+min(index+1,10))
-    if reused:save_stage('board_chunk_reuse',{'segment_ids':reused},40)
-    return chunks,repairs
+def unit_board(entry):
+    """The board out of a saved episode entry, or the entry itself when it is already a board."""
+    if not isinstance(entry,dict):return None
+    return entry.get('board') if 'board' in entry else entry
 
 
-def whole_board_contract(raw,passages,content,preproduction,save_stage):
-    """Whole-film checks shared by the assembled board and the saved-board recovery path."""
+def generate_unit(payload,plan,index,segment,passages,task_id,save_stage,model_preproduction,treatment,earlier_ids):
+    """Plan exactly one episode. A saved board for it is reused only when nothing failed there.
+
+    One episode per task is what keeps a failure inside its own episode: the episodes before it are
+    already saved and are never re-planned, and the ones after it have not been paid for yet.
+    """
+    saved=unit_board((payload.get('unit_boards') or {}).get(segment.id))
+    allow_reuse=not payload.get('retry_feedback')
+    if allow_reuse and saved is not None:
+        try:candidate=Board.model_validate(saved)
+        except ValidationError:candidate=None
+        if candidate is not None:
+            expected=segments.shot_ids_for(segment,len(candidate.shots))
+            if not chunk_issues(candidate,segment,passages,model_preproduction,expected,earlier_ids,
+                    payload.get('source',{}).get('content','')):
+                save_stage('board_chunk_reuse',{'segment_ids':[segment.id]},40)
+                return candidate,[],True
+    previous=unit_board((payload.get('unit_boards') or {}).get(plan.segments[index-1].id)) if index>0 else None
+    previous_chunk=Board.model_validate(previous) if previous else None
+    board,repairs=segment_board(payload,plan,index,segment,passages,task_id,save_stage,
+        model_preproduction,previous_chunk,treatment,earlier_ids)
+    return board,repairs,False
+
+
+def unit_contract(raw,passages,text,content,preproduction,save_stage,earlier_ids=(),allow_opening=False):
+    """Structure, source and asset checks for one episode's board.
+
+    The structural checks are the same as before; only their scope narrowed, so an error in one
+    episode can no longer throw away the episodes beside it.
+    """
     errors=[];repairs=[];packing={}
     try:result=Board.model_validate(raw)
     except ValidationError as exc:
@@ -379,12 +379,80 @@ def whole_board_contract(raw,passages,content,preproduction,save_stage):
         try:repairs.extend(bind_sources(result.shots,passages,'source_quote',content))
         except ProviderError as exc:errors=[{'field':'shots.source_ref','reason':str(exc),'type':'source_binding'}]
     if result is not None and not errors:
-        errors=[{'field':'board','reason':issue,'type':'structural_check'} for issue in check_board(result,content)]
+        errors=[{'field':'board','reason':issue,'type':'structural_check'}
+                for issue in check_board(result,content,external_ids=earlier_ids,allow_opening_continuation=allow_opening)]
     if errors:
-        save_stage('board_diagnostics',{'raw':raw,'errors':errors},35)
+        save_stage('board_diagnostics',{'raw':raw,'errors':errors},60)
         details='；'.join(e['field']+'：'+e['reason'] for e in errors[:5])
         raise ModelOutputError('分镜未按结构、原文或素材绑定约定输出：'+details)
     return result,repairs,packing
+
+
+def merged_board(plan,units):
+    """The finished episodes joined in order; this is what the video stage and the reader see."""
+    chunks=[]
+    for segment in plan.segments:
+        unit=units.get(segment.id)
+        if not unit:break
+        chunks.append(Board.model_validate(unit['board']))
+    if not chunks:raise ProviderError('还没有任何情节完成分镜，不能合并。')
+    shots=segments.merge_chunks(plan,chunks)
+    done=[segment.id for segment in plan.segments if units.get(segment.id)]
+    return Board(title=plan.title,
+        scope_note=('按情节顺序合并；已完成 '+'、'.join(done)+f'（共 {len(plan.segments)} 个情节）')[:600],
+        shots=shots)
+
+
+def segment_index(plan,segment_id):
+    """Position of one episode in the cut, refused instead of guessed when it is unknown."""
+    if not segment_id:raise ProviderError('分镜任务缺少情节编号：现在逐情节生成，请重新运行当前节点。')
+    index=next((position for position,segment in enumerate(plan.segments) if segment.id==segment_id),None)
+    if index is None:raise ProviderError(f'情节 {segment_id} 不在本次切割结果中，请重新运行当前节点。')
+    return index
+
+
+def run_unit(payload,plan,index,passages,content,task_id,save_stage,preproduction,model_preproduction,treatment):
+    """Plan, validate, compile and review exactly one episode, then save it with the merged film.
+
+    Everything here is scoped to one episode: its own shots, its own prompts, its own review. The
+    episodes before it are read from the saved units, so they are never re-planned, and the ones
+    after it have not been submitted yet.
+    """
+    segment=plan.segments[index]
+    units={key:value for key,value in (payload.get('unit_boards') or {}).items()}
+    earlier=[Board.model_validate(unit_board(units.get(item.id))) for item in plan.segments[:index] if units.get(item.id)]
+    earlier_ids=segments.earlier_shot_ids(earlier)
+    save_stage('phase',f'正在设计 {segment.id}「{segment.title}」的镜头调度与信息揭示',36)
+    board,repairs,reused=generate_unit(payload,plan,index,segment,passages,task_id,save_stage,
+        model_preproduction,treatment,earlier_ids)
+    text=segments.segment_text(segment,passages)
+    try:board,extra_repairs,packing=unit_contract(board.model_dump(),passages,text,content,preproduction,
+        save_stage,earlier_ids,allow_opening=index>0)
+    except ModelOutputError as exc:raise ProviderError(str(exc)) from None
+    repairs.extend(extra_repairs)
+    if packing:
+        from .preproduction import materialize_board_asset_packing,repair_board_assets,validate_board,storyboard_preproduction
+        if not payload.get('project_id'):
+            raise ProviderError('该镜需要本地图像工具拼接身份与服装参考板，但分镜任务缺少项目标识，不能继续。')
+        try:preproduction,_=materialize_board_asset_packing(payload['project_id'],task_id,preproduction['stamp'],packing)
+        except HTTPException as exc:raise ProviderError(str(exc.detail)) from None
+        board,packed_repairs=repair_board_assets(board,preproduction);repairs.extend(packed_repairs)
+        try:validate_board(board,preproduction)
+        except HTTPException as exc:raise ProviderError(str(exc.detail)) from None
+    if repairs:save_stage('board_repairs',{'changes':repairs},35)
+    if payload.get('professional_prompts'):
+        compile_shot_prompts(board,preproduction,task_id,save_stage)
+    save_stage('phase','正在独立核对本情节的原文依据、连续性与生成可行性',75)
+    review,_=call_node(chat_json,'storyboard_review',
+        {'source':{**payload['source'],'content':text},'treatment':treatment,
+         'board':board.model_dump(),'schema':Review.model_json_schema()},
+        task_id,validator=Review.model_validate)
+    if not isinstance(review,Review):review=Review.model_validate(review)
+    units[segment.id]={'segment_id':segment.id,'title':segment.title,'board':board.model_dump(),
+        'review':review.model_dump(),'reused':reused,'finished_at':time.time()}
+    save_stage('units',units,80)
+    save_stage('board',merged_board(plan,units).model_dump(),82)
+    return review.model_dump()
 
 
 def compile_shot_prompts(board,preproduction,task_id,save_stage):
@@ -465,21 +533,9 @@ def run_director(payload,task_id,save_stage):
         model_preproduction=storyboard_preproduction(preproduction)
         if payload.get('retry_feedback'):
             model_preproduction={**model_preproduction,'previous_node_error':payload['retry_feedback']}
-    saved=payload.get('saved_board')
-    if saved is not None:
-        try:board,repairs,packing=whole_board_contract(saved,passages,content,preproduction,save_stage)
-        except ModelOutputError as exc:raise ProviderError(str(exc)) from None
-    else:
-        plan,cut,_=segment_stage(payload,passages,task_id,save_stage,treatment)
-        save_stage('phase','正在按片段设计镜头调度、信息揭示与声音衔接',36)
-        chunks,repairs=generate_chunks(payload,plan,cut,passages,task_id,save_stage,model_preproduction,treatment.model_dump())
-        try:merged_shots=segments.merge_chunks(plan,chunks)
-        except segments.NumberingError as exc:raise ProviderError(str(exc)+'请重新运行当前节点。') from None
-        assembled=Board(title=cut['title'],shots=merged_shots,
-            scope_note=('按微小说切割出的 '+str(len(plan.segments))+' 个片段分块生成；'+cut['overall_arc'])[:600])
-        try:board,extra_repairs,packing=whole_board_contract(assembled.model_dump(),passages,content,preproduction,save_stage)
-        except ModelOutputError as exc:raise ProviderError(str(exc)) from None
-        repairs.extend(extra_repairs)
+    plan,cut,_=segment_stage(payload,passages,task_id,save_stage,treatment)
+    return run_unit(payload,plan,segment_index(plan,payload.get('segment_id')),passages,content,task_id,
+        save_stage,preproduction,model_preproduction,treatment.model_dump())
     if packing:
         from .preproduction import materialize_board_asset_packing,repair_board_assets,validate_board,storyboard_preproduction
         if not payload.get('project_id'):
@@ -626,6 +682,8 @@ class BoardStart(BaseModel):
     confirm_paid:bool=False
     retry_feedback:str|None=Field(default=None,max_length=1200)
     reuse_saved_chunks:bool=False
+    # One episode per task: the caller names the episode this task must produce.
+    segment_id:str|None=Field(default=None,max_length=12)
 @router.post('/projects/{project_id}/storyboard')
 def start_storyboard(project_id:str,body:BoardStart):
     cfg=settings()
@@ -645,14 +703,10 @@ def start_storyboard(project_id:str,body:BoardStart):
         tid=uid('direct')
         t=Task(id=tid,kind='director',payload={'mode':'live','stage':'board','project_id':project_id,'source_id':row.data['source_id'],'source':source,'brief':row.data['brief'],'treatment':row.data['treatment'],'preproduction':prep,'professional_prompts':True,
             **({'retry_feedback':body.retry_feedback} if body.retry_feedback else {}),
-            **({'retry_reuse_chunks':True} if body.reuse_saved_chunks else {}),
             **({'segments':row.data['segments']} if row.data.get('segments') else {}),
-            **({'board_progress':row.data['board_progress']} if row.data.get('board_progress') else {})})
-        # Retain old artifacts separately so a failed remake never destroys them.
-        history=[*row.data.get('board_history',[])]
-        previous={key:row.data.get(key) for key in ('board','review','board_diagnostics') if row.data.get(key) is not None}
-        if previous:history.append({**previous,'version':row.version})
-        history=history[-HISTORY_LIMIT:]
-        row.data={k:v for k,v in row.data.items() if k not in ('board','review','board_diagnostics')}
-        row.data={**row.data,'board_history':history,'requires_preproduction':True,'preproduction_stamp':prep['stamp'],'status':'generating','task_id':tid}
+            **({'segment_id':body.segment_id} if body.segment_id else {}),
+            **({'unit_boards':row.data['units']} if row.data.get('units') else {})})
+        # The episodes already saved stay: this task produces one more of them, so clearing the
+        # board would throw away work that is already paid for.
+        row.data={**row.data,'requires_preproduction':True,'preproduction_stamp':prep['stamp'],'status':'generating','task_id':tid}
         row.version+=1;db.add(t);db.flush();return {'project_id':project_id,'task':task_dict(t)}

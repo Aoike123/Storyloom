@@ -88,7 +88,7 @@ def test_board_repairs_visible_named_character_and_costume_as_separate_reference
     shot['assets']=['actor','costume','restroom']
     repaired,changes=p.repair_board_assets(Board.model_validate(raw),prep)
     assert repaired.shots[0].assets==['actor','costume','restroom','grey-man','grey-coat']
-    assert {change['action'] for change in changes if change['shot_id']=='S01'}=={
+    assert {change['action'] for change in changes if change['shot_id']=='G01-S01'}=={
         'bind_named_character','bind_unique_character_costume'}
     p.validate_board(repaired,prep)
 

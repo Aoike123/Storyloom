@@ -1,4 +1,4 @@
-"""微小说切割节点与分块分区生成分镜的聚焦测试。"""
+"""切割节点与逐情节分镜：每个情节一次调用、一套自己的镜号。"""
 import copy
 import pytest
 from backend import director as d,segments
@@ -18,28 +18,27 @@ def treatment():
     return d.Treatment.model_validate(text)
 
 
-def shot(index,quote,reference,extra=None):
+def shot(shot_id,quote,reference,extra=None):
     item={field:'明确的镜头设计说明' for field in ('scene','dramatic_action','camera','composition','blocking','continuity_in',
         'continuity_out','viewer_knows','character_knows','withhold','sound','transition','reference_prompt','motion_prompt','generation_risk')}
-    item.update(id=f'S{index:02}',purpose='setup',source_ref=reference,source_quote=quote,size='MS',setup_ids=[],
+    item.update(id=shot_id,purpose='setup',source_ref=reference,source_quote=quote,size='MS',setup_ids=[],
         edit_seconds=3,generation_seconds=5,dialogue='',assets=['女主'])
     if extra:item.update(extra)
     return item
 
 
 def two_segment_case(shot_budget=3):
+    """两个情节的原文、切割结果与各自的分镜；镜号在每个情节内重新开始。"""
     text=long_text();passages=d.source_passages(text)
     plan=segment_plan((('P001','P002'),('P003','P004')),shot_budget=shot_budget)
     first=segments.segment_text(plan['segments'][0],passages)
     second=segments.segment_text(plan['segments'][1],passages)
-    # Shots are numbered on the whole-film timeline: the second segment continues at S04.
-    start=shot_budget+1
     chunks={'G01':{'title':'片段一','scope_note':'第一片段','shots':[
-            shot(1,first[:20],'P001'),shot(2,first[20:40],'P002'),
-            shot(3,first[40:60],'P002',{'continuity_out':'人物停在镜面前'})]},
+            shot('G01-S01',first[:20],'P001'),shot('G01-S02',first[20:40],'P002'),
+            shot('G01-S03',first[40:60],'P002',{'continuity_out':'人物停在镜面前'})]},
         'G02':{'title':'片段二','scope_note':'第二片段','shots':[
-            shot(start,second[:20],'P003',{'purpose':'reveal','setup_ids':[],'continuity_in':'镜面异常仍未解释'}),
-            shot(start+1,second[20:40],'P004')]}}
+            shot('G02-S01',second[:20],'P003',{'purpose':'reveal','setup_ids':[],'continuity_in':'镜面异常仍未解释'}),
+            shot('G02-S02',second[20:40],'P004')]}}
     return text,passages,plan,first,second,chunks
 
 
@@ -74,14 +73,18 @@ def test_cutting_node_retries_until_every_passage_is_covered(monkeypatch):
     assert origin=='generated'
     assert '必须连续' in systems[1]
     assert [segment['source_refs'] for segment in cut['segments']]==[['P001','P002'],['P003','P004']]
-    assert cut['shot_total']==6 and cut['segments'][1]['shot_start']==4
+    assert cut['shot_total']==6
     assert cut['segments'][0]['source_text'].startswith('夜色压在')
     assert cut['fingerprint'] and len(cut['fingerprint'])==32
     assert '必须连续' in saved['segment_diagnostics']['attempts'][0]['error']
 
 
-def test_generation_is_partitioned_per_segment_and_merged_with_global_shot_numbers(monkeypatch):
-    text,passages,plan,_,_,chunks=two_segment_case()
+def review_answer():
+    return {'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'}
+
+
+def plan_episode(monkeypatch,text,plan,chunks,segment_id,unit_boards=None,prompts=True):
+    """Run one episode's storyboard task; returns the payloads the model saw and the saved keys."""
     payloads=[];saved={}
     def node(_chat,name,payload,*args,**kwargs):
         if name=='storyboard':
@@ -89,143 +92,41 @@ def test_generation_is_partitioned_per_segment_and_merged_with_global_shot_numbe
         if name=='shot_prompts':
             return {'shots':[{'id':item['id'],'reference_prompt':'静态镜头参考图提示词','motion_prompt':'单镜运动提示词'}
                              for item in payload['board']['shots']]},{}
-        return {'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'},{}
+        return review_answer(),{}
     monkeypatch.setattr(d,'call_node',node)
-    result=d.run_director({'stage':'board','source':{'content':text},'brief':'测试','treatment':treatment().model_dump(),
-                           'segments':plan,'professional_prompts':True},'chunk-node',lambda key,value,progress:saved.update({key:value}))
-    assert result['approved']
-    assert [item['segment']['id'] for item in payloads]==['G01','G02']
-    assert [sorted(item['source_passages']) for item in payloads]==[['P001','P002'],['P003','P004']]
-    assert [item['schema']['properties']['shots']['maxItems'] for item in payloads]==[3,3]
-    assert [item['segment']['shot_start'] for item in payloads]==[1,4]
-    assert payloads[0]['previous_segment'] is None and payloads[0]['next_segment']['segment_id']=='G02'
-    assert payloads[1]['previous_segment']['last_shot_continuity_out']=='人物停在镜面前'
-    assert len(payloads[1]['segment_outline'])==1 and payloads[1]['segment_outline'][0]['id']=='G01'
-    shots=saved['board']['shots']
-    assert [item['id'] for item in shots]==['S01','S02','S03','S04','S05']
-    assert [item['segment_id'] for item in shots]==['G01','G01','G01','G02','G02']
-    assert shots[3]['continuity_in'].startswith('承接 S03（上一片段结尾）')
-    assert shots[3]['setup_ids']==['S03'] and shots[3]['purpose']=='reveal'
-    assert saved['board']['scope_note'].startswith('按微小说切割出的 2 个片段分块生成')
-    assert saved['board_plan']['shots'][0]['reference_prompt']=='明确的镜头设计说明'
-    assert saved['board']['shots'][0]['reference_prompt']=='静态镜头参考图提示词'
+    task={'stage':'board','source':{'content':text},'brief':'测试','treatment':treatment().model_dump(),
+          'segments':plan,'segment_id':segment_id,'professional_prompts':prompts}
+    if unit_boards:task['unit_boards']=unit_boards
+    d.run_director(task,f'node-{segment_id}',lambda key,value,progress:saved.update({key:value}))
+    return payloads,saved
 
 
-def test_cutting_stays_first_and_every_segment_gets_its_own_model_call(monkeypatch):
+def test_each_episode_is_planned_on_its_own_timeline(monkeypatch):
     text,_,plan,_,_,chunks=two_segment_case()
-    seen=[];saved={}
-    def chat(system,payload,*args,**kwargs):
-        kind=payload['schema']['title'];seen.append(kind)
-        if kind=='SegmentPlan':return plan,{}
-        if kind=='Board':return chunks[payload['segment']['id']],{}
-        if kind=='ShotPromptBatch':
-            return {'shots':[{'id':item['id'],'reference_prompt':'静态镜头参考图提示词','motion_prompt':'单镜运动提示词'}
-                             for item in payload['board']['shots']]},{}
-        return {'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'},{}
-    monkeypatch.setattr(d,'chat_json',chat)
-    d.run_director({'stage':'board','source':{'content':text},'brief':'测试','treatment':treatment().model_dump(),
-                    'professional_prompts':True},'order-node',lambda key,value,progress:saved.update({key:value}))
-    assert seen==['SegmentPlan','Board','Board','ShotPromptBatch','ShotPromptBatch','Review']
-    assert saved['segments']['segments'][0]['id']=='G01' and saved['segments']['shot_total']==6
+    first_payloads,first_saved=plan_episode(monkeypatch,text,plan,chunks,'G01')
+    assert [item['segment']['shot_ids'] for item in first_payloads]==[['G01-S01','G01-S02','G01-S03']]
+    assert first_payloads[0]['previous_segment'] is None and first_payloads[0]['next_segment']['segment_id']=='G02'
+    # 第一个情节完成后，合并片只有这一段，镜号就是本情节的镜号。
+    assert [item['id'] for item in first_saved['board']['shots']]==['G01-S01','G01-S02','G01-S03']
+    assert first_saved['board']['scope_note'].startswith('按情节顺序合并；已完成 G01')
+    second_payloads,second_saved=plan_episode(monkeypatch,text,plan,chunks,'G02',first_saved['units'])
+    # 第二个情节从 S01 重新开始编号，只能引用第一个情节里真实存在的镜号。
+    # 允许的镜号是本情节预算内的编号，从 G02-S01 起；实际用几镜由模型决定。
+    assert second_payloads[0]['segment']['shot_ids'][:2]==['G02-S01','G02-S02']
+    assert all(item.startswith('G02-S') for item in second_payloads[0]['segment']['shot_ids'])
+    assert second_payloads[0]['segment']['referenceable_shot_ids']==['G01-S01','G01-S02','G01-S03']
+    assert second_payloads[0]['previous_segment']['last_shot_continuity_out']=='人物停在镜面前'
+    shots=second_saved['board']['shots']
+    assert [item['id'] for item in shots]==['G01-S01','G01-S02','G01-S03','G02-S01','G02-S02']
+    assert shots[3]['continuity_in'].startswith('承接 G01-S03（上一片段结尾）')
+    assert shots[3]['setup_ids']==['G01-S03'] and shots[3]['purpose']=='reveal'
+    assert second_saved['board']['scope_note'].startswith('按情节顺序合并；已完成 G01、G02')
+    assert second_saved['board']['shots'][0]['reference_prompt']=='静态镜头参考图提示词'
 
 
-def test_segment_scoped_retry_reuses_already_validated_segments(monkeypatch):
-    """A retry after one bad segment must not repay for the segments that already passed."""
-    text,passages,plan,_,_,chunks=two_segment_case()
-    calls=[]
-    def node(_chat,name,payload,*args,**kwargs):
-        calls.append((name,payload.get('segment',{}).get('id')))
-        if name=='storyboard':return kwargs['validator'](chunks[payload['segment']['id']]),{}
-        if name=='shot_prompts':
-            return {'shots':[{'id':item['id'],'reference_prompt':'静态镜头参考图提示词','motion_prompt':'单镜运动提示词'}
-                             for item in payload['board']['shots']]},{}
-        return {'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'},{}  # noqa: E501
-    monkeypatch.setattr(d,'call_node',node)
-    request={'stage':'board','source':{'content':text},'brief':'测试','treatment':treatment().model_dump(),
-             'segments':plan,'professional_prompts':True}
-    saved={}
-    d.run_director(request,'first-pass',lambda key,value,progress:saved.setdefault(key,value) if key=='board_progress' else None)
-    first=len([call for call in calls if call[0]=='storyboard'])
-    assert first==2
-
-    saved_progress=saved['board_progress']
-    # Segment G02 fails on the retry; G01 must still be reused instead of regenerated.
-    def node_retry(_chat,name,payload,*args,**kwargs):
-        calls.append((name,payload.get('segment',{}).get('id')))
-        if name=='storyboard':
-            return kwargs['validator'](chunks[payload['segment']['id']]),{}
-        if name=='shot_prompts':
-            return {'shots':[{'id':item['id'],'reference_prompt':'静态镜头参考图提示词','motion_prompt':'单镜运动提示词'}
-                             for item in payload['board']['shots']]},{}
-        return {'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'},{}  # noqa: E501
-    monkeypatch.setattr(d,'call_node',node_retry)
-    calls.clear()
-    retry={**request,'board_progress':saved_progress,'retry_feedback':'G02 上一次分镜输出问题','retry_reuse_chunks':True}
-    d.run_director(retry,'segment-retry',lambda key,value,progress:None)
-    storyboard_calls=[call for call in calls if call[0]=='storyboard']
-    assert [call[1] for call in storyboard_calls]==['G02']
-
-
-def test_whole_board_retry_still_regenerates_every_segment(monkeypatch):
+def test_only_the_episode_being_retried_is_planned_again(monkeypatch):
+    """重试一个情节不会再付一次前面情节的钱。"""
     text,_,plan,_,_,chunks=two_segment_case()
-    calls=[]
-    def node(_chat,name,payload,*args,**kwargs):
-        calls.append((name,payload.get('segment',{}).get('id')))
-        if name=='storyboard':return kwargs['validator'](chunks[payload['segment']['id']]),{}
-        if name=='shot_prompts':
-            return {'shots':[{'id':item['id'],'reference_prompt':'静态镜头参考图提示词','motion_prompt':'单镜运动提示词'}
-                             for item in payload['board']['shots']]},{}
-        return {'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'},{}  # noqa: E501
-    monkeypatch.setattr(d,'call_node',node)
-    saved={}
-    request={'stage':'board','source':{'content':text},'brief':'测试','treatment':treatment().model_dump(),
-             'segments':plan,'professional_prompts':True}
-    d.run_director(request,'first-pass',lambda key,value,progress:saved.setdefault(key,value) if key=='board_progress' else None)
-    calls.clear()
-    retry={**request,'board_progress':saved['board_progress'],'retry_feedback':'整片分镜结构不合格'}
-    d.run_director(retry,'whole-retry',lambda key,value,progress:None)
-    assert [call[1] for call in calls if call[0]=='storyboard']==['G01','G02']
-
-
-def test_validated_chunks_are_reused_instead_of_calling_the_model_again(monkeypatch):
-    text,passages,plan,first,second,_=two_segment_case(shot_budget=2)
-    saved_chunk={'title':'片段一','scope_note':'第一片段','shots':[shot(1,first[:20],'P001'),shot(2,first[20:40],'P002')]}
-    fresh_chunk={'title':'片段二','scope_note':'第二片段','shots':[shot(3,second[:20],'P003'),shot(4,second[20:40],'P004')]}
-    plan_object=segments.plan_from_saved(plan)
-    progress={'fingerprint':segments.plan_fingerprint(plan_object,passages),'preproduction_stamp':None,
-              'segments':segments.plan_dump(plan_object,passages)['segments'],'chunks':{'G01':saved_chunk}}
-    calls=[];saved={}
-    def node(_chat,name,payload,*args,**kwargs):
-        calls.append(name)
-        if name=='storyboard':return kwargs['validator'](copy.deepcopy(fresh_chunk)),{}
-        return {'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'},{}
-    monkeypatch.setattr(d,'call_node',node)
-    d.run_director({'stage':'board','source':{'content':text},'brief':'测试','treatment':treatment().model_dump(),
-                    'segments':plan,'board_progress':progress},'reuse-node',lambda key,value,progress:saved.update({key:value}))
-    assert calls.count('storyboard')==1
-    assert saved['board_chunk_reuse']['segment_ids']==['G01']
-    assert saved['board_progress']['reused']==['G01']
-    assert [item['id'] for item in saved['board']['shots']]==['S01','S02','S03','S04']
-
-
-def board_from(chunk):
-    from backend.director import Board
-    return Board.model_validate(chunk)
-
-
-def test_cross_segment_setup_reference_keeps_its_whole_film_meaning():
-    """A link back to the opening must not be relabelled into this segment's own first shot."""
-    _,_,plan,_,_,chunks=two_segment_case()
-    chunks['G02']['shots'][1]['purpose']='payoff'
-    chunks['G02']['shots'][1]['setup_ids']=['S01']
-    merged=segments.merge_chunks(segments.plan_from_saved(plan),[board_from(chunks['G01']),board_from(chunks['G02'])])
-    assert [shot.id for shot in merged]==['S01','S02','S03','S04','S05']
-    assert merged[4].setup_ids==['S01']
-
-
-def test_segment_that_restarts_numbering_is_rejected_instead_of_relabelled():
-    _,_,plan,_,_,chunks=two_segment_case()
-    chunks['G02']['shots'][0]['id']='S01'
-    chunks['G02']['shots'][1]['id']='S02'
-    with pytest.raises(segments.NumberingError,match='S04'):
-        segments.merge_chunks(segments.plan_from_saved(plan),[board_from(chunks['G01']),board_from(chunks['G02'])])
+    _,first_saved=plan_episode(monkeypatch,text,plan,chunks,'G01')
+    payloads,_=plan_episode(monkeypatch,text,plan,chunks,'G02',first_saved['units'])
+    assert [item['segment']['id'] for item in payloads]==['G02']

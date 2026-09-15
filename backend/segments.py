@@ -114,32 +114,23 @@ def segment_outline(plan,index):
             for position,segment in enumerate(plan.segments) if position!=index]
 
 
-def shot_starts(plan):
-    """Return the 1-based全片起始镜号 of every segment, in plan order."""
-    starts={};number=1
-    for segment in plan.segments:
-        starts[segment.id]=number;number+=segment.shot_budget
-    return starts
+def unit_id(segment):
+    return segment if isinstance(segment,str) else segment.id
 
 
-def shot_ids_for(plan,index,count):
-    """The exact whole-film shot ids one segment's shots must carry.
+def shot_ids_for(segment,count):
+    """The shot ids one episode's shots must carry: local numbering with the episode prefix.
 
-    Every chunk is numbered on the whole-film timeline, so a cross-segment reference can never be
-    mistaken for a local one and the caller never has to relabel a shot silently.
+    Numbering restarts inside every episode, so an episode can be planned, retried and published on
+    its own while the prefix keeps every id unique in the merged film.
     """
-    start=shot_starts(plan)[plan.segments[index].id]
-    return [f'S{start+offset:02}' for offset in range(count)]
+    gid=unit_id(segment)
+    return [f'{gid}-S{offset+1:02}' for offset in range(count)]
 
 
-def earlier_shot_ids(plan,index):
-    """Whole-film ids that exist before this segment and may be referenced as setup."""
-    start=shot_starts(plan)[plan.segments[index].id]
-    return [f'S{number:02}' for number in range(1,start)]
-
-
-class NumberingError(ValueError):
-    """A chunk used shot numbers that do not match the whole-film timeline."""
+def earlier_shot_ids(boards):
+    """Ids that already exist: every shot of the episodes produced before this one."""
+    return [shot.id for board in boards for shot in board.shots]
 
 
 def plan_fingerprint(plan,passages):
@@ -150,10 +141,9 @@ def plan_fingerprint(plan,passages):
 
 def plan_dump(plan,passages):
     """Serializable plan carrying each segment's exact原文 for display and reuse."""
-    starts=shot_starts(plan);data=plan.model_dump()
+    data=plan.model_dump()
     for segment in data['segments']:
         segment['source_text']=segment_text(segment,passages)
-        segment['shot_start']=starts[segment['id']]
     data['shot_total']=sum(segment.shot_budget for segment in plan.segments)
     data['fingerprint']=plan_fingerprint(plan,passages)
     return data
@@ -175,25 +165,18 @@ def shot_windows(shots,limit=MAX_SHOTS_PER_SEGMENT):
 
 
 def merge_chunks(plan,chunks):
-    """Join one storyboard chunk per segment into a single continuous shot list.
+    """Join one finished episode board per episode into the merged film, in episode order.
 
-    Chunks are planned on the whole-film timeline, so merging only labels each shot with its
-    segment and verifies the numbering. A wrong number is reported instead of being relabelled,
-    because relabelling is what silently turned "continues the opening" into "continues this
-    chunk's own first shot".
+    Ids already carry their episode prefix, so merging never renumbers a shot; the only thing that
+    is written here is the continuity pointer from an episode's first shot to the previous one.
     """
     merged=[]
     for index,(segment,chunk) in enumerate(zip(plan.segments,chunks)):
-        expected=shot_ids_for(plan,index,len(chunk.shots))
-        actual=[shot.id for shot in chunk.shots]
-        if actual!=expected:
-            raise NumberingError(f'{segment.id} 的镜号必须按整片时间轴连续编号：应为 {"、".join(expected)}，'
-                                 f'实际是 {"、".join(actual)}。请改用调用方给出的 shot_start 起算的镜号，不要每段都从 S01 重新开始。')
         for position,shot in enumerate(chunk.shots):
             item=shot.model_copy(deep=True)
             item.segment_id=segment.id
-            if position==0 and index>0:
-                previous=shot_ids_for(plan,index-1,len(chunks[index-1].shots))[-1]
+            if position==0 and merged:
+                previous=merged[-1].id
                 prefix=f'承接 {previous}（上一片段结尾）'
                 note=item.continuity_in.strip()
                 if previous not in item.setup_ids and item.purpose in ('reveal','payoff'):

@@ -390,19 +390,31 @@ def run_node(task_id,payload,owner):
         if state=='assets_review':
             _dispatch(task_id,owner,payload,creative.prepare_reference_inputs)
             state='references_ready'
-        if state=='references_ready':_dispatch(task_id,owner,payload,creative.start_storyboard_stage);return False
+        if state=='references_ready':
+            pending=creative.next_storyboard_unit(sid)
+            if pending is None:raise HTTPException(409,'这部作品没有可制作的情节，请重新查看切割结果。')
+            _dispatch(task_id,owner,payload,lambda pid:creative.start_storyboard_stage(pid,pending))
+            return False
         if state=='storyboarding':
+            pending=creative.next_storyboard_unit(sid)
+            if pending is None:
+                # Every episode has a board: lock the film and hand it to the rendering node.
+                creative.finish_storyboard(sid)
+                return _finish(task_id,owner,payload,'rendering')
             with Session() as db:
                 run=db.get(Record,'creative_'+sid);watch=db.get(Task,run.data.get('watch',''))
-            # The node stopped before it could produce a board, so point at the reason it stopped:
-            # a structural error the model can act on, otherwise the task's own message.
-            detail='；'.join(blocking_feedback(db,work,problems=[watch] if watch else [])) or '分镜任务记录缺失'
-            raise HTTPException(409,'分镜生成暂停：'+detail)
-        return _finish(task_id,owner,payload,'rendering')
-    if state=='storyboard_ready':
-        # 分镜通过文本预审后，直接用已审核的项目参考图提交每个镜头的视频。
-        _dispatch(task_id,owner,payload,creative.start_reference_videos);return False
-    result=creative.production.workspace(sid)
-    if not result['shots'] or any(not shot['video_task'] or shot['video_task']['status']!='completed' or not shot['clip'] for shot in result['shots']):
-        raise HTTPException(409,'漫剧生成尚未完成，已有片段保留，请处理未完成的镜头。')
-    return _finish(task_id,owner,payload)
+                # The episode that was in flight did not produce a board, so point at the reason it
+                # stopped: a structural error the model can act on, otherwise the task's own message.
+                detail='；'.join(blocking_feedback(db,work,problems=[watch] if watch else [])) or '分镜任务记录缺失'
+            raise HTTPException(409,f'分镜生成暂停（{pending}）：'+detail)
+    if state in ('storyboard_ready','videos_review'):
+        pending=creative.next_rendering_unit(sid)
+        if pending is None:
+            result=creative.production.workspace(sid)
+            if not result['shots'] or any(not shot['video_task'] or shot['video_task']['status']!='completed' or not shot['clip'] for shot in result['shots']):
+                raise HTTPException(409,'漫剧生成尚未完成，已有片段保留，请处理未完成的镜头。')
+            return _finish(task_id,owner,payload)
+        # Episodes are rendered in order; the next one is submitted only once this one is finished.
+        _dispatch(task_id,owner,payload,lambda pid:creative.start_reference_videos(pid,pending))
+        return False
+    raise HTTPException(409,NODES[phase]['name']+'与当前保存结果不匹配，未继续后续制作。')

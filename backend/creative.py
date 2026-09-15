@@ -205,55 +205,6 @@ def resume_saved_design(db,pid):
     task.message='已恢复保存的美术设计，继续核对原文并准备图片'
 
 
-def resume_saved_storyboard(db,pid):
-    run=db.get(Record,'creative_'+pid)
-    if not run or run.data.get('stage')!='storyboarding':return
-    watch=db.get(Task,run.data.get('watch',''))
-    child=db.get(Task,watch.payload.get('child','')) if watch and watch.kind=='creative_watch' else None
-    project=db.get(Record,pid)
-    if not watch or watch.status not in ('failed','needs_review') or not child or child.kind!='director' or child.status not in ('failed','needs_review'):
-        return
-    if child.payload.get('project_id')!=pid or not project or project.data.get('task_id')!=child.id:
-        raise HTTPException(409,'分镜任务与当前作品不一致，不能恢复。')
-    raw=(project.data.get('board_diagnostics') or {}).get('raw')
-    if raw is None:raise HTTPException(409,'没有完整的已保存分镜结果，不能自动重复提交模型。')
-    try:
-        current=prep.ready(db,pid)
-        if current['stamp']!=child.payload.get('preproduction',{}).get('stamp'):
-            raise HTTPException(409,'已确认素材发生变化，保存的分镜不能继续使用。')
-        board=director.Board.model_validate(raw)
-        repaired,changes=director.repair_board_causality(board)
-        content=child.payload.get('source',{}).get('content','')
-        if not content:raise HTTPException(409,'已保存的分镜任务缺少对应原文，不能安全复用，请重新运行当前节点。')
-        # The saved board carries quotes that were already replaced by real passages, so the
-        # strict invention check applies only to freshly generated boards.
-        director.bind_sources(repaired.shots,director.source_passages(content),'source_quote')
-        structural_issues=director.check_board(repaired,content)
-        if structural_issues:
-            raise HTTPException(409,'已保存分镜仍有结构问题，不能直接复用：'+'；'.join(structural_issues[:5])+'。请使用“重新运行当前节点”，新模型会收到这些原因。')
-        repaired,asset_changes=prep.repair_board_assets(repaired,current);changes.extend(asset_changes)
-        packing=prep.plan_board_asset_packing(repaired,current)
-        prep.validate_board(repaired,current,packing)
-        pairs=[pair for shot_pairs in packing.values() for pair in shot_pairs]
-        if pairs:
-            current,added=prep.add_condensed_reference_alternatives(db,pid,pairs)
-            repaired,packed_changes=prep.repair_board_assets(repaired,current)
-            changes.extend(packed_changes);prep.validate_board(repaired,current)
-        else:added=[]
-    except ValidationError as exc:
-        raise HTTPException(409,'已保存分镜的格式仍不完整，不能自动重复提交模型。') from None
-    except ProviderError as exc:
-        raise HTTPException(409,str(exc)) from None
-    except HTTPException as exc:
-        raise HTTPException(409,str(exc.detail)) from None
-    child.payload={**child.payload,'preproduction':current,'saved_board':repaired.model_dump()}
-    child.status='queued';child.lease=0;child.owner='';child.message='已恢复保存的分镜，正在校正结构与素材绑定并继续专业提示词节点'
-    watch.status='queued';watch.lease=0;watch.owner='';watch.message='已恢复保存的分镜，等待文本预审'
-    project.data={**project.data,'preproduction_stamp':current['stamp'],
-        'board_recovery':{'task_id':child.id,'changes':changes,'conditional_stitching_added':bool(added)}}
-    db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'saved_storyboard_resumed','task_id':child.id,'changes':changes}))
-
-
 def run_design(task_id,payload):
     passages=director.source_passages(payload['source']['content'])
     with Session() as db:
@@ -531,14 +482,14 @@ def prepare_reference_inputs(pid):
     save_run(pid,stage='references_ready',reference_inputs='base_sheets_conditional_stitching_ready')
 
 
-def start_storyboard_stage(pid):
+def start_storyboard_stage(pid,segment_id=None):
+    """Dispatch one episode's storyboard. The node calls this once per episode, in order."""
     with Session() as db:
         version=db.get(Record,pid).version
         saved=get_run(db,pid).data
         retry_feedback=saved.get('storyboard_retry_feedback')
-        reuse_chunks=bool(saved.get('storyboard_reuse_chunks'))
     child=director.start_storyboard(pid,director.BoardStart(
-        version=version,confirm_paid=True,retry_feedback=retry_feedback,reuse_saved_chunks=reuse_chunks))
+        version=version,confirm_paid=True,retry_feedback=retry_feedback,segment_id=segment_id))
     with Session.begin() as db:
         w=Task(id=uid('watch'),kind='creative_watch',payload={'mode':'live','creative_id':pid,'child':child['task']['id'],'step':'board'})
         db.add(w);r=get_run(db,pid)
@@ -556,6 +507,17 @@ def review_notes(project):
     beside the board instead of being handed to the storyboard model.
     """
     if not project:return None
+    units=project.data.get('units') or {}
+    if units:
+        notes=[{'segment_id':gid,**{key:review.get(key) for key in
+                ('approved','issues','continuity','dramatic_logic','editability','production_feasibility')}}
+               for gid,review in ((entry['segment_id'],entry.get('review') or {}) for entry in units.values())]
+        issues=[f'{note["segment_id"]}：{issue}' for note in notes for issue in (note.get('issues') or []) if str(issue).strip()]
+        if all(note.get('approved') for note in notes) and not issues:return None
+        return {'issues':issues,'units':notes,'approved':all(note.get('approved') for note in notes),
+                'continuity':notes[-1].get('continuity'),'dramatic_logic':notes[-1].get('dramatic_logic'),
+                'editability':notes[-1].get('editability'),
+                'production_feasibility':notes[-1].get('production_feasibility'),'at':time.time()}
     review=project.data.get('review') or {}
     issues=[str(issue).strip() for issue in (review.get('issues') or []) if str(issue).strip()]
     if review.get('approved') is not False and not issues:return None
@@ -563,45 +525,92 @@ def review_notes(project):
             'editability':review.get('editability'),'production_feasibility':review.get('production_feasibility'),
             'approved':bool(review.get('approved')),'at':time.time()}
 
-def run_watch(task_id,payload):
-    """Finish one storyboard node: record the text pre-review, then hand the film to rendering.
 
-    The pre-review is a text opinion with no ground truth, so it never sends the film back. It used
-    to raise a retry (twice) and then hand the reviewer's creative notes to the storyboard model as
-    "必须逐条修正", which made the model argue with the reviewer and rewrite the whole film each
-    time. Its findings are recorded for the author instead; re-running the node is an explicit
-    author action.
+def storyboard_units(pid):
+    """The cut in order plus the episodes that already finished, for the node's next step."""
+    with Session() as db:
+        project=db.get(Record,pid);run=get_run(db,pid)
+        cut=(project.data.get('segments') or {}).get('segments') or []
+        done=dict(project.data.get('units') or {})
+        return [segment['id'] for segment in cut],done,run
+
+
+def next_storyboard_unit(pid):
+    """The first episode that still needs a board, or None when the cut is finished."""
+    order,done,_=storyboard_units(pid)
+    return next((gid for gid in order if gid not in done),None)
+
+
+def finish_storyboard(pid):
+    """Every episode has a board: lock the film and hand it to the rendering node."""
+    with Session() as db:
+        version=db.get(Record,pid).version
+        board=director.Board.model_validate(db.get(Record,pid).data['board'])
+    approved=director.approve(pid,director.Approve(version=version,confirm=True,
+        note='系统分镜结构与模型文本预审通过；后续图片仍须管理员审核'))
+    pre=prep.get(pid)['config']
+    old=visual.get_config(pid)['config']
+    visual.save(pid,visual.Visual(expected_version=old['version'] if old else 0,director_version=approved['version'],style=pre['style'],bindings={s.id:s.assets for s in board.shots},states={s.id:s.continuity_in+' → '+s.continuity_out for s in board.shots},approved=True))
+    save_run(pid,stage='storyboard_ready')
+    return approved
+
+def run_watch(task_id,payload):
+    """Close one episode's storyboard task and record what its text pre-review said.
+
+    The pre-review is a text opinion with no ground truth, so it never sends the episode back. It
+    used to raise a retry (twice) and then hand the reviewer's creative notes to the storyboard
+    model as "必须逐条修正", which made the model argue with the reviewer and rewrite the whole film
+    each time. Its findings are recorded for the author instead. Which episode comes next is the
+    storyboard node's decision, not this task's.
     """
     pid=payload['creative_id']
     with Session() as db:
         get_project(db,pid);child=db.get(Task,payload['child'])
         if child.status in BUSY:return False
-        if child.status!='completed':raise ProviderError('自动分镜未完成，请查看导演诊断。已有图片保留。')
+        if child.status!='completed':raise ProviderError('本情节分镜未完成，请查看导演诊断；之前已完成的情节保留。')
         p=db.get(Record,pid)
         notes=review_notes(p)
-        version=p.version;board=director.Board.model_validate(p.data['board'])
     if notes is not None:
         with Session.begin() as db:
             run=get_run(db,pid)
             run.data={**run.data,'storyboard_review_notes':notes}
             db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'storyboard_review_recorded',
-                'approved':notes['approved'],'issues':notes['issues'][:8]}))
-    # Format and semantic text checks succeeded; this is not an image review.
-    approved=director.approve(pid,director.Approve(version=version,confirm=True,note='系统分镜结构与模型文本预审通过；后续图片仍须管理员审核'))
-    pre=prep.get(pid)['config']
-    old=visual.get_config(pid)['config']
-    visual.save(pid,visual.Visual(expected_version=old['version'] if old else 0,director_version=approved['version'],style=pre['style'],bindings={s.id:s.assets for s in board.shots},states={s.id:s.continuity_in+' → '+s.continuity_out for s in board.shots},approved=True))
-    with Session() as db:split=get_run(db,pid).data.get('production_split',False)
-    save_run(pid,stage='storyboard_ready')
-    if not split:start_reference_videos(pid)
+                'approved':notes['approved'],'issues':notes['issues'][:8],'units':p.data.get('units') and sorted(p.data['units'])}))
     return True
 
-def start_reference_videos(pid):
-    """Generate every shot video directly from the reviewed project reference images."""
+def start_reference_videos(pid,segment_id=None):
+    """Submit one episode's shots for video, from the reviewed project reference images.
+
+    Episodes are rendered in order; the rendering node names the episode each time.
+    """
     run=production.workspace(pid)
-    for shot in run['shots']:
+    shots=[shot for shot in run['shots'] if not segment_id or shot['shot'].get('segment_id')==segment_id]
+    if not shots:raise HTTPException(409,'这个情节还没有可提交的镜头。')
+    for shot in shots:
         if not shot['video_task']:production.generate_video(pid,shot['shot']['id'],production.Command(version=run['version'],confirm_paid=True))
     save_run(pid,stage='videos_review')
+
+
+def rendering_state(pid):
+    """Per-episode video progress in cut order: how many shots each episode has, and how many are done."""
+    run=production.workspace(pid)
+    progress={}
+    for shot in run['shots']:
+        gid=shot['shot'].get('segment_id') or ''
+        entry=progress.setdefault(gid,{'shots':0,'finished':0})
+        entry['shots']+=1
+        if shot['video_task'] and shot['video_task']['status']=='completed' and shot['clip']:entry['finished']+=1
+    with Session() as db:
+        project=db.get(Record,pid)
+        order=[segment['id'] for segment in ((project.data.get('segments') or {}).get('segments') or [])]
+    return [(gid,progress.get(gid,{'shots':0,'finished':0})) for gid in order]
+
+
+def next_rendering_unit(pid):
+    """The first episode that still needs video, or None when every episode is rendered."""
+    for gid,state in rendering_state(pid):
+        if state['finished']<state['shots']:return gid
+    return None
 
 class Feedback(BaseModel):
     task_id:str

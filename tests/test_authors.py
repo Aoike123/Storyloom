@@ -148,6 +148,9 @@ def test_author_flow_stops_only_for_assets_and_film(creative,monkeypatch,sample_
     assert a.post('/api/author/projects/work/generate',json={'confirm_paid':True}).status_code==422
     assert a.post('/api/author/projects/work/generate',json={'confirm':True,'confirm_paid':True}).status_code==200
     assert a.post('/api/author/projects/work/generate',json={'confirm':True,'confirm_paid':True}).status_code==409
+    # 情节切割在导演阐述阶段完成，这里直接装入真实流程会产出的结果。
+    with Session.begin() as db:
+        project=db.get(Record,'pid');project.data={**project.data,'segments':segment_plan()}
     # A single-character shot stays as three separate identity, costume, and scene references.
     worker.process_one('author-test')
     pre=pp.get('pid')['config'];b=board()
@@ -157,7 +160,7 @@ def test_author_flow_stops_only_for_assets_and_film(creative,monkeypatch,sample_
     packed=[aid for aid,spec in pre['assets'].items() if spec['role']=='character' and spec.get('costume_asset_id')]
     assert packed==[]
     for shot in b['shots']:shot['assets']=[identity,costume,scene]
-    answers=iter([segment_plan(),b,{'shots':[{k:s[k] for k in ('id','first_frame','motion_prompt')} for s in b['shots']]},{'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'}])
+    answers=iter([b,{'shots':[{k:s[k] for k in ('id','first_frame','motion_prompt')} for s in b['shots']]},{'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'}])
     monkeypatch.setattr(d,'chat_json',lambda *args:(next(answers),{}))
     # Advance supervisor leases without sleeping or calling any paid provider.
     from sqlalchemy import select

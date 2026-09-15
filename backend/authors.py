@@ -446,8 +446,8 @@ def resume(pid: str):
             if stopped_stage_media(db,row):
                 raise HTTPException(409,'当前节点还有停下的画面或片段：请用「重试本节点」带上错误重跑，'
                                         '或用「重做本节点」删除本轮记录后重新开始。')
-            if row.data['stage']=='storyboarding' and row.data.get('director_id'):
-                creative.resume_saved_storyboard(db,row.data['director_id'])
+            # Continuing a storyboard node only re-queues the coordinator: it picks up the next
+            # episode that still needs a board and reuses every episode already saved.
             queue_node(db,row,row.data['stage'])
     return {'queued':True}
 

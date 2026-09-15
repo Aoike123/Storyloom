@@ -10,16 +10,26 @@ from test_creative import creative as _creative_fixture  # noqa: F401  (register
 
 
 def test_storyboard_finishes_before_any_image_or_video_is_started(monkeypatch):
+    """分镜节点在全部情节完成后才收尾并交给漫剧节点，期间不生成任何图片或视频。"""
     with Session.begin() as db:
         work=Record(id='work',kind='author_project',data={'director_id':'director','stage':'storyboarding','run_id':'a'})
         db.add(work)
-        db.add(Record(id='director',kind='director',data={'board':{'shots':[{'id':'S01'},{'id':'S02'}]}}))
-        db.add(Record(id='creative_director',kind='creative_run',data={'stage':'storyboard_ready','items':[]}))
+        db.add(Record(id='director',kind='director',data={
+            'board':{'shots':[{'id':'G01-S01'},{'id':'G01-S02'}]},
+            'segments':{'segments':[{'id':'G01'}]},
+            'units':{'G01':{'segment_id':'G01'}},
+        }))
+        db.add(Record(id='creative_director',kind='creative_run',data={'stage':'storyboarding','items':[]}))
         db.flush();task=queue_node(db,work,'storyboarding');task.status='running';task.owner='owner';task_id=task.id;payload=dict(task.payload)
-    monkeypatch.setattr(creative,'start_reference_videos',lambda pid:pytest.fail('The storyboard node must not render'))
+    monkeypatch.setattr(creative,'start_reference_videos',lambda pid,segment_id=None:pytest.fail('The storyboard node must not render'))
+    # 收尾本身（锁定参考图、写 visual 配置）由其他测试覆盖；这里只验证节点在收尾前不发起任何生成。
+    def finish(pid):
+        with Session.begin() as db:
+            run=db.get(Record,'creative_'+pid);run.data={**run.data,'stage':'storyboard_ready'}
+    monkeypatch.setattr(creative,'finish_storyboard',finish)
     assert run_node(task_id,payload,'owner')
     with Session() as db:
-        assert db.get(Task,task_id).result['output_ids']==['S01','S02']
+        assert db.get(Task,task_id).result['output_ids']==['G01-S01','G01-S02']
         assert db.get(Record,'work').data['stage']=='rendering'
         assert not list(db.scalars(select(Task).where(Task.kind.in_(['image','video']))))
     assert list(NODES)==['storyboarding','rendering']
@@ -133,25 +143,21 @@ def test_budget_and_provider_blocks_still_skip_automatic_recovery():
         assert worker.is_retryable_failure(message) is True
 
 
-def test_a_rejected_pre_review_never_blocks_the_film(_creative_fixture,monkeypatch):
-    """A strict text review must not strand a film that is otherwise ready to render.
+def test_a_rejected_pre_review_is_recorded_and_the_unit_continues(_creative_fixture,monkeypatch):
+    """A strict text review must not strand an episode that is otherwise ready to render.
 
     The review used to raise twice before giving way, which spent two full storyboard regenerations
-    on opinions. Now it records its findings and the film continues on the first pass.
+    on opinions. Now it records its findings and the episode's board stands.
     """
-    from backend import creative as c, director as d
+    from backend import creative as c
     from test_director import board as sample_board
-    issues=['S02 与 S03 之间缺少反应镜头']
-    monkeypatch.setattr(d,'approve',lambda pid,body:{'id':pid,'version':2})
-    monkeypatch.setattr(c.visual,'get_config',lambda pid:{'config':None})
-    monkeypatch.setattr(c.visual,'save',lambda pid,body:None)
-    monkeypatch.setattr(c.prep,'get',lambda pid:{'config':{'style':'固定二维漫画画风和冷色光线'}})
-    monkeypatch.setattr(c,'start_reference_videos',lambda pid:None)
+    issues=['G01-S02 与 G01-S03 之间缺少反应镜头']
     with Session.begin() as db:
         project=db.get(Record,'pid')
         project.data={**project.data,'board':sample_board(),
-            'review':{'approved':False,'issues':issues,'continuity':'缺少反应镜头',
-                      'dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'},
+            'units':{'G01':{'segment_id':'G01','board':sample_board(),
+                'review':{'approved':False,'issues':issues,'continuity':'缺少反应镜头',
+                          'dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'}}},
             'status':'pending_review','version':1}
         db.add(Task(id='watch-child',kind='director',status='completed',payload={'creative_id':'pid'},
                     result={'project_id':'pid'}))
@@ -162,13 +168,13 @@ def test_a_rejected_pre_review_never_blocks_the_film(_creative_fixture,monkeypat
     assert c.run_watch('watch-task',{'creative_id':'pid','child':'watch-child'}) is True
     with Session() as db:
         run=db.get(Record,'creative_pid')
-        assert run.data['storyboard_review_notes']['issues']==issues
-        assert run.data['storyboard_review_notes']['continuity']=='缺少反应镜头'
-        assert run.data['storyboard_review_notes']['approved'] is False
-        assert run.data['stage']=='storyboard_ready'
+        notes=run.data['storyboard_review_notes']
+        assert notes['issues']==['G01：'+issues[0]] and notes['approved'] is False
+        # The episode itself is untouched: only the reviewer's opinion was recorded.
+        assert db.get(Record,'pid').data['units']['G01']['review']['issues']==issues
         audit=[row for row in db.query(Record).filter(Record.kind=='audit').all()
                if row.data.get('action')=='storyboard_review_recorded']
-        assert audit and audit[0].data['issues']==issues
+        assert audit and audit[0].data['issues']==['G01：'+issues[0]]
 
 
 def test_automatic_board_repairs_are_named_instead_of_silent():

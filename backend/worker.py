@@ -226,6 +226,7 @@ def run_task(task_id,owner):
                     'board_chunk_diagnostics':'该片段的分镜输出问题已保存，正在片段内自动重试',
                     'board_progress':'已保存通过校验的片段分镜，正在继续其它片段',
                     'board_chunk_reuse':'部分片段沿用已通过校验的分镜，未重复调用模型',
+                    'units':'本情节分镜已保存，正在继续下一个情节',
                 }.get(key,'分镜制作进度已保存')
                 if key=='board_repairs':message=repair_message(value)
                 project.data={**project.data,'events':bounded(project.data.get('events'),{'at':time.time(),'message':message},EVENT_LIMIT)}
