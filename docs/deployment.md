@@ -280,8 +280,10 @@ bash scripts/reset-production.sh --yes
 
 This is a full application reset: it removes every login session, account wallet, work, task,
 public release, database-backed cache and generated media file. It also discards the old web/API
-containers and rebuilds them without the Docker build cache, so stale frontend or backend bundles
-cannot survive the reset. Users sign in again as new accounts after it completes.
+containers and rebuilds the checked-out frontend and backend source, so stale runtime bundles
+cannot survive the reset. Immutable dependency layers may be reused; they contain installed
+packages rather than account or application data and avoid downloading every package again on a
+bandwidth-limited server. Users sign in again as new accounts after it completes.
 
 Before deleting anything, the script stops public traffic and workers and writes a PostgreSQL dump
 plus the complete application data volume to `backups/pre-reset-<timestamp>/`. It preserves

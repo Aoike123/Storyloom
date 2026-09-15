@@ -79,9 +79,12 @@ for target in root.glob("story.db*"):
     resolved.unlink()
 '
 
-echo "Discarding old application containers and rebuilding without the frontend/backend build cache..."
+echo "Discarding old application containers and rebuilding the current frontend/backend source..."
 "${compose[@]}" rm --force caddy web api worker
-"${compose[@]}" build --no-cache api web
+# Runtime data and application caches were removed above. Reusing immutable dependency layers is
+# safe and avoids downloading every Python/npm package again on a bandwidth-limited server; the
+# later source COPY layers are invalidated automatically whenever the checked-out code changes.
+"${compose[@]}" build api web
 "${compose[@]}" up --detach --force-recreate --remove-orphans --wait
 "${compose[@]}" ps
 
