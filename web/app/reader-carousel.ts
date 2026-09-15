@@ -35,3 +35,9 @@ export function circularOffset(index: number, current: number, length: number) {
   const backward = forward - length;
   return Math.abs(backward) < Math.abs(forward) ? backward : forward;
 }
+
+/** The cover one step away in a direction, wrapping at either end. */
+export function adjacentId(items: {id: string}[], current: number, direction: 1 | -1) {
+  if (items.length < 2) return '';
+  return items[wrapIndex(current + direction, items.length)]?.id || '';
+}

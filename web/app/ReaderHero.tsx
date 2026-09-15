@@ -1,12 +1,13 @@
 'use client';
 
 import Link from './ReaderLink';
+import {useRef} from 'react';
 import type {CSSProperties} from 'react';
 import {ArrowDown, ArrowRight, Clapperboard, Sparkles} from 'lucide-react';
 import ReaderArtwork from './ReaderArtwork';
 import ReaderCreatorAvatar from './ReaderCreatorAvatar';
 import {canWatch, productionLink, reducedMotion} from './reader-types';
-import {circularOffset} from './reader-carousel';
+import {adjacentId, circularOffset} from './reader-carousel';
 import type {CatalogItem} from './reader-types';
 
 type Props = {
@@ -23,6 +24,15 @@ export default function ReaderHero({items, loading, activeId, onActiveChange, on
 
   function activate(id: string) {
     if (id !== activeId) onActiveChange(id);
+  }
+
+  // Touch screens have no hover, so the deck rotates by swipe instead of stealing the first tap.
+  // A card's first tap always enters that story; arrow keys provide the same control on keyboards.
+  // ``movedAt`` suppresses the synthetic click that follows a completed swipe.
+  const gesture = useRef({x: 0, y: 0, movedAt: 0});
+  function step(direction: 1 | -1) {
+    const id = adjacentId(items, current, direction);
+    if (id) activate(id);
   }
 
   return <section className="reader-hero catalog-hero reader-browse-hero" aria-labelledby="reader-welcome">
@@ -47,7 +57,23 @@ export default function ReaderHero({items, loading, activeId, onActiveChange, on
     <div className="reader-cover-stage">
       {loading && !items.length ? <div className="reader-cover-skeleton" aria-label="正在准备故事封面" role="status">
         <i/><i/><i/><span className="feedback-sr-only">正在准备故事封面</span>
-      </div> : items.length ? <ol className="reader-cover-deck" aria-label="循环翻看故事封面" aria-roledescription="轮播图" data-count={items.length}>
+      </div> : items.length ? <ol className="reader-cover-deck" aria-label="循环翻看故事封面" aria-roledescription="轮播图" data-count={items.length}
+        onKeyDown={event => {
+          if (event.key === 'ArrowLeft') {event.preventDefault(); step(-1);}
+          else if (event.key === 'ArrowRight') {event.preventDefault(); step(1);}
+        }}
+        onTouchStart={event => {
+          const point = event.touches[0];
+          if (point) gesture.current = {...gesture.current, x: point.clientX, y: point.clientY};
+        }}
+        onTouchEnd={event => {
+          const point = event.changedTouches[0];
+          if (!point) return;
+          const dx = point.clientX - gesture.current.x, dy = point.clientY - gesture.current.y;
+          if (Math.abs(dx) < 42 || Math.abs(dx) <= Math.abs(dy)) return;
+          gesture.current.movedAt = Date.now();
+          step(dx < 0 ? 1 : -1);
+        }}>
         {items.map((item, index) => {
           const playable = canWatch(item);
           const focusKey = 'hero:' + item.id;
@@ -70,11 +96,7 @@ export default function ReaderHero({items, loading, activeId, onActiveChange, on
               aria-current={offset === 0 ? 'true' : undefined}
               onFocus={() => activate(item.id)}
               onClick={event => {
-                if (offset !== 0) {
-                  event.preventDefault();
-                  activate(item.id);
-                  return;
-                }
+                if (Date.now() - gesture.current.movedAt < 450) {event.preventDefault(); return;}
                 if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && playable) {
                   event.preventDefault();
                   onOpen(item, focusKey);

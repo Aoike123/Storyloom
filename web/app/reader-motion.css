@@ -16,7 +16,7 @@
 .reader-browse-all:hover svg{transform:translateY(2px)}
 .reader-cover-stage{--cover-width:244px;width:100%;max-width:720px;justify-self:end;height:306px;min-width:0;position:relative}
 .reader-cover-stage:before{content:'';position:absolute;z-index:0;width:310px;height:255px;left:50%;top:25px;translate:-50% 0;border-radius:50%;background:radial-gradient(ellipse,#b9d69b18 0,#77906c0c 42%,transparent 72%);filter:blur(8px);pointer-events:none}
-.reader-cover-deck{list-style:none;margin:0;padding:0;position:relative;height:306px;width:100%;isolation:isolate;perspective:1000px;transform-style:preserve-3d}
+.reader-cover-deck{list-style:none;margin:0;padding:0;position:relative;height:306px;width:100%;isolation:isolate;perspective:1000px;transform-style:preserve-3d;touch-action:pan-y}
 .reader-cover-slot{--cover-lift:0px;--cover-focus-lift:0px;--cover-focus-scale:0;position:absolute;width:var(--cover-width);height:306px;left:50%;top:0;opacity:var(--cover-opacity);transform:translate3d(calc(-50% + var(--cover-x)),0,0);transition:transform .58s cubic-bezier(.22,1,.36,1),opacity .32s ease,visibility 0s;backface-visibility:hidden;contain:layout style}
 .reader-cover-slot:not(.is-distant){will-change:transform,opacity}
 .reader-cover-slot.is-distant{visibility:hidden;pointer-events:none;transition:transform .58s cubic-bezier(.22,1,.36,1),opacity .2s ease,visibility 0s .58s}
