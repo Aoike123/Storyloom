@@ -399,7 +399,7 @@ export default function ReaderExperience() {
       <section id="reader-shelf" className="reader-shelf">
         <div className="reader-section-title catalog-market-head">
           <div className="catalog-market-copy"><span className="reader-kicker">STORY MARKET</span><h2>故事市场</h2>
-            <p>看公开版本，临时改写一段；也可以从同一篇原作开始，制作属于你的完整漫剧。</p>
+            <p>观看公开版本并临时改写，或从同一篇原作开始，制作你的完整漫剧。</p>
           </div>
           {catalog ? <div className="catalog-summary" aria-label={`${catalog.brainstorm_count} 篇原作，${productionTotal} 个公开版本`}>
             <span><strong>{catalog.brainstorm_count}</strong> 篇原作</span><i/><span><strong>{productionTotal}</strong> 个公开版本</span>
@@ -408,7 +408,7 @@ export default function ReaderExperience() {
         <div className="catalog-toolbar">
           <div className="catalog-filters" aria-label="筛选故事市场">{[['ready', '正在放映'], ['pending', '等待创作'], ['all', '全部原作']].map(([value, label]) =>
             <button key={value} aria-pressed={filter === value} className={filter === value ? 'selected' : ''} onClick={() => setFilter(value)}>{label}</button>)}</div>
-          <label className="catalog-search"><Search size={16}/><input aria-label="搜索原作" placeholder="搜索原作标题或简介" value={searchInput}
+          <label className="catalog-search"><Search size={16}/><input aria-label="搜索原作" placeholder="搜索标题或简介" value={searchInput}
             onCompositionStart={() => {composing.current = true;}}
             onCompositionEnd={event => {composing.current = false; setQuery(event.currentTarget.value);}}
             onChange={event => {setSearchInput(event.target.value); if (!composing.current) setQuery(event.target.value);}}/></label>
