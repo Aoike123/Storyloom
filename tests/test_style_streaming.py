@@ -21,13 +21,14 @@ def delta(content='', **extra):
 
 
 @pytest.fixture
-def setup_stream(client, monkeypatch):
+def setup_stream(client, monkeypatch, sign_in):
     for key, value in {
         'LLM_BASE_URL': 'https://models.example.test/v1', 'LLM_MODEL': 'main-model',
         'LLM_FAST_MODEL': 'style-model', 'LLM_API_KEY': 'test-key',
         'LLM_FAST_MAX_TOKENS': '2048', 'ALLOW_PAID_CALLS': 'true',
     }.items():
         monkeypatch.setenv(key, value)
+    sign_in()
     with Session.begin() as db:
         db.add(Record(id='stream-source', kind='story_source', data={'content': '故事原文'}))
         db.add(Record(id='stream-work', kind='author_project', data={'source_id': 'stream-source', 'stage': 'style'}))

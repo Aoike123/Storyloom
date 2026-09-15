@@ -45,16 +45,21 @@ def begin_login(client, next=None):
     return query['state'][0]
 
 
-def test_login_reports_configuration_state(client, monkeypatch):
+def test_login_reports_configuration_state(client, monkeypatch, sign_in):
     monkeypatch.delenv('ZHIHU_OAUTH_APP_ID', raising=False)
     monkeypatch.delenv('ZHIHU_OAUTH_APP_KEY', raising=False)
     monkeypatch.delenv('ZHIHU_OAUTH_REDIRECT_URI', raising=False)
     body = client.get('/api/zhihu/status').json()
     assert body['configured'] is False and body['authorized'] is False
     assert body['account'] is None and body['wallet'] is None
-    # Local runs pay with the operator's own keys, so a browser can generate without signing in.
-    assert body['can_generate'] is True and body['own_keys'] is False
+    # Without a payer nothing may be generated, whatever the deployment is.
+    assert body['can_generate'] is False and body['own_keys'] is False
     assert client.get('/api/zhihu/login', follow_redirects=False).status_code == 409
+    # A signed-in account with beans can generate; the browser reports it from the payer session.
+    sign_in()
+    signed_in = client.get('/api/zhihu/status').json()
+    assert signed_in['authorized'] is True and signed_in['can_generate'] is True
+    assert signed_in['wallet']['beans']
 
 
 def test_successful_login_stores_account_and_keeps_the_token_server_side(client, zhihu):

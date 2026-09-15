@@ -22,21 +22,22 @@ class ModelOutputError(ProviderError):
 
 def settings():
     cfg=model_config()
-    paid=cfg.get('ALLOW_PAID_CALLS','false').lower()=='true'
+    # Payability is decided by the payer session, not by the configuration file: a deployment whose
+    # keys are configured still refuses every call until the browser signs in or attaches its own.
     scoped=access_paid_states()
-    if scoped is not None:paid=scoped['all']
+    paid=scoped['all']
     result={'llm_configured':all(cfg.get(k) for k in ['LLM_BASE_URL','LLM_MODEL','LLM_API_KEY']),
             'image_configured':cfg.get('IMAGE_PROVIDER')=='siliconflow' and all(cfg.get(k) for k in ['IMAGE_ENDPOINT','IMAGE_MODEL','IMAGE_API_KEY']),
             'image_model':cfg.get('IMAGE_MODEL',''),
             'video_configured':all(cfg.get(k) for k in ['VIDEO_ENDPOINT','VIDEO_MODEL','VIDEO_API_KEY']),
             'llm_model':cfg.get('LLM_MODEL',''), 'video_model':cfg.get('VIDEO_MODEL',''),
             'paid_enabled':paid,
-            **{f'{kind}_paid_enabled':scoped[kind] if scoped is not None else paid for kind in ('llm','image','video')},
+            **{f'{kind}_paid_enabled':scoped[kind] for kind in ('llm','image','video')},
             'config_file':env_file().name,'llm_fast_model':cfg.get('LLM_FAST_MODEL') or cfg.get('LLM_MODEL',''),
             'image_adapter':'硅基流动文生图',
             'video_adapter':('MiniMax H3 V2' if cfg.get('VIDEO_PROVIDER','ark')=='minimax' else '火山方舟 Tasks（待真实验证）')}
     if not public_demo_mode():result['editable']={k:v for k,v in cfg.items() if not k.endswith('_API_KEY')}
-    if access_paid_states() is not None and (state := _account_bean_balance()) is not None:
+    if (state := _account_bean_balance()) is not None:
         result['account_beans']=state
     return result
 

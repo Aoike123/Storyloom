@@ -44,7 +44,7 @@ IPv6 is configured on the server. Allow inbound TCP 22, 80, and 443, plus UDP
 Caddy obtains and renews HTTPS certificates after DNS points at the server and
 ports 80/443 are reachable. Its certificate state lives in a named volume.
 
-## 2. Configure secrets and the shared pool
+## 2. Configure secrets and the operator's provider keys
 
 Clone the repository, then create the production environment file:
 
@@ -98,10 +98,11 @@ before inviting sustained traffic.
 
 ## Zhihu account login
 
-Signed-in visitors spend **compute beans** instead of the anonymous shared pool, so one visitor
-cannot consume the whole day's budget. Anonymous visitors keep using the pool or their own keys.
-The two paths are independent: beans come from the operator's keys, and a visitor whose beans run
-out can switch to their own keys at `/<setup>` at any time.
+Signed-in visitors spend **compute beans** instead of an anonymous pool, so one visitor cannot
+consume the whole day's budget. There is no third way: a browser that is neither signed in nor
+carrying its own keys cannot generate at all, and the operator's keys stay out of its reach. The
+two paths are independent: beans come from the operator's keys, and a visitor whose beans run out
+can switch to their own keys at `/<setup>` at any time.
 
 ### One-time setup
 

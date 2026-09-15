@@ -84,12 +84,32 @@ def test_a_browser_without_a_payer_is_told_both_ways_forward(client, monkeypatch
         model_access.authorize_call("llm")
 
 
-def test_local_mode_keeps_working_without_a_payer(client, monkeypatch):
-    """A developer running the app locally is not asked to sign in."""
+def test_a_local_run_also_requires_a_payer(client, monkeypatch):
+    """A dev deployment must not spend the pool for a browser that neither signed in nor brought keys.
+
+    The gate used to be lifted whenever STORYLOOM_DEMO_MODE was not "public", so anyone who reached
+    a dev server could generate on the operator's keys. Now the gate only depends on the payer.
+    """
     monkeypatch.setenv("STORYLOOM_DEMO_MODE", "local")
+    monkeypatch.setenv("LLM_API_KEY", "operator-key")
+    assert model_access.has_payer() is False
+    message = model_access.payer_requirement_message()
+    assert "知乎账号登录" in message and "自己的 API Key" in message
+    with pytest.raises(model_access.ModelAccessError, match="登录"):
+        model_access.authorize_call("llm")
+    # The operator's credentials are cleared and the paid switch is off for this browser.
+    cfg = model_config()
+    assert cfg["LLM_API_KEY"] == "" and cfg["ALLOW_PAID_CALLS"] == "false"
+
+
+def test_a_local_payer_can_still_generate(client, monkeypatch, payer):
+    """Signing in locally works exactly like it does on the hosted demo."""
+    monkeypatch.setenv("STORYLOOM_DEMO_MODE", "local")
+    monkeypatch.setenv("LLM_API_KEY", "operator-key")
     assert model_access.has_payer() is True
     assert model_access.payer_requirement_message() is None
-    assert model_access.authorize_call("llm") == {"mode": "local"}
+    assert model_access.authorize_call("llm")["mode"] == "account"
+    assert model_access.access_paid_state() is True
 
 
 def test_a_refused_operator_key_is_remembered_for_the_day(client, monkeypatch):

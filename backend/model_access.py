@@ -216,9 +216,6 @@ def current_signed_in_uid() -> str | None:
 
 def has_payer() -> bool:
     """Whether this browser can pay for a generation call at all."""
-    if not public_demo_mode():
-        # A local run uses the operator's own configured keys, so there is nothing to gate.
-        return True
     record = _access_record()
     if not record:
         return False
@@ -233,8 +230,6 @@ def has_payer() -> bool:
 def payer_requirement_message() -> str | None:
     """Explain how to become able to generate, or None when this browser already can."""
     if has_payer():
-        return None
-    if not public_demo_mode():
         return None
     return "请先用知乎账号登录领取算力豆；如果要用自己的额度，请在右上角的账号面板里填写自己的 API Key。"
 
@@ -336,13 +331,18 @@ def _locked_config(base: dict[str, str] | None = None) -> dict[str, str]:
 
 def effective_model_config(base: dict[str, str]) -> dict[str, str]:
     """Overlay the active session without mutating global settings."""
+    # A hosted deployment pins the transport target and model so a visitor's key can never be sent
+    # somewhere else. A local run owns its configuration and keeps whatever it set.
+    configured = {**base, **_locked_config(base)} if public_demo_mode() else dict(base)
     record = _access_record()
     if not record:
-        if not public_demo_mode():
-            return base
-        return {**base, **_locked_config(base), "ALLOW_PAID_CALLS": "false"}
+        # No payer means no call, in every deployment: without a signed-in account or attached own
+        # keys the operator's credentials are cleared, so a browser cannot spend the pool just by
+        # reaching the service. Local development asks for a payer exactly like the hosted demo.
+        configured.update({key: "" for key in _KEY_FIELDS})
+        configured["ALLOW_PAID_CALLS"] = "false"
+        return configured
 
-    configured = {**base, **_locked_config(base)}
     if record.get("mode") == "own":
         try:
             visitor = _decrypt_keys(str(record.get("credentials", "")))
@@ -422,8 +422,6 @@ def _reserve_account_call(record: dict, kind: str, duration_seconds=None, task_i
 def authorize_call(kind: str, duration_seconds=None, task_id: str | None = None) -> dict:
     record = _access_record()
     if not record:
-        if not public_demo_mode():
-            return {"mode": "local"}
         raise ModelAccessError("请先用知乎账号登录领取算力豆，或填写自己的 API Key。")
     mode = record.get("mode")
     if mode == "own":
@@ -457,13 +455,11 @@ def affordable_shot_budget() -> tuple[int, str] | None:
     return (limit, f"算力豆剩余可支持 {limit} 个镜头")
 
 
-def access_paid_states() -> dict[str, bool] | None:
-    """Per-kind payability for the current session. None means "not governed here" (local mode)."""
+def access_paid_states() -> dict[str, bool]:
+    """Per-kind payability for the current session: every call is paid for by somebody."""
     record = _access_record()
     if not record:
-        if public_demo_mode():
-            return {"all": False, **{kind: False for kind in _KINDS}}
-        return None
+        return {"all": False, **{kind: False for kind in _KINDS}}
     mode = record.get("mode")
     if mode == "own":
         return {"all": True, **{kind: True for kind in _KINDS}}
@@ -475,9 +471,8 @@ def access_paid_states() -> dict[str, bool] | None:
     return {"all": False, **{kind: False for kind in _KINDS}}
 
 
-def access_paid_state() -> bool | None:
-    states = access_paid_states()
-    return states["all"] if states is not None else None
+def access_paid_state() -> bool:
+    return access_paid_states()["all"]
 
 
 def fixed_providers() -> list[dict[str, str]]:
