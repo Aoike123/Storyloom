@@ -55,7 +55,9 @@ echo "Clearing all application rows..."
   --command 'TRUNCATE TABLE tasks, records RESTART IDENTITY CASCADE;'
 
 echo "Clearing generated media and server-side application caches..."
-"${compose[@]}" run --rm --no-deps -T --user 0 --entrypoint python api -c '
+# Keep the service account here. The hardened service drops every root capability, while the
+# persistent volume is intentionally owned by the Storyloom service user that created the files.
+"${compose[@]}" run --rm --no-deps -T --entrypoint python api -c '
 from pathlib import Path
 import shutil
 
