@@ -29,6 +29,21 @@
 .asset-redesign .checkbox{margin:16px 0 5px;color:#526c42}
 .asset-redesign .asset-redesign-note{font-size:10px;color:#8b997c}
 .asset-feedback-permission{margin:10px 0;color:#526c42!important}.asset-feedback-note{display:block;margin-top:5px;color:#7c8c6e;font-size:11px;line-height:1.8}
+
+/* Zhihu account sign-in and bean balance */
+.zhihu-account{margin:0 0 18px;padding:16px 18px;border:1px solid #d7e2ca;border-radius:10px;background:#f7faf1}
+.zhihu-account-heading{display:flex;align-items:center;gap:10px;color:#4c6440}
+.zhihu-account-heading strong{font-size:15px;font-weight:600}
+.zhihu-account-heading small{display:block;margin-top:2px;color:#7c8c6e;font-size:11px}
+.zhihu-account-avatar{width:34px;height:34px;border-radius:50%;object-fit:cover;background:#e4ecda}
+.zhihu-account-beans{margin-left:auto;padding:4px 10px;border-radius:999px;background:#e6efd8;color:#4c6440;font-size:12px;font-weight:600;white-space:nowrap}
+.zhihu-account-beans.is-low{background:#f6e3d5;color:#8a5a34}
+.zhihu-account-note{margin:10px 0 0;color:#7c8c6e;font-size:12px;line-height:1.8}
+.zhihu-account-warning{display:flex;align-items:flex-start;gap:6px;margin:10px 0 0;color:#8a5a34;font-size:12px;line-height:1.8}
+.zhihu-account-warning svg{flex-shrink:0;margin-top:3px}
+.zhihu-account-actions{display:flex;gap:10px;margin-top:12px}
+.zhihu-account .button{margin:0}
+.studio-notice{margin:0 0 14px;padding:10px 14px;border:1px solid #c9dcb4;border-left:4px solid #6f9a52;border-radius:8px;background:#f2f8e9;color:#4c6440;font-size:12px}
 @media(max-width:950px){.asset-redesign-heading{align-items:flex-start;flex-direction:column;gap:14px}.asset-redesign-action{max-width:none}.asset-redesign-action .button{min-height:44px}}
 
 .studio-asset-grid{align-items:start}

@@ -15,23 +15,51 @@ import AttemptHistory from './AttemptHistory';
 import ImageRecovery from './ImageRecovery';
 import AssetFeedback from './AssetFeedback';
 import useModelPermission from './useModelPermission';
+import ZhihuAccount from './ZhihuAccount';
 import NodeSkillsPanel from '../NodeSkills';
 import {clearModelAccess,modelAccessHeaders,modelSetupLink,readModelAccess} from '../model-access';
+import {emptyZhihuStatus,readZhihuStatus,zhihuNotice,type ZhihuStatus} from '../zhihu-account';
 async function api(path:string,body?:unknown,signal?:AbortSignal){const headers=modelAccessHeaders();const r=await fetch('/api/author'+path,body===undefined?{headers,signal}:{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body),signal});const d=await r.json();if(r.status===401&&typeof window!=='undefined'){clearModelAccess();window.location.href=modelSetupLink(window.location.pathname+window.location.search);}if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:'暂时无法完成操作，请稍后再试。');return d;}
 const stages:Record<string,string>={style:'先为这个故事，选择一种气质。',preparing:'故事中的人物，正在走向画面。',assets_review:'这些形象，符合你的想象吗？',producing:'从静止的画面，到会动的故事。',compositing:'让人物、服装和场景对上。',storyboarding:'这段故事，拆成怎样的镜头？',rendering:'让分镜真正动起来。',film_review:'最后一次审片，让故事准备好登场。',published:'这段脑洞，已经有了画面。'};
 export default function Author(){
  const [accessReady,setAccessReady]=useState(false);
  const [works,setWorks]=useState<any[]>([]),[selected,setSelected]=useState(''),[work,setWork]=useState<any>(null),[opening,setOpening]=useState(true);
  const [art,setArt]=useState(''),[tone,setTone]=useState(''),[confirmed,setConfirmed]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[messageError,setMessageError]=useState(false),[syncError,setSyncError]=useState(''),[updated,setUpdated]=useState('');
+ const [zhihu,setZhihu]=useState<ZhihuStatus|null>(emptyZhihuStatus);
+ const [zhihuBusy,setZhihuBusy]=useState(false);
+ const [zhihuFlag,setZhihuFlag]=useState<string|null>(null);
  const [paid,setPaid]=useModelPermission(selected);
  const [notes,setNotes]=useState<Record<string,string>>({}),[index,setIndex]=useState(0),[filter,setFilter]=useState('all'),[expanded,setExpanded]=useState(false);
  const [viewedStep,setViewedStep]=useState<string|null>(null);
  const [refresh,setRefresh]=useState(0),[actionLabel,setActionLabel]=useState('正在提交操作，等待服务确认…');
  const refreshWorkspace=useCallback(()=>setRefresh(n=>n+1),[]);
+ const reloadZhihu=useCallback(async()=>{
+  setZhihuBusy(true);
+  try{setZhihu(await readZhihuStatus());}
+  finally{setZhihuBusy(false);}
+ },[]);
  const recommendation=work?.recommend_task_status;
  const progressActive=hasActiveProgress(work);
  const streamConnection=useProjectProgress(work,progressActive,setWork,refreshWorkspace);
- useEffect(()=>{if(!readModelAccess()){window.location.replace(modelSetupLink(window.location.pathname+window.location.search));return;}setAccessReady(true);},[]);
+ useEffect(()=>{
+  let live=true;
+  readZhihuStatus().then(status=>{if(live)setZhihu(status);}).catch(()=>{if(live)setZhihu({...emptyZhihuStatus});});
+  return()=>{live=false;};
+ },[]);
+ useEffect(()=>{
+  // The callback redirects back with `?zhihu=ok|error|denied`; show it once, then drop it from the
+  // address so a reload does not repeat the message.
+  const flag=new URLSearchParams(window.location.search).get('zhihu');
+  if(flag)window.history.replaceState(null,'',window.location.pathname+(window.location.search.replace(/[?&]zhihu=[^&]*/,'').replace(/^&/,'?')));
+  setZhihuFlag(flag);
+ },[]);
+ useEffect(()=>{
+  // A signed-in Zhihu account is a valid payer on its own; only a visitor with neither a login nor a
+  // chosen model-access mode is sent to the setup page.
+  if(!zhihu)return;
+  if(!readModelAccess()&&!zhihu.authorized){window.location.replace(modelSetupLink(window.location.pathname+window.location.search));return;}
+  setAccessReady(true);
+ },[zhihu]);
  useEffect(()=>{
   if(!accessReady)return;
   let live=true;const params=new URLSearchParams(window.location.search),id=params.get('work'),story=params.get('story');
@@ -91,6 +119,8 @@ export default function Author(){
   <div className="studio-heading"><div><span className="studio-eyebrow">MICROFICTION TO MOTION</span><h1>把一个脑洞，拍成一幕。</h1><p>阅读原文，选择风格，见证微小说成为漫剧的每一步。</p></div>{works.length>0&&<label className="studio-picker">继续已有制作<select aria-label="继续已有制作" value={selected} onChange={e=>{if(e.target.value)window.location.href='/author?work='+encodeURIComponent(e.target.value);}}><option value="">选择微小说</option>{works.map(w=><option value={w.id} key={w.id}>{w.title}</option>)}</select></label>}</div>
   <InteractionFeedback busy={opening||busy} text={opening?'正在读取所选微小说原文与制作记录…':busy?actionLabel:message} error={!opening&&!busy&&messageError}/>
   {syncError&&<div className="studio-error" role="alert">{syncError}{work?' · 当前显示上次同步结果。':''}<button disabled={busy} onClick={()=>setRefresh(n=>n+1)}>重新同步</button></div>}
+  {zhihuFlag&&(()=>{const notice=zhihuNotice(zhihuFlag);return notice?<div className={notice.error?'studio-error':'studio-notice'} role="status">{notice.text}</div>:null;})()}
+  {accessReady&&<ZhihuAccount status={zhihu} busy={zhihuBusy} onChanged={()=>{void reloadZhihu();}} next={'/author'+(selected?'?work='+encodeURIComponent(selected):'')}/>}
   {!opening&&!selected&&<section className="studio-empty"><BookOpen size={35}/><h2>从一篇微小说开始</h2><p>前往读者目录选择脑洞故事，即可阅读原文、确定画风并体验从零生成视频的过程。</p><a className="button primary" href="/">选择脑洞微小说 <ArrowRight size={15}/></a><WorkProgress/></section>}
   {!opening&&selected&&!work&&!syncError&&<InteractionFeedback busy text="正在同步这篇微小说的制作进度…"/>}
   {work&&<>
