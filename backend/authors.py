@@ -1,4 +1,4 @@
-"""Shared author production workflow for the account-free demo."""
+"""Account-owned author production workflow."""
 import hashlib
 import asyncio
 import json
@@ -487,14 +487,36 @@ def feedback(pid: str, body: creative.Feedback):
     return result
 
 @router.post('/projects/{pid}/publish')
-def publish(pid: str, body: creative.Publish):
+def publish(pid: str, request: Request, body: creative.Publish):
+    # A release is public, so keep a small, explicit creator snapshot on it. Never copy the
+    # account uid, OAuth token, payer identity, or private project id into public release data.
+    from .zhihu_oauth import current_account
+    account = current_account(request)
+    creator = None
+    if account:
+        name = str(account.get('fullname') or '').strip()[:80] or '知乎创作者'
+        avatar = account.get('avatar_path')
+        creator = {
+            'name': name,
+            'avatar_path': avatar.strip() if isinstance(avatar, str) and avatar.strip().startswith('https://') else None,
+        }
     with Session() as db:
         row = get_work(db, pid)
         if row.data['stage'] not in ('film_review','published'): raise HTTPException(409, '成片尚未完成')
         sid = row.data['director_id']
     result = creative.publish(sid, body)
+    annotated = None
     with Session.begin() as db:
         row=get_work(db,pid);row.data={**row.data,'stage':'published','release_id':result['id']}
+        release=db.get(Record,result['id'])
+        if release and release.kind=='reader_release' and creator and release.data.get('creator') != creator:
+            release.data={**release.data,'creator':creator};release.version+=1;db.flush()
+            result=record_dict(release);annotated=release
+    if annotated:
+        # Release manifests are immutable by version. Public creator attribution therefore becomes
+        # a new manifest revision instead of mutating the already exported v1 file.
+        from .video_storage import export_manifest
+        export_manifest(annotated)
     return result
 
 def flow(task_id, payload):

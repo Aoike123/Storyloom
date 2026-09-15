@@ -14,9 +14,8 @@ const productionStages: Record<string, number> = {
 };
 
 export function productionRank(item: CatalogItem) {
-  // A verified, playable release is the strongest signal that a work is complete.
   if (canWatch(item)) return 8;
-  return productionStages[item.stage || ''] || (item.project_id ? 0.5 : 0);
+  return productionStages[item.stage || ''] || (item.project_id ? .5 : 0);
 }
 
 export function rankByProduction(items: CatalogItem[]) {

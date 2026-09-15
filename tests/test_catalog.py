@@ -1,6 +1,8 @@
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from sqlalchemy import select
+from backend.app import app
 from backend.db import DATA, Session, Record, Task
 from backend import zhihu_stories as z
 
@@ -16,11 +18,12 @@ def story_api(monkeypatch):
     monkeypatch.setattr(z,'fetch',fetch)
     return calls,listing
 
-def release(rid,work_id,media='/media/catalog-test.mp4',created=100):
+def release(rid,work_id,media='/media/catalog-test.mp4',created=100,creator=None):
     with Session.begin() as db:
         db.add(Record(id=rid,kind='reader_release',created=created,data={
             'title':'成片','source_title':'同名故事','source_work_id':work_id,
-            'entries':[{'clip_id':'clip','media':media,'start':0,'end':4,'shot_id':'shot1'}]}))
+            'entries':[{'clip_id':'clip','media':media,'start':0,'end':4,'shot_id':'shot1'}],
+            'creator':creator}))
 
 def test_catalog_all_brainstorm_and_published_first(client,story_api):
     calls,_=story_api
@@ -83,3 +86,47 @@ def test_release_requires_safe_complete_media_entries(client,story_api):
     with Session.begin() as db:
         db.add(Record(id='empty',kind='reader_release',data={'entries':[],'source_work_id':'3'}))
     assert client.get('/api/reader/catalog').json()['ready_count']==0
+
+
+def test_public_catalog_never_links_another_accounts_project(story_api,monkeypatch):
+    """Published versions are public; private studio ids and progress are owner-scoped."""
+    monkeypatch.setenv('STORYLOOM_DEMO_MODE','public')
+    monkeypatch.setenv('MODEL_ACCESS_SECRET','test-secret-'+'c'*48)
+    browser=TestClient(app)
+
+    def access(key):
+        return browser.post('/api/model-access/sessions',json={
+            'mode':'own','keys':{'deepseek':key},
+        }).json()['token']
+
+    first_token=access('sk-first-catalog-owner')
+    second_token=access('sk-second-catalog-owner')
+    first_headers={'X-Storyloom-Model-Access':first_token}
+    second_headers={'X-Storyloom-Model-Access':second_token}
+    first=browser.post('/api/author/stories/1/open',json={},headers=first_headers).json()
+    second=browser.post('/api/author/stories/1/open',json={},headers=second_headers).json()
+    assert first['id']!=second['id']
+
+    (DATA/'media/catalog-test.mp4').write_bytes(b'test-video')
+    release('first-release','1',created=100,creator={'name':'甲的版本','avatar_path':'https://picx.zhimg.com/a.jpg'})
+    release('second-release','1',created=200,creator={'name':'乙的版本','avatar_path':'javascript:alert(1)'})
+    with Session.begin() as db:
+        db.get(Record,first['id']).data={**db.get(Record,first['id']).data,'release_id':'first-release'}
+        db.get(Record,second['id']).data={**db.get(Record,second['id']).data,'release_id':'second-release'}
+
+    first_catalog=browser.get('/api/reader/catalog',headers=first_headers).json()
+    second_catalog=browser.get('/api/reader/catalog',headers=second_headers).json()
+    anonymous_catalog=browser.get('/api/reader/catalog').json()
+    first_item=next(item for item in first_catalog['items'] if item['work_id']=='1')
+    second_item=next(item for item in second_catalog['items'] if item['work_id']=='1')
+    anonymous_item=next(item for item in anonymous_catalog['items'] if item['work_id']=='1')
+    assert first_item['project_id']==first['id']
+    assert second_item['project_id']==second['id']
+    assert anonymous_item['project_id'] is None and anonymous_item['stage'] is None
+    assert {item['id'] for item in first_catalog['releases']}=={'first-release','second-release'}
+    assert next(item for item in first_catalog['releases'] if item['id']=='first-release')['mine'] is True
+    assert next(item for item in first_catalog['releases'] if item['id']=='second-release')['mine'] is False
+    assert next(item for item in first_catalog['releases'] if item['id']=='first-release')['creator']=={
+        'name':'甲的版本','avatar_path':'https://picx.zhimg.com/a.jpg'}
+    assert next(item for item in first_catalog['releases'] if item['id']=='second-release')['creator']=={
+        'name':'乙的版本','avatar_path':None}

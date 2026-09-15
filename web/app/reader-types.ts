@@ -22,6 +22,12 @@ export type Release = {
   author: string;
   description: string;
   entries: ReleaseEntry[];
+  /** Whether this published version belongs to the currently signed-in account. */
+  mine?: boolean;
+  /** Publication time; the catalogue itself still defines display order. */
+  created?: number;
+  /** Public attribution snapshot for the maker of this particular version. */
+  creator?: {name: string; avatar_path?: string | null};
 };
 
 export type ReaderBranch = {
@@ -77,10 +83,11 @@ export type Catalog = {
 };
 
 export const productionLink = (item: {work_id?: string | null; source_work_id?: string; project_id?: string | null}) => {
-  // Entering a story goes straight to the studio; the account dock handles who pays, so there is no
-  // separate model-access detour to send people through.
-  return item.project_id ? '/author?work=' + encodeURIComponent(item.project_id)
-    : item.work_id || item.source_work_id ? '/author?story=' + encodeURIComponent((item.work_id || item.source_work_id)!)
+  // A public release's project may belong to another maker. Always enter by source story when one
+  // exists: the server then creates or resumes this account's independent version of that story.
+  const sourceId = item.work_id || item.source_work_id;
+  return sourceId ? '/author?story=' + encodeURIComponent(sourceId)
+    : item.project_id ? '/author?work=' + encodeURIComponent(item.project_id)
     : '/author';
 };
 

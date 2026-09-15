@@ -56,6 +56,8 @@ test('announcing without a browser is harmless',()=>{
 
 test('entering a story goes straight to the studio instead of a model-access detour',()=>{
   assert.equal(types.productionLink({work_id:'123'}),'/author?story=123');
+  assert.equal(types.productionLink({work_id:'123',project_id:'somebody-elses-project'}),'/author?story=123');
+  assert.equal(types.productionLink({source_work_id:'123',project_id:'somebody-elses-project'}),'/author?story=123');
   assert.equal(types.productionLink({project_id:'work_x'}),'/author?work=work_x');
   assert.equal(types.productionLink({}),'/author');
   assert.doesNotMatch(types.productionLink({work_id:'123'}),/setup/);

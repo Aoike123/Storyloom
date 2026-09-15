@@ -116,6 +116,31 @@ def test_local_mode_without_accounts_keeps_the_workspace_usable(story_api):
     assert not a.cookies and not b.cookies
 
 
+def test_publish_snapshots_only_public_creator_fields(monkeypatch):
+    """Market attribution includes the maker's name/avatar, never private account data."""
+    import backend.zhihu_oauth as zo
+    session_id='publisher-session-0123456789abcdef'
+    with Session.begin() as db:
+        db.add(Record(id=zo._session_record_id(session_id),kind=zo.SESSION_KIND,data={
+            'uid':'8123','fullname':'版本制作者','avatar_path':'https://picx.zhimg.com/maker.jpg',
+            'headline':'不应进入发布快照','token':'stored-server-side','expires_at':time.time()+3600}))
+        db.add(Record(id='published-work',kind='author_project',data={
+            'stage':'film_review','director_id':'published-director'}))
+        db.add(Record(id='published-release',kind='reader_release',data={'entries':[]}))
+    monkeypatch.setattr(c,'publish',lambda pid,body:{'id':'published-release'})
+    browser=TestClient(app)
+    response=browser.post('/api/author/projects/published-work/publish',json={'confirm':True},
+                          cookies={zo.COOKIE_NAME:session_id})
+    assert response.status_code==200,response.text
+    with Session() as db:
+        release=db.get(Record,'published-release')
+        project=db.get(Record,'published-work')
+        assert release.data['creator']=={
+            'name':'版本制作者','avatar_path':'https://picx.zhimg.com/maker.jpg'}
+        assert set(release.data['creator'])=={'name','avatar_path'}
+        assert project.data['release_id']=='published-release'
+
+
 def test_author_flow_stops_only_for_assets_and_film(creative,monkeypatch,sample_video):
     import shutil
     client=creative

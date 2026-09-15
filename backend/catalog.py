@@ -3,12 +3,25 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 from .db import DATA, Session, Record
 from . import zhihu_stories
+from .model_access import current_actor_id, public_demo_mode
 
 router = APIRouter(prefix='/api/reader', tags=['reader'])
 
 
 def labels(value):
     return [x.strip() for x in value if isinstance(x, str) and x.strip()] if isinstance(value, list) else []
+
+
+def public_creator(value):
+    """Return only the public creator fields that the market card needs."""
+    source = value if isinstance(value, dict) else {}
+    name = str(source.get('name') or '').strip()[:80] or '创作者'
+    avatar = source.get('avatar_path')
+    if not isinstance(avatar, str) or not avatar.strip().startswith('https://'):
+        avatar = None
+    else:
+        avatar = avatar.strip()
+    return {'name': name, 'avatar_path': avatar}
 
 
 def playable(entries):
@@ -40,15 +53,22 @@ def catalog(refresh: bool = False):
         official, available = [], False
     with Session() as db:
         sources = {r.id: r.data for r in db.scalars(select(Record).where(Record.kind == 'story_source'))}
-        works = list(db.scalars(select(Record).where(Record.kind == 'author_project').order_by(Record.created.desc())))
-        works_by_story, works_by_source = {}, {}
+        all_works = list(db.scalars(select(Record).where(Record.kind == 'author_project').order_by(Record.created.desc())))
+        actor = current_actor_id()
+        # The catalogue is public, but studio state is not. Only this account's project id and stage
+        # may decorate a public story; an anonymous visitor sees no private project metadata.
+        works = [work for work in all_works
+                 if not public_demo_mode() or work.data.get('owner') == actor]
+        works_by_story, works_by_director, works_by_release = {}, {}, {}
         for work in works:
             source_id = work.data.get('source_id')
             story_id = work.data.get('zhihu_work_id') or sources.get(source_id, {}).get('work_id')
             if story_id:
                 works_by_story.setdefault(story_id, work)
-            if source_id:
-                works_by_source.setdefault(source_id, work)
+            if work.data.get('director_id'):
+                works_by_director.setdefault(work.data['director_id'], work)
+            if work.data.get('release_id'):
+                works_by_release.setdefault(work.data['release_id'], work)
         releases, by_story, standalone = [], {}, []
         for row in db.scalars(select(Record).where(Record.kind == 'reader_release').order_by(Record.created.desc())):
             data = row.data
@@ -57,9 +77,12 @@ def catalog(refresh: bool = False):
                 continue
             source = sources.get(data.get('source_id'), {})
             story_id = source.get('work_id') or data.get('source_work_id')
-            work = works_by_story.get(story_id) or works_by_source.get(data.get('source_id'))
+            # Link a release only to this account's exact publishing project. Falling back to any
+            # project for the same source lets one account enter another maker's workspace.
+            work = works_by_release.get(row.id) or works_by_director.get(data.get('director_id'))
             release = {'id': row.id, **{k: data.get(k) for k in ('title', 'source_title', 'author', 'description', 'entries')},
-                       'source_work_id': story_id, 'project_id': work.id if work else None}
+                       'source_work_id': story_id, 'project_id': work.id if work else None,
+                       'mine': bool(work), 'created': row.created, 'creator': public_creator(data.get('creator'))}
             releases.append(release)
             if story_id:
                 by_story.setdefault(story_id, release)
