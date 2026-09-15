@@ -17,10 +17,18 @@ There is no site password and no anonymous shared pool. Own-key credentials are 
 wallet is keyed by the Zhihu account id held as text, because `uid` is an int64 that JavaScript
 cannot represent exactly.
 
-This is intentionally a public demo, not a tenant-isolated SaaS platform. Works, progress and media
-are shared across visitors. The stack includes per-IP request limits, a global active-task cap and
-container resource ceilings, but no CAPTCHA, distributed abuse scoring or upstream DDoS protection.
-Size `BEANS_INITIAL_GRANT` so the total across expected signups stays inside your provider budget.
+This is intentionally a public demo, not a tenant-isolated SaaS platform, but the studio is no
+longer shared between visitors: each work belongs to the payer that created it — a signed-in
+account, or one own-key session — and another visitor cannot list it, open it by id, or spend their
+own beans continuing it. Works created before that rule existed have no owner and are claimed by
+the first account that opens their story. The published reader catalogue stays public on purpose:
+publishing is how a film reaches readers.
+
+Media files are still served from one `/media` prefix to anyone who knows the path, so treat a URL
+as shareable rather than private. The stack includes per-IP request limits, a global active-task cap
+and container resource ceilings, but no CAPTCHA, distributed abuse scoring or upstream DDoS
+protection. Size `BEANS_INITIAL_GRANT` so the total across expected signups stays inside your
+provider budget.
 
 ## 1. Prepare the server and DNS
 
@@ -146,6 +154,12 @@ confirmation that the value came back; if it ever stops returning `state`, login
 rather than degrade silently.
 
 ## Diagnosing a failed run
+
+A visitor who keeps hitting a refusal after attaching keys should open the account dock in the
+top-right: it lists every provider, whether a key is attached, its tail, and when the session
+expires. That panel is the answer to "did my key actually get recorded?". The dock also removes the
+attached keys so the browser can go back to paying from its account wallet, and it re-checks the
+bean balance while it is open, because the worker spends beans without the page knowing.
 
 A failed task shows a short code such as `E-1A2B3C` in its progress message. On
 the server (local mode) `GET /api/diagnostics/E-1A2B3C` returns the full

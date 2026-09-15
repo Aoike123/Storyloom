@@ -18,7 +18,7 @@ import useModelPermission from './useModelPermission';
 import AccountDock from '../AccountDock';
 import NodeSkillsPanel from '../NodeSkills';
 import {clearModelAccess,modelAccessHeaders,readModelAccess} from '../model-access';
-import {announceBeansProblem,isBeansProblem} from '../account-dock';
+import {announceBeansProblem,isBeansProblem,onPayerChanged} from '../account-dock';
 import {emptyZhihuStatus,readZhihuStatus,zhihuLoginLink,zhihuNotice,type ZhihuStatus} from '../zhihu-account';
 async function api(path:string,body?:unknown,signal?:AbortSignal){const headers=modelAccessHeaders();const r=await fetch('/api/author'+path,body===undefined?{headers,signal}:{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body),signal});const d=await r.json();if(r.status===401&&typeof window!=='undefined')clearModelAccess();const detail=typeof d.detail==='string'?d.detail:'暂时无法完成操作，请稍后再试。';if(!r.ok){if(isBeansProblem(detail))announceBeansProblem(detail);throw Error(detail);}return d;}
 const stages:Record<string,string>={style:'先为这个故事，选择一种气质。',preparing:'故事中的人物，正在走向画面。',assets_review:'这些形象，符合你的想象吗？',producing:'从静止的画面，到会动的故事。',compositing:'让人物、服装和场景对上。',storyboarding:'这段故事，拆成怎样的镜头？',rendering:'让分镜真正动起来。',film_review:'最后一次审片，让故事准备好登场。',published:'这段脑洞，已经有了画面。'};
@@ -40,6 +40,14 @@ export default function Author(){
   let live=true;
   readZhihuStatus().then(status=>{if(live)setZhihu(status);}).catch(()=>{if(live)setZhihu({...emptyZhihuStatus});});
   return()=>{live=false;};
+},[]);
+ useEffect(()=>{
+  // The visitor just attached their own keys. Work that stopped for lack of a payer can continue,
+  // and the dock's bean count is no longer the relevant budget.
+  return onPayerChanged(()=>{
+   readZhihuStatus().then(status=>setZhihu(status)).catch(()=>undefined);
+   setRefresh(n=>n+1);
+  });
  },[]);
  useEffect(()=>{
   // The callback redirects back with `?zhihu=ok|error|denied`; show it once, then drop it from the

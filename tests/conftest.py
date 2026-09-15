@@ -21,6 +21,16 @@ def database():
     yield
 
 
+@pytest.fixture(autouse=True)
+def reset_request_limits():
+    """The per-IP limiter keeps module-level counters; each test starts with empty buckets."""
+    from backend.public_limits import clear_request_limit_state
+
+    clear_request_limit_state()
+    yield
+    clear_request_limit_state()
+
+
 def pytest_sessionfinish(session, exitstatus):
     engine.dispose()
     shutil.rmtree(TEST_DATA, ignore_errors=True)

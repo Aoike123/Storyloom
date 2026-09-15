@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 from backend.app import app
 from backend.db import Session,Record,Task,DATA
@@ -7,20 +9,106 @@ from test_director import board,segment_plan
 from test_catalog import story_api
 from backend.production_nodes import KINDS as PRODUCTION_KINDS
 
-def test_author_workspace_is_shared_without_sign_in(story_api):
+
+def own_key_client(monkeypatch,key):
+    """A browser paying with its own key: one payer identity per session."""
+    monkeypatch.setenv('MODEL_ACCESS_SECRET','test-secret-'+'a'*48)
+    client=TestClient(app)
+    response=client.post('/api/model-access/sessions',json={'mode':'own','keys':{'deepseek':key}})
+    assert response.status_code==200,response.text
+    client.headers.update({'X-Storyloom-Model-Access':response.json()['token']})
+    return client
+
+
+def test_each_payer_sees_only_its_own_works(story_api,monkeypatch):
+    """Two visitors must not share one work stream, one film, or one wallet's work."""
+    first=own_key_client(monkeypatch,'sk-first-visitor-key')
+    second=own_key_client(monkeypatch,'sk-second-visitor-key')
+    opened=first.post('/api/author/stories/1/open',json={})
+    assert opened.status_code==200
+    pid=opened.json()['id']
+    assert str(opened.json()['owner']).startswith('access:')
+    assert [item['id'] for item in second.get('/api/author/projects').json()]==[]
+    assert second.get('/api/author/projects/'+pid).status_code==404
+    assert first.get('/api/author/projects').json()[0]['id']==pid
+    other=second.post('/api/author/stories/1/open',json={})
+    assert other.status_code==200 and other.json()['id']!=pid
+    assert {item['id'] for item in second.get('/api/author/projects').json()}=={other.json()['id']}
+
+
+def test_work_started_before_accounts_is_claimed_once(story_api,monkeypatch):
+    """Pre-account records have no owner; the first signed-in visitor to open them takes them over."""
+    monkeypatch.setenv('STORYLOOM_DEMO_MODE','public')
+    legacy=authors.work_id_for('7',None)
+    with Session.begin() as db:
+        db.add(Record(id=legacy,kind='author_project',data={'title':'旧作品','stage':'style'}))
+    claimant=own_key_client(monkeypatch,'sk-claiming-visitor')
+    # Public listings and direct ids cannot expose an unclaimed legacy project.
+    assert claimant.get('/api/author/projects').json()==[]
+    assert claimant.get('/api/author/projects/'+legacy).status_code==404
+    response=claimant.post('/api/author/stories/7/open',json={})
+    assert response.status_code==200 and response.json()['id']==legacy
+    with Session() as db:
+        assert db.get(Record,legacy).data['owner'].startswith('access:')
+        claimed=[row for row in db.query(Record).filter(Record.kind=='audit').all()
+                 if row.data.get('action')=='author_project_claimed']
+    assert claimed
+    # It now belongs to that visitor, and a different payer cannot take it.
+    stranger=own_key_client(monkeypatch,'sk-stranger-visitor')
+    assert stranger.get('/api/author/projects/'+legacy).status_code==404
+    assert stranger.post('/api/author/stories/7/open',json={}).json()['id']!=legacy
+
+
+def test_public_browser_cannot_create_an_ownerless_project(story_api,monkeypatch):
+    monkeypatch.setenv('STORYLOOM_DEMO_MODE','public')
+    visitor=TestClient(app)
+    response=visitor.post('/api/author/stories/1/open',json={})
+    assert response.status_code==401
+    assert '登录' in response.json()['detail']
+    with Session() as db:
+        assert not list(db.query(Record).filter(Record.kind=='author_project').all())
+
+def test_attaching_own_keys_keeps_a_signed_in_accounts_works(story_api,monkeypatch):
+    """Paying with own keys must not change who owns the works: that is the account, not the payer."""
+    monkeypatch.setenv('MODEL_ACCESS_SECRET','test-secret-'+'a'*48)
+    monkeypatch.setenv('STORYLOOM_DEMO_MODE','public')
+    from backend import model_access
+    from backend.public_limits import clear_request_limit_state
+    clear_request_limit_state()
+    client=TestClient(app)
+    # The browser is signed in through the Zhihu cookie the callback sets. The cookie value must
+    # satisfy the session-id pattern the login flow issues.
+    import backend.zhihu_oauth as zo
+    session_id='author-session-0123456789abcdef'
+    model_access.create_account_session(session_id,'7001')
+    with Session.begin() as db:
+        # The OAuth callback stores the login record; the bean wallet session is separate.
+        db.add(Record(id=zo._session_record_id(session_id),kind=zo.SESSION_KIND,data={
+            'uid':'7001','token':'stored-server-side','expires_at':time.time()+3600}))
+    login={zo.COOKIE_NAME:session_id}
+    assert client.get('/api/zhihu/status',cookies=login).json()['account']['uid']=='7001'
+    opened=client.post('/api/author/stories/1/open',json={},cookies=login)
+    assert opened.status_code==200
+    pid=opened.json()['id']
+    assert opened.json()['owner']=='account:7001'
+    # Now switch to own keys; the account is still signed in, so the work stays visible.
+    token=client.post('/api/model-access/sessions',
+                      json={'mode':'own','keys':{'deepseek':'sk-visitor-abcdefgh'}}).json()['token']
+    client.headers.update({'X-Storyloom-Model-Access':token})
+    assert [item['id'] for item in client.get('/api/author/projects',cookies=login).json()]==[pid]
+    assert client.get('/api/author/projects/'+pid,cookies=login).status_code==200
+    assert client.post('/api/author/stories/1/open',json={},cookies=login).json()['id']==pid
+
+
+def test_local_mode_without_accounts_keeps_the_workspace_usable(story_api):
     a=TestClient(app);b=TestClient(app)
     novel={'title':'演示小说','content':'我发现所有人每天都会失去一段记忆，只有我能记住昨天发生的一切。今天，我终于找到了原因。'}
     r=a.post('/api/author/stories/1/open',json={});assert r.status_code==200
     pid=r.json()['id']
-    assert 'owner' not in r.json()
+    assert r.json()['owner'] is None
     assert a.get('/api/author/projects').json()==b.get('/api/author/projects').json()
     assert b.get('/api/author/projects/'+pid).json()['id']==pid
     assert b.get('/api/author/projects/missing').status_code==404
-    # Legacy ownership metadata must not hide an existing work from demo visitors.
-    with Session.begin() as db:
-        row=db.get(Record,pid);row.data={**row.data,'owner':'previous-author'}
-    assert b.get('/api/author/projects').json()[0]['id']==pid
-    assert b.get('/api/author/projects/'+pid).status_code==200
     assert b.get('/api/settings').status_code==200
     (DATA/'media/unpublished.png').write_bytes(b'image')
     assert a.get('/media/unpublished.png').status_code==200

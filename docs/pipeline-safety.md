@@ -20,6 +20,10 @@
 | 付费调用需要按类型开启 + 共享池预留；被供应商拒绝的调用会退还预留 | `providers.reserve_call`、`model_access.release_public_call`、`provider_usage.finish` |
 | 共享池的每日预算在 API 与 worker 两个进程间串行比较，不会双花 | `model_access._lock_pool_row` |
 | 只有反向代理网段可以设置 `X-Forwarded-For` | `docker/api.Dockerfile`、`compose.production.yaml` 的 `STORYLOOM_TRUSTED_PROXY` |
+| 作品按付款方归属：账号看自己的作品，用自己的 Key 的访客按会话隔离；别人的作品按 id 也读不到 | `authors.get_work`、`authors.work_id_for`、`model_access.current_actor_id` |
+| 未归属的旧作品由第一个登录的账号接手一次，此后专属于该账号 | `authors.open_story`、`author_project_claimed` 审计 |
+| 面板显示已录入的自带 Key（数量、尾号、有效期），但服务端从不回传完整 Key | `model_access.own_key_summary` |
+| 未完成任务可以改由新的付款方继续，避免"刚填了 Key 却还在用旧付款方" | `production_nodes.adopt_current_payer` |
 | 每 IP 请求上限、全局并发任务上限、容器内存与 CPU 上限 | `public_limits.py`、`db.enforce_public_task_capacity`、`compose.production.yaml` |
 | 追加型历史（事件、分镜历史、重做历史、节点调用轨迹）有固定上限 | `db.bounded`、`skill_runtime.TRACE_LIMIT` |
 

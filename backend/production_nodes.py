@@ -22,6 +22,23 @@ def is_node_task(task, work):
     return task.kind in KINDS and task.payload.get('work_id') == work.id and task.payload.get('run_id') == work.data.get('run_id')
 
 
+def adopt_current_payer(task):
+    """Let unfinished work change who pays for it.
+
+    A task records the payer it was created with, and the worker bills that payer. Without this, a
+    visitor who switched to their own API keys after a wallet or shared-key problem kept being
+    billed by the old payer and saw the same refusal forever.
+    """
+    from .model_access import current_access_id
+
+    access_id=current_access_id()
+    if not access_id or task.session_id==access_id:return False
+    # Never move work that already reached a provider: its submission is tied to the old account.
+    if (task.result or {}).get('provider_id'):return False
+    task.session_id=access_id
+    return True
+
+
 def saved_task_phase(task):
     if task.payload.get('production_phase'):return task.payload['production_phase']
     if task.kind=='image':
@@ -36,7 +53,9 @@ def queue_node(db, work, phase, predecessor=None):
     if phase not in NODES:raise HTTPException(409,'未知的制作节点')
     mapping=dict(work.data.get('production_nodes',{}))
     prior=db.get(Task,mapping.get(phase,''))
-    if prior and prior.status in (*BUSY,'completed'):return prior
+    if prior and prior.status in (*BUSY,'completed'):
+        if prior.status!='completed':adopt_current_payer(prior)
+        return prior
     run=db.get(Record,'creative_'+work.data.get('director_id',''))
     if not run or run.data.get('stage') not in PHASE_STATES[phase]:
         raise HTTPException(409,'本节点需要的上游结果尚未就绪。')

@@ -21,19 +21,82 @@ router = APIRouter(prefix='/api/author', tags=['author'])
 open_lock = Lock()
 attempt_lock = Lock()
 def get_work(db, pid):
+    """The project behind an HTTP request, refused when it belongs to somebody else."""
+    row = work_row(db, pid)
+    owner = row.data.get('owner')
+    actor = current_actor()
+    if owner and owner != actor:
+        # Another account's work is not this visitor's work: it must not appear, and it must not be
+        # resumable on someone else's bean wallet. Ownerless records are pre-account work.
+        raise HTTPException(404, '作品不存在')
+    if not owner:
+        from .model_access import public_demo_mode
+
+        # Pre-account work may only be claimed through ``open_story``. Hiding it here prevents a
+        # visitor who guessed an old id from editing it before the ownership transition is atomic.
+        if public_demo_mode():
+            raise HTTPException(404, '作品不存在')
+    return row
+
+
+def work_row(db, pid):
+    """The project row without an ownership test, for the worker that already holds a task.
+
+    A queued task was authorized when it was created; its stored payer session can expire or be
+    retired by the time the worker runs it, so the worker must not repeat the visitor check.
+    """
     row = db.get(Record, pid)
     if not row or row.kind != 'author_project':
         raise HTTPException(404, '作品不存在')
     return row
 
+
+def current_actor():
+    """Who this request acts as, for work ownership. None in a local run without accounts."""
+    from .model_access import current_actor_id
+
+    return current_actor_id()
+
+
+def work_id_for(work_id, actor):
+    """Stable per-owner id for one story, so two accounts never share one project record."""
+    # This exact hash was used before accounts existed. Keep it addressable for the one-time claim
+    # path; new owned projects include the actor in the hash and therefore never collide with it.
+    if not actor:
+        return 'work_zhihu_' + hashlib.sha256(str(work_id).encode()).hexdigest()[:32]
+    return 'work_zhihu_' + hashlib.sha256(f'{work_id}|{actor}'.encode()).hexdigest()[:32]
+
 @router.post('/stories/{work_id}/open')
 def open_story(work_id: str):
     if not zhihu_stories.valid_id(work_id):
         raise HTTPException(422, '故事标识格式无效。')
-    pid = 'work_zhihu_' + hashlib.sha256(work_id.encode()).hexdigest()[:32]
+    actor = current_actor()
+    from .model_access import public_demo_mode
+    if public_demo_mode() and not actor:
+        raise HTTPException(401, '请先登录，再制作属于自己的漫剧版本。')
+    # Records created before per-account ownership kept one shared id per story. That id is reused
+    # once so an account can pick up work started earlier, and it is claimed by whoever arrives
+    # first instead of staying visible to every visitor.
+    legacy_pid = work_id_for(work_id, None)
+    pid = work_id_for(work_id, actor)
     with open_lock:
         with Session() as db:
             existing = db.get(Record, pid)
+            if existing is not None and existing.kind == 'author_project':
+                return workspace(pid)
+            legacy = db.get(Record, legacy_pid)
+            claim = bool(actor) and legacy is not None and legacy.kind == 'author_project' \
+                and not legacy.data.get('owner')
+        if claim:
+            with Session.begin() as db:
+                legacy = db.get(Record, legacy_pid)
+                if legacy and legacy.kind == 'author_project' and not legacy.data.get('owner'):
+                    legacy.data = {**legacy.data, 'owner': actor}
+                    legacy.version += 1
+                    db.add(Record(id=uid('audit'), kind='audit', data={
+                        'target': legacy_pid, 'action': 'author_project_claimed', 'owner': actor,
+                        'note': '账号接手了尚未归属的旧作品'}))
+            return workspace(legacy_pid)
         if existing is None:
             listing = zhihu_stories.stories()
             selected = next((x for x in listing['items'] if x['work_id'] == work_id), None)
@@ -47,6 +110,7 @@ def open_story(work_id: str):
                 db.add(Record(id=pid, kind='author_project', data={
                     'title': selected.get('title') or source['title'], 'source_id': source['id'],
                     'zhihu_work_id': work_id, 'stage': 'style', 'workflow': 'author-brainstorm-v7',
+                    'owner': actor,
                     'source_warning': imported.get('warning') if imported.get('stale') else None,
                 }))
     return workspace(pid)
@@ -54,7 +118,13 @@ def open_story(work_id: str):
 @router.get('/projects')
 def projects():
     with Session() as db:
-        return [record_dict(r) for r in db.scalars(select(Record).where(Record.kind=='author_project').order_by(Record.created.desc()))]
+        actor = current_actor()
+        rows = list(db.scalars(select(Record).where(Record.kind == 'author_project').order_by(Record.created.desc())))
+        from .model_access import public_demo_mode
+        # A public visitor sees only their work. Ownerless records remain available in local mode;
+        # online they are reached solely through the atomic one-time claim in ``open_story``.
+        return [record_dict(r) for r in rows
+                if r.data.get('owner') == actor or (not public_demo_mode() and not r.data.get('owner'))]
 
 @router.get('/projects/{pid}')
 def workspace(pid: str):
@@ -464,7 +534,7 @@ def flow(task_id, payload):
         return True
     if payload['phase']!='producing': raise HTTPException(409,'流程阶段不匹配')
     with Session.begin() as db:
-        legacy=db.get(Task,task_id);work=get_work(db,payload['work_id'])
+        legacy=db.get(Task,task_id);work=work_row(db,payload['work_id'])
         if legacy and legacy.kind=='author_flow' and legacy.status=='running' and work.data.get('supervisor')==task_id:
             phase=phase_for_saved_state(status)
             legacy.status='completed';legacy.progress=100;legacy.message='已将保存的制作进度移交独立节点'

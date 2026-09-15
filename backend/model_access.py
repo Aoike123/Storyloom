@@ -42,6 +42,9 @@ _SHANGHAI = ZoneInfo("Asia/Shanghai")
 _KEY_FIELDS = ("LLM_API_KEY", "IMAGE_API_KEY", "VIDEO_API_KEY")
 _PROVIDER_KEYS = {"llm": "LLM_API_KEY", "image": "IMAGE_API_KEY", "video": "VIDEO_API_KEY"}
 _KINDS = ("llm", "image", "video")
+# Only these two modes can pay for a call. Anything else — for example a session created for the
+# retired shared pool — must never shadow a signed-in account.
+PAYER_MODES = ("own", "account")
 
 
 class ModelAccessError(Exception):
@@ -152,6 +155,62 @@ def current_account_uid() -> str | None:
     if not record or record.get("mode") != "account":
         return None
     uid = str(record.get("uid") or "")
+    return uid or None
+
+
+def access_mode_for(access_id: str | None) -> str | None:
+    """The stored mode of one access record, or None when it no longer exists."""
+    if not access_id:
+        return None
+    from .db import Record, Session
+
+    with Session() as db:
+        row = db.get(Record, access_id)
+        if not row or row.kind != SESSION_KIND or float(row.data.get("expires_at", 0)) <= time.time():
+            return None
+        return str(row.data.get("mode") or "") or None
+
+
+def current_actor_id() -> str | None:
+    """Who this request acts as, for data ownership.
+
+    A signed-in account is the account itself, so every browser of that account shares its works.
+    A visitor paying with their own keys has no account, so its access session identifies the owner
+    and keeps that visitor's works away from everyone else.
+    """
+    # The account identifies the person; the access session identifies who pays. A signed-in visitor
+    # who attaches own keys still owns the works of the account, so attaching keys never loses them.
+    signed_in = current_signed_in_uid()
+    if signed_in:
+        return f"account:{signed_in}"
+    record = _access_record()
+    if not record:
+        return None
+    mode = record.get("mode")
+    if mode == "account":
+        uid = str(record.get("uid") or "")
+        return f"account:{uid}" if uid else None
+    if mode == "own":
+        access_id = current_access_id()
+        return f"access:{access_id}" if access_id else None
+    return None
+
+
+_signed_in_uid: ContextVar[str] = ContextVar("storyloom_signed_in_uid", default="")
+
+
+@contextmanager
+def signed_in_scope(uid: str | None):
+    """Carry the signed-in account through one request, independently of who pays."""
+    token = _signed_in_uid.set(str(uid or ""))
+    try:
+        yield
+    finally:
+        _signed_in_uid.reset(token)
+
+
+def current_signed_in_uid() -> str | None:
+    uid = _signed_in_uid.get()
     return uid or None
 
 
@@ -461,9 +520,55 @@ def _session_summary() -> dict | None:
     return {"mode": record["mode"], "expires_at": record["expires_at"]}
 
 
+def _masked_key_tail(value: str) -> str:
+    """Last four characters, so the visitor can recognise which key is attached."""
+    text = str(value or "").strip()
+    return text[-4:] if len(text) >= 8 else "****"
+
+
+def own_key_summary() -> dict | None:
+    """Which own API keys this browser currently has attached, never the keys themselves.
+
+    The visitor needs to see that a key was actually recorded, and which one it is; without this a
+    failed call looks like the key was never saved. Only a short tail and a length hint are exposed,
+    and only to the session that owns them.
+    """
+    record = _access_record()
+    if not record or record.get("mode") != "own":
+        return None
+    try:
+        credentials = _decrypt_keys(str(record.get("credentials") or ""))
+    except ModelAccessError:
+        return {"readable": False, "expires_at": record.get("expires_at"), "providers": {}}
+    by_field = {field: kind for kind, field in _PROVIDER_KEYS.items()}
+    providers = {}
+    for field, value in credentials.items():
+        kind = by_field.get(field)
+        if not kind:
+            continue
+        providers[kind] = {"attached": True, "tail": _masked_key_tail(value), "length": len(str(value).strip())}
+    return {"readable": True, "expires_at": record.get("expires_at"), "providers": providers}
+
+
 @router.get("/status")
 def status():
-    return {"fixed_providers": fixed_providers(), "session": _session_summary()}
+    return {"fixed_providers": fixed_providers(), "session": _session_summary(), "keys": own_key_summary()}
+
+
+@router.delete("/session")
+def clear_own_session():
+    """Drop the attached own keys so the browser can go back to its account wallet."""
+    access_id = current_access_id()
+    if not access_id:
+        return {"cleared": False}
+    from .db import Record, Session
+
+    with Session.begin() as db:
+        row = db.get(Record, access_id)
+        if not row or row.kind != SESSION_KIND or row.data.get("mode") != "own":
+            return {"cleared": False}
+        db.delete(row)
+    return {"cleared": True}
 
 
 @router.post("/sessions")

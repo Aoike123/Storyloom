@@ -24,7 +24,7 @@ const modelAccess=load('app/model-access.ts');
 const fakeWindow={};
 class FakeCustomEvent{constructor(type,init){this.type=type;this.detail=init?.detail;}}
 const dock=load('app/account-dock.ts',{'./model-access':modelAccess},{window:fakeWindow,CustomEvent:FakeCustomEvent});
-const account=load('app/zhihu-account.ts');
+const account=load('app/zhihu-account.ts',{'./model-access':modelAccess});
 const types=load('app/reader-types.ts');
 
 test('a wallet that cannot cover the next step is recognised from the server message',()=>{
@@ -85,4 +85,23 @@ test('low balance is judged against one clip, not a fixed number',()=>{
   assert.equal(account.isLowBeans({...wallet,beans:'47.99'}),true);
   assert.equal(account.isLowBeans({...wallet,beans:'48'}),false);
   assert.equal(account.isLowBeans(null),false);
+});
+
+test('own-key status and removal carry the browser access token',async()=>{
+  const calls=[];
+  const access={
+    modelAccessHeaders:()=>({'X-Storyloom-Model-Access':'own-key-session'}),
+    saveModelAccess:()=>{},
+  };
+  const fetch=async(url,options={})=>{
+    calls.push({url,options});
+    return {ok:true,json:async()=>({configured:true,can_generate:true,own_keys:true})};
+  };
+  const statusModule=load('app/zhihu-account.ts',{'./model-access':access},{fetch});
+  const dockModule=load('app/account-dock.ts',{'./model-access':access},{fetch,window:fakeWindow,CustomEvent:FakeCustomEvent});
+  assert.equal((await statusModule.readZhihuStatus()).own_keys,true);
+  await dockModule.clearOwnKeys();
+  assert.equal(calls.length,2);
+  for(const call of calls)assert.equal(call.options.headers['X-Storyloom-Model-Access'],'own-key-session');
+  assert.equal(calls[1].options.method,'DELETE');
 });

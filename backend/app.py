@@ -16,10 +16,13 @@ from .local_config import save_config
 from .model_access import (
     ACCESS_HEADER,
     ModelAccessError,
+    PAYER_MODES,
+    access_mode_for,
     access_scope,
     public_demo_mode,
     resolve_access_token,
     router as model_access_router,
+    signed_in_scope,
 )
 from .preproduction import router as preproduction_router
 from .production import reader as reader_router
@@ -92,14 +95,22 @@ async def local_only(request: Request, call_next):
     try:
         access_id = resolve_access_token(request.headers[ACCESS_HEADER]) if ACCESS_HEADER in request.headers else ""
     except ModelAccessError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=401, headers={"Cache-Control": "no-store"})
+        # A token the server no longer recognises must not lock the visitor out of a signed-in
+        # account, so it is treated as "no explicit choice" instead of a hard failure.
+        access_id = ""
+    if access_id and access_mode_for(access_id) not in PAYER_MODES:
+        # An explicit header only wins when it can actually pay. A leftover session from the
+        # retired shared pool used to shadow the account login and fail every call.
+        access_id = ""
     if not access_id:
         # A signed-in Zhihu account pays from its bean wallet. An explicit access header still wins,
         # so an account whose beans ran out can switch to its own keys and keep working.
         from .zhihu_oauth import signed_in_access_id
 
         access_id = signed_in_access_id(request) or ""
-    with access_scope(access_id):
+    from .zhihu_oauth import signed_in_uid
+
+    with access_scope(access_id), signed_in_scope(signed_in_uid(request)):
         if request.method not in ["GET", "HEAD", "OPTIONS"]:
             origin = request.headers.get("origin")
             if origin and origin not in [

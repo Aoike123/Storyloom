@@ -4,12 +4,14 @@ The anonymous shared pool is gone, so these cover the two remaining modes and th
 browser gets when it has neither.
 """
 import hashlib
+import json
 
 import pytest
 
 from backend import model_access
 from backend.db import Record, Session, Task, uid
 from backend.environment import model_config
+from backend.public_limits import clear_request_limit_state
 
 
 OWN_KEYS = {
@@ -122,3 +124,40 @@ def test_an_account_with_a_blocked_operator_key_is_told_to_bring_its_own(client,
     with model_access.access_scope(created["access_id"]):
         with pytest.raises(model_access.ModelAccessError, match="自己的 API Key"):
             model_access.authorize_call("llm", task_id="t")
+
+
+def test_the_panel_can_see_which_own_keys_are_attached(client, monkeypatch):
+    """A visitor could not tell whether their keys were saved; the status must say so."""
+    # Public mode turns on the per-IP request limiter, whose counters live in module state.
+    clear_request_limit_state()
+    monkeypatch.setenv("MODEL_ACCESS_SECRET", "test-secret-" + "a" * 48)
+    monkeypatch.setenv("STORYLOOM_DEMO_MODE", "public")
+    created = client.post("/api/model-access/sessions",
+                          json={"mode": "own", "keys": {"deepseek": "sk-deep-12345678", "minimax": "mm-video-abcdef"}})
+    assert created.status_code == 200
+    token = created.json()["token"]
+    status = client.get("/api/model-access/status", headers={"X-Storyloom-Model-Access": token}).json()
+    keys = status["keys"]
+    assert keys["readable"] is True
+    assert set(keys["providers"]) == {"llm", "video"}
+    assert keys["providers"]["llm"]["tail"] == "5678"
+    assert keys["providers"]["llm"]["length"] == len("sk-deep-12345678")
+    assert "image" not in keys["providers"]
+    # The key itself never leaves the server, only its tail.
+    assert "sk-deep-12345678" not in json.dumps(status)
+    # The account page reads the same summary.
+    zhihu = client.get("/api/zhihu/status", headers={"X-Storyloom-Model-Access": token}).json()
+    assert zhihu["own_keys"] is True and zhihu["own_key_summary"]["providers"]["video"]["tail"] == "cdef"
+
+
+def test_attached_keys_can_be_removed_to_go_back_to_the_account(client, monkeypatch):
+    clear_request_limit_state()
+    monkeypatch.setenv("MODEL_ACCESS_SECRET", "test-secret-" + "a" * 48)
+    monkeypatch.setenv("STORYLOOM_DEMO_MODE", "public")
+    token = client.post("/api/model-access/sessions",
+                        json={"mode": "own", "keys": {"deepseek": "sk-deep-12345678"}}).json()["token"]
+    headers = {"X-Storyloom-Model-Access": token}
+    assert client.delete("/api/model-access/session", headers=headers).json()["cleared"] is True
+    assert client.get("/api/model-access/status", headers=headers).json()["keys"] is None
+    # Removing again is harmless rather than an error.
+    assert client.delete("/api/model-access/session", headers=headers).json()["cleared"] is False
