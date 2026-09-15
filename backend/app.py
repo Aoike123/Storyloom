@@ -30,7 +30,7 @@ from .public_limits import request_retry_after
 from .video_files import StorageError
 from .video_storage import router as storage_router
 from .zhihu_stories import router as story_router
-from .zhihu_oauth import router as zhihu_login_router
+from .zhihu_oauth import public_router as zhihu_callback_router, router as zhihu_login_router
 
 
 @asynccontextmanager
@@ -48,6 +48,7 @@ app = FastAPI(
 )
 app.include_router(story_router)
 app.include_router(zhihu_login_router)
+app.include_router(zhihu_callback_router)
 app.include_router(director_router)
 app.include_router(production_router)
 app.include_router(reader_router)

@@ -33,8 +33,9 @@ def fake_token(payload=None):
                                           'token_type': 'Bearer', 'expires_in': 3600})
 
 
-def begin_login(client):
-    response = client.get('/api/zhihu/login', follow_redirects=False)
+def begin_login(client, next=None):
+    target = '/api/zhihu/login' + (f'?next={next}' if next else '')
+    response = client.get(target, follow_redirects=False)
     assert response.status_code == 302
     query = parse_qs(urlparse(response.headers['location']).query)
     assert query['app_id'] == ['525']
@@ -169,6 +170,35 @@ def test_app_key_never_reaches_any_browser_facing_endpoint(client, zhihu):
     with Session() as db:
         for row in db.query(Record).all():
             assert APP_KEY not in json.dumps(row.data), row.id
+
+
+def test_public_auth_callback_path_works_like_the_api_route(client, zhihu):
+    """The registered public path must reach the same handler as the internal route."""
+    zhihu.setattr(zhihu_oauth, '_post_form', fake_token())
+    zhihu.setattr(zhihu_oauth, '_get_profile', fake_profile(525))
+    state = begin_login(client)
+    response = client.get(f'/auth/callback?authorization_code=c&state={state}', follow_redirects=False)
+    assert response.status_code == 302 and response.headers['location'] == '/?zhihu=ok'
+    assert client.get('/api/zhihu/status').json()['authorized'] is True
+    # No code at all still lands on the page with an error flag rather than an exception.
+    assert client.get('/auth/callback', follow_redirects=False).headers['location'] == '/?zhihu=error'
+
+
+def test_login_destination_is_same_site_only(client, zhihu):
+    """`next` must never turn the callback into an open redirect."""
+    zhihu.setattr(zhihu_oauth, '_post_form', fake_token())
+    zhihu.setattr(zhihu_oauth, '_get_profile', fake_profile(525))
+
+    state = begin_login(client, next='/author')
+    assert client.get(f'/api/zhihu/callback?authorization_code=c&state={state}',
+                      follow_redirects=False).headers['location'] == '/author?zhihu=ok'
+
+    for hostile in ('https://evil.example.com', '//evil.example.com', 'javascript:alert(1)'):
+        client.post('/api/zhihu/logout')
+        state = begin_login(client, next=hostile)
+        location = client.get(f'/api/zhihu/callback?authorization_code=c&state={state}',
+                              follow_redirects=False).headers['location']
+        assert location == '/?zhihu=ok', hostile
 
 
 def test_logout_drops_the_session_and_its_token(client, zhihu):

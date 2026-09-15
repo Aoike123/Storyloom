@@ -111,6 +111,63 @@ for the documented small server. Generated media still consumes the system disk
 and outbound bandwidth, so monitor both and move media to object storage/CDN
 before inviting sustained traffic.
 
+## Zhihu account login
+
+Signed-in visitors spend **compute beans** instead of the anonymous shared pool, so one visitor
+cannot consume the whole day's budget. Anonymous visitors keep using the pool or their own keys.
+The two paths are independent: beans come from the operator's keys, and a visitor whose beans run
+out can switch to their own keys at `/<setup>` at any time.
+
+### One-time setup
+
+1. On the hackathon project page, obtain the App ID and App Key.
+2. Register this exact callback on the Zhihu open platform — protocol, host, path and trailing
+   slash must match character for character:
+
+   ```text
+   https://<SITE_ADDRESS>/auth/callback
+   ```
+
+3. Put the credentials in `.env.production` (never in the repository or an image layer):
+
+   ```text
+   ZHIHU_OAUTH_APP_ID=<app id>
+   ZHIHU_OAUTH_APP_KEY=<app key>
+   ZHIHU_OAUTH_REDIRECT_URI=https://<SITE_ADDRESS>/auth/callback
+   ```
+
+4. Redeploy. `GET /api/zhihu/status` must report `"configured": true`.
+5. Open `/author` and click the login entry. **You** complete the Zhihu consent screen; the agent
+   must not click it for you.
+
+`/auth/callback` is deliberately outside `/api`, so the Caddyfile routes it to the API container.
+If you change the public path, change both the registered URI and that route together.
+
+### Beans
+
+Each account receives `BEANS_INITIAL_GRANT` once, at first login. Costs are `BEANS_LLM_COST`
+(default 1), `BEANS_IMAGE_COST` (default 5) and `BEANS_VIDEO_COST_PER_SECOND` (default 6). With the
+supplied defaults one six-shot film costs roughly 408 beans, so the 500 default grant finishes a
+film with a little room for a retry. Set `BEANS_INITIAL_GRANT=0` to make accounts bring their own
+keys from the start.
+
+Beans are debited when a call is actually submitted, not when a task is queued, and a provider that
+refuses the request returns them. Set the costs to `0` to make the wallet a pure login gate.
+
+### What is stored where
+
+| Value | Where it lives | Never appears in |
+| --- | --- | --- |
+| App Key | deployment secret | repository, image, log, response |
+| OAuth access token | server-side, encrypted with `MODEL_ACCESS_SECRET` | browser, URL, log, response |
+| `uid`, nickname, avatar | server-side session record | — (nickname and avatar are shown to that account) |
+| Browser session | `HttpOnly` cookie holding a random id | — |
+
+The login screen may not be able to verify `state` if Zhihu does not return it. The app rejects a
+mismatched, missing, expired or replayed `state`, so treat a real login that completes as
+confirmation that the value came back; if it ever stops returning `state`, logins will fail closed
+rather than degrade silently.
+
 ## Diagnosing a failed run
 
 A failed task shows a short code such as `E-1A2B3C` in its progress message. On

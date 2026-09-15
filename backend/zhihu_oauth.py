@@ -36,6 +36,9 @@ from .model_access import (
 )
 
 router = APIRouter(prefix='/api/zhihu', tags=['zhihu-login'])
+# The Zhihu open platform registers a public callback, conventionally `/auth/callback`. That path is
+# outside `/api`, so it also needs a route of its own and a matching reverse-proxy rule.
+public_router = APIRouter(tags=['zhihu-login'])
 
 AUTHORIZE_URL = 'https://openapi.zhihu.com/authorize'
 TOKEN_URL = 'https://openapi.zhihu.com/access_token'
@@ -112,6 +115,14 @@ def _authorize_url(state: str) -> str:
         'response_type': 'code',
         'state': state,
     })
+
+
+def safe_next(value: str | None) -> str:
+    """Only allow a same-site path, so the callback can never be used as an open redirect."""
+    candidate = (value or '').strip()
+    if not candidate.startswith('/') or candidate.startswith('//') or '\r' in candidate or '\n' in candidate:
+        return '/'
+    return candidate[:200]
 
 
 def _post_form(url: str, form: dict) -> dict:
@@ -211,23 +222,24 @@ def public_account(account: dict) -> dict:
 
 
 @router.get('/login')
-def login(request: Request):
+def login(request: Request, next: str = ''):
     if not configured():
         raise HTTPException(409, '知乎登录尚未配置：缺少 App ID、App Key 或公网回调地址。')
+    destination = safe_next(next)
     response = RedirectResponse('/', status_code=302)
     session_id = _ensure_session(request, response)
     state = secrets.token_urlsafe(32)
     now = time.time()
     with Session.begin() as db:
         db.add(Record(id=_state_record_id(state), kind=STATE_KIND, data={
-            'session_id': session_id, 'created_at': now, 'expires_at': now + STATE_TTL,
+            'session_id': session_id, 'next': destination,
+            'created_at': now, 'expires_at': now + STATE_TTL,
         }))
     response.headers['Location'] = _authorize_url(state)
     return response
 
 
-@router.get('/callback')
-def callback(request: Request, authorization_code: str = '', code: str = '', state: str = '', error: str = ''):
+def _callback(request: Request, authorization_code: str, code: str, state: str, error: str):
     if error:
         return RedirectResponse('/?zhihu=denied', status_code=302)
     granted = (authorization_code or code).strip()
@@ -244,6 +256,7 @@ def callback(request: Request, authorization_code: str = '', code: str = '', sta
     # started this login. A missing, reused, expired or mismatched value never reaches the token
     # exchange.
     record_id = _state_record_id(state)
+    destination = '/'
     with Session.begin() as db:
         row = db.get(Record, record_id)
         if not row or row.kind != STATE_KIND:
@@ -252,6 +265,7 @@ def callback(request: Request, authorization_code: str = '', code: str = '', sta
         db.delete(row)
         if data.get('session_id') != session_id or float(data.get('expires_at', 0)) <= time.time():
             return RedirectResponse('/?zhihu=error', status_code=302)
+        destination = safe_next(data.get('next'))
 
     cfg = _config()
     try:
@@ -298,7 +312,19 @@ def callback(request: Request, authorization_code: str = '', code: str = '', sta
     # The account spends its bean wallet through an access session keyed to this login, so tasks
     # inherit the right payer the same way anonymous ones already do.
     create_account_session(session_id, account['uid'], expires_in)
-    return RedirectResponse('/?zhihu=ok', status_code=302)
+    separator = '&' if '?' in destination else '?'
+    return RedirectResponse(f'{destination}{separator}zhihu=ok', status_code=302)
+
+
+@router.get('/callback')
+def callback(request: Request, authorization_code: str = '', code: str = '', state: str = '', error: str = ''):
+    return _callback(request, authorization_code, code, state, error)
+
+
+@public_router.get('/auth/callback')
+def public_callback(request: Request, authorization_code: str = '', code: str = '', state: str = '', error: str = ''):
+    """The public callback path registered on the Zhihu open platform."""
+    return _callback(request, authorization_code, code, state, error)
 
 
 @router.post('/logout')

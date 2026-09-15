@@ -10,7 +10,8 @@
 		Strict-Transport-Security "max-age=15552000"
 	}
 
-	@backend path /api /api/* /media /media/*
+	# /auth/callback is the public Zhihu OAuth callback registered on the open platform.
+	@backend path /api /api/* /media /media/* /auth/callback
 	handle @backend {
 		reverse_proxy api:8000 {
 			flush_interval -1
