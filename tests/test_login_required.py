@@ -35,8 +35,7 @@ def test_every_paid_entry_refuses_an_anonymous_browser(anonymous):
         ('post', '/api/creative/pid/design', {'art': '手绘漫画', 'tone': '温馨', 'confirm_paid': True}),
         ('post', '/api/creative/pid/continue', {'stage': 'samples_review', 'confirm_review': True, 'confirm_paid': True}),
         ('post', '/api/creative/pid/feedback', {'task_id': 't', 'text': '改一下', 'confirm_paid': True}),
-        ('post', '/api/preproduction/pid/trial',
-         {'stamp': 's', 'assets': ['a', 'b'], 'prompt': '已完成定装的试拍请求', 'confirm_paid': True}),
+        # 已废弃线路：试拍入口 /api/preproduction/pid/trial 随定装与试拍一起移除，不再是收费入口。
         ('post', '/api/director/projects/pid/storyboard', {'version': 1, 'confirm_paid': True}),
         ('post', '/api/director', {'source_id': 's', 'confirm_paid': True}),
         ('post', '/api/production/pid/shots/S01/video', {'version': 1, 'confirm_paid': True}),

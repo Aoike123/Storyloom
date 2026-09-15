@@ -9,7 +9,8 @@ from asset_spec_fixtures import design_response,character
 @pytest.fixture
 def creative(client,monkeypatch):
     cfg=lambda:{'paid_enabled':True,'llm_configured':True,'image_configured':True,'video_configured':True,'editable':{'VIDEO_PROVIDER':'minimax'}}
-    for mod in (c,d,pp,prod):monkeypatch.setattr(mod,'settings',cfg)
+    # preproduction 不再自行收费（试拍已移除），所以只有这三处还需要替换付费状态。
+    for mod in (c,d,prod):monkeypatch.setattr(mod,'settings',cfg)
     treatment={k:'设计依据' for k in ['premise','dramatic_question','protagonist_goal','excerpt_scope','visual_strategy','information_strategy']}
     treatment.update(rules=[{'rule':'规则','quote':TEXT,'consequence':'后果'}],boundaries=['未知'])
     with Session.begin() as db:
@@ -32,30 +33,23 @@ def drain():
 
 def advance(client,stage):return client.post('/api/creative/pid/continue',json={'stage':stage,'confirm_review':True,'confirm_paid':True})
 
-def test_result_driven_production_keeps_image_gates(creative,monkeypatch):
+def test_base_assets_are_ready_and_the_removed_fitting_stages_refuse(creative):
+    """基础素材照常生成；定装与试拍已从线路中移除，既不再推进，也不再创建任何生图任务。
+
+    当前线路从"确认基础素材"到分镜、视频、审片的完整流程由
+    ``test_authors.test_author_flow_stops_only_for_assets_and_film`` 覆盖。
+    """
     client=creative
     assert client.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'温馨','confirm_paid':True}).status_code==200
     drain();data=client.get('/api/creative/pid').json()
     assert len(data['items'])==3 and all(i['asset'] for i in data['items'])
-    assert client.post('/api/creative/pid/continue',json={'stage':'assets_review','confirm_paid':True}).status_code==422
-    assert advance(client,'assets_review').status_code==200
-    drain();assert client.get('/api/creative/pid').json()['stage']=='fittings_review'
-    assert advance(client,'fittings_review').status_code==200
-    drain();assert client.get('/api/creative/pid').json()['stage']=='trials_review'
-    prep=pp.get('pid')['config'];b=board()
-    for shot in b['shots']:shot['assets']=list(prep['assets'])
-    answers=iter([segment_plan(),b,{'shots':[{k:s[k] for k in ('id','first_frame','motion_prompt')} for s in b['shots']]},{'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'}])
-    monkeypatch.setattr(d,'chat_json',lambda *a:(next(answers),{}))
-    assert advance(client,'trials_review').status_code==200
-    with Session() as db:assert not list(db.scalars(select(Task).where(Task.kind=='video')))
-    drain();data=client.get('/api/creative/pid').json()
-    # 参考图直接生视频：分镜完成后立即创建视频任务，不再生成镜头参考图。
+    assert data['stage']=='assets_review' and data['production']['shots']==[]
+    for stage in ('assets_review','fittings_review','trials_review'):
+        response=client.post('/api/creative/pid/continue',json={'stage':stage,'confirm_review':True,'confirm_paid':True})
+        assert response.status_code==409 and '已移除' in response.json()['detail']
     with Session() as db:
-        failures=[(t.kind,t.status,t.message) for t in db.scalars(select(Task)) if t.status in ('failed','needs_review')]
-    assert data['stage']=='videos_review',failures
-    assert len([s for s in data['production']['shots'] if s['video_task']])==4
-    with Session() as db:
-        assert not [t for t in db.scalars(select(Task).where(Task.kind=='image')) if t.payload.get('director_id')]
+        assert not [t for t in db.scalars(select(Task).where(Task.kind=='image'))
+                    if t.payload.get('asset_kind')=='dressed_character' or t.payload.get('preproduction_id')]
 
 def test_natural_language_revision_retains_old_image(creative,monkeypatch):
     client=creative

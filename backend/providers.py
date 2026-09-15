@@ -52,12 +52,30 @@ def _account_bean_balance():
 def reserve_call(kind, task_id, model=None, duration_seconds=None):
     cfg=settings()
     if not cfg.get(f'{kind}_paid_enabled',cfg['paid_enabled']):
-        raise ProviderError(payment_message(kind,cfg=cfg) or '该模型的付费调用未开启或共享额度不足，请在模型连接页检查后再尝试。')
-    if not cfg[f'{kind}_configured']: raise ProviderError('尚未配置该模型的完整 API 信息。')
+        message=payment_message(kind,cfg=cfg) or '该模型的付费调用未开启或共享额度不足，请在模型连接页检查后再尝试。'
+        note_refusal(kind,task_id,message)
+        raise ProviderError(message)
+    if not cfg[f'{kind}_configured']:
+        note_refusal(kind,task_id,'尚未配置该模型的完整 API 信息。')
+        raise ProviderError('尚未配置该模型的完整 API 信息。')
     try:access=authorize_call(kind,duration_seconds,task_id)
-    except ModelAccessError as exc:raise ProviderError(str(exc)) from None
+    except ModelAccessError as exc:
+        note_refusal(kind,task_id,str(exc))
+        raise ProviderError(str(exc)) from None
     from .provider_usage import begin
     return begin(kind,model or cfg.get(kind+'_model',''),task_id,access)
+
+
+def note_refusal(kind,task_id,message):
+    """Record a call that was stopped before submission, so the step can be attempted again.
+
+    Everything refused here never reached a provider, so re-running it cannot repeat a paid call.
+    Without the record, a picture stopped by a paused operator key looked unrepairable and the run
+    could not continue on the visitor's own key.
+    """
+    if kind!='image':return
+    from .image_errors import note_refusal as record
+    record(task_id,message)
 
 
 PROVIDER_LABELS={'llm':'DeepSeek 文本','image':'硅基流动 生图','video':'MiniMax 视频'}

@@ -71,3 +71,29 @@ def test_legacy_diagnostics_do_not_invent_response_or_retry_uncertain_results():
             error=task_dict(task)['provider_error']
             assert error['source']=='legacy_status' and not error['provider_message'] and not error['request_id']
             assert task.result=={} and can_retry(task)==(status in (402,451))
+
+
+def test_a_call_refused_before_submission_is_repairable_without_a_provider_response():
+    """A picture stopped before submission has no response, and must still be generatable again."""
+    from backend.image_errors import error_message,note_refusal
+    reason='运营方提供的该模型 Key 今日已被供应商暂停。请填写自己的 API Key 继续。'
+    with Session.begin() as db:
+        db.add(Task(id='refused-image',kind='image',status='running',payload={'title':'公司急救培训室'},result={}))
+        db.add(Task(id='refused-video',kind='video',status='running',payload={},result={}))
+    note_refusal('refused-image',reason)
+    note_refusal('refused-video',reason)
+    with Session.begin() as db:
+        image=db.get(Task,'refused-image');image.status='needs_review'
+        error=task_dict(image)['provider_error']
+        # Video diagnostics stay out of an image-only repair path.
+        assert db.get(Task,'refused-video').result=={}
+    assert error['source']=='not_submitted' and error['http_status'] is None
+    assert error['provider_message']=='' and error['provider_code']=='' and error['request_id']==''
+    assert error['advice']==reason
+    # The interface shows the reason without inventing an HTTP status or a provider answer.
+    assert error_message(error)==f'这次生图没有提交给供应商。{reason}'
+    with Session() as db:assert can_retry(db.get(Task,'refused-image')) is True
+    # A picture that already has its file is never generated again, refusal recorded or not.
+    with Session.begin() as db:
+        done=db.get(Task,'refused-image');done.status='completed';done.result={**done.result,'media':'/media/refused-image.png'}
+    with Session() as db:assert can_retry(db.get(Task,'refused-image')) is False

@@ -455,12 +455,8 @@ def approve_images(db,ids,automatic=False):
         if a.data.get('status')!='approved':a.data={**a.data,'status':'approved'};a.version+=1
         db.add(Record(id=uid('audit'),kind='audit',data={'target':aid,'action':'workflow_image_accepted' if automatic else 'creative_image_approved','note':'工作流依据已锁定参考图继续制作；未宣称人工视觉审核' if automatic else '用户在图片审核页确认满意'}))
 
-def current_trials(pid):
-    result=prep.get(pid)
-    with Session() as db:
-        replaced={t.payload.get('revision_of') for t in db.scalars(select(Task)) if t.payload.get('preproduction_id')==pid and t.payload.get('revision_of')}
-    result['trials']=[t for t in result['trials'] if t['task']['id'] not in replaced]
-    return result
+# 已废弃线路：试拍（v1–v5 的 trial 步骤）。试拍图与定装图一起构成旧的"图像合成"阶段，
+# 当前线路直接用人物身份、服装与场景参考图生成视频。运行时代码见文件末尾的注释。
 
 @router.get('/{pid}')
 def workspace(pid:str):
@@ -473,7 +469,6 @@ def workspace(pid:str):
             items.append({**i,'task':task_dict(t) if t else None,'asset':record_dict(a) if a else None})
         watch=db.get(Task,r.data.get('watch',''))
         result={**record_dict(r),'items':items,'task':task_dict(watch) if watch else None}
-    result['trials']=current_trials(pid)['trials'] if r.data['stage']!='designing' else []
     result['production']=production.workspace(pid)
     return result
 
@@ -486,8 +481,6 @@ class Continue(BaseModel):
 # Which providers one continuation actually spends, so a spent budget elsewhere cannot block it.
 ADVANCE_KINDS={
     'assets_review':('llm','image'),
-    'fittings_review':('image',),
-    'trials_review':('llm','image'),
     'samples_review':('video',),
     'frames_review':('video',),
 }
@@ -495,70 +488,47 @@ ADVANCE_KINDS={
 
 @router.post('/{pid}/continue')
 def advance(pid:str,body:Continue,automatic:bool=False):
+    # 已废弃线路：v1–v6 的定装审核、试拍审核与基础素材推进。当前线路的对应动作在制作页的独立节点里
+    # （“确认基础素材，生成分镜”），这些阶段不再推进，也不再为定装或试拍提交任何生图请求。
+    if body.stage in ('assets_review','fittings_review','trials_review'):
+        raise HTTPException(409,'定装与试拍属于已移除的旧流程：当前流程直接使用人物身份、服装与场景参考图。'
+                                '请在制作页确认基础素材后生成分镜，或按当前风格重新测试这部作品。')
     paid(body,*ADVANCE_KINDS.get(body.stage,('llm','image','video')))
     if not body.confirm_review:raise HTTPException(422,'请先查看本页全部图片，确认满意后继续。')
     with Session() as db:
-        p=get_project(db,pid);r=get_run(db,pid);stage=r.data['stage'];data=dict(r.data)
+        get_project(db,pid);stage=get_run(db,pid).data['stage']
         if stage!=body.stage:raise HTTPException(409,'流程已更新，请刷新。')
         no_active(db,pid)
-    if stage=='assets_review':
-        if data.get('production_split'):raise HTTPException(409,'此作品已使用直接参考图分镜流程，请通过制作页的独立节点继续。')
-        with Session.begin() as db:
-            from .asset_workflow import queue_fittings
-            assets={};ids=[]
-            for i in data['items']:
-                a=image_asset(db,i['task_id']);ids.append(a.id);assets[i['task_id']]=a
-            approve_images(db,ids,automatic)
-            queue_fittings(db,get_run(db,pid),pid,assets)
-    elif stage=='fittings_review':
-        with Session.begin() as db:
-            from .asset_workflow import validate_dependencies
-            assets={};ids=[]
-            for look in data.get('looks',[]):
-                task=db.get(Task,look['task_id']);validate_dependencies(db,task.payload)
-                a=image_asset(db,look['task_id']);ids.append(a.id)
-                direct=look.get('direct_identity',False)
-                assets[a.id]={'role':'character','name':look['name'],
-                    'notes':'无需独立服装的已确认角色身份参考图' if direct else '固定身份与独立服装的已绑定定装参考图',
-                    'identity_asset_id':look['identity_asset_id'],'costume_asset_id':look.get('costume_asset_id')}
-            for item in data['items']:
-                if item['role']=='scene':
-                    a=image_asset(db,item['task_id']);assets[a.id]={'role':'scene','name':item['name'],'notes':item['design']}
-            if not ids:raise HTTPException(409,'定装合成尚未完成。')
-            approve_images(db,ids,automatic)
-        current=prep.get(pid)['config']
-        prep.save(pid,prep.Setup(expected_version=current['version'] if current else 0,style=data['visual_language'],assets=assets))
-        if data.get('production_split'):
-            prep.approve_references(pid,prep.get(pid)['stamp'])
-            save_run(pid,stage='composites_ready')
-            return {'stage':'composites_ready'}
-        token=prep.get(pid)['stamp'];chars=[a for a,v in assets.items() if v['role']=='character'];scenes=[a for a,v in assets.items() if v['role']=='scene']
-        pairs=list(dict.fromkeys([(a,scenes[0]) for a in chars]+[(chars[0],s) for s in scenes]))
-        for a,s in pairs:prep.trial(pid,prep.Trial(stamp=token,assets=[a,s],prompt='已完成定装的人物与场景试拍，沿用已绑定的人物身份和服装，不重新设计。',confirm_paid=True))
-        save_run(pid,stage='trials_review')
-    elif stage=='trials_review':
-        finish_composites(pid,automatic)
-        start_storyboard_stage(pid)
-    elif stage in ('samples_review','frames_review'):
+    if stage in ('samples_review','frames_review'):
         # Legacy rounds stopped at the removed shot-reference-image step; continue with the
         # reviewed base references instead of rendering any intermediate picture.
         start_reference_videos(pid)
-    else:raise HTTPException(409,'当前阶段不能继续。')
+    else:
+        raise HTTPException(409,'当前阶段不能继续。')
     return {'stage':get_status(pid)}
 
 
-def finish_composites(pid,automatic=False):
-    with Session() as db:direct_references=get_run(db,pid).data.get('production_split',False)
-    if direct_references:
-        prep.approve_references(pid,prep.get(pid)['stamp'])
-        save_run(pid,stage='composites_ready')
-        return
-    trials=current_trials(pid);ids=[]
-    with Session.begin() as db:
-        for t in trials['trials']:ids.append(image_asset(db,t['task']['id']).id)
-        approve_images(db,ids,automatic)
-    prep.approve(pid,prep.Approve(stamp=trials['stamp'],asset_ids=ids,note='自动工作流已验证参考资产覆盖和版本；视觉效果留待作者审片' if automatic else '管理员已确认全部人物场景试拍满意，开始自动分镜制作',confirm=True))
-    save_run(pid,stage='composites_ready')
+# 已废弃线路：v1–v6 的定装与试拍推进代码。它先为每个"身份＋服装"组合提交定装生图，再为每个
+# "定装＋场景"组合提交试拍生图，最后确认参考资产；当前线路不再生成这两类图片，因此不再执行。
+# def current_trials(pid):
+#     result=prep.get(pid)
+#     with Session() as db:
+#         replaced={t.payload.get('revision_of') for t in db.scalars(select(Task)) if t.payload.get('preproduction_id')==pid and t.payload.get('revision_of')}
+#     result['trials']=[t for t in result['trials'] if t['task']['id'] not in replaced]
+#     return result
+#
+# def finish_composites(pid,automatic=False):
+#     with Session() as db:direct_references=get_run(db,pid).data.get('production_split',False)
+#     if direct_references:
+#         prep.approve_references(pid,prep.get(pid)['stamp'])
+#         save_run(pid,stage='composites_ready')
+#         return
+#     trials=current_trials(pid);ids=[]
+#     with Session.begin() as db:
+#         for t in trials['trials']:ids.append(image_asset(db,t['task']['id']).id)
+#         approve_images(db,ids,automatic)
+#     prep.approve(pid,prep.Approve(stamp=trials['stamp'],asset_ids=ids,note='自动工作流已验证参考资产覆盖和版本；视觉效果留待作者审片' if automatic else '管理员已确认全部人物场景试拍满意，开始自动分镜制作',confirm=True))
+#     save_run(pid,stage='composites_ready')
 
 
 def prepare_reference_inputs(pid):

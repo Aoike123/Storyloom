@@ -42,7 +42,9 @@ def adopt_current_payer(task):
 def saved_task_phase(task):
     if task.payload.get('production_phase'):return task.payload['production_phase']
     if task.kind=='image':
-        if task.payload.get('asset_kind')=='dressed_character' or task.payload.get('preproduction_id'):return 'compositing'
+        # 已废弃线路：定装图与试拍图曾属于"图像合成"节点，该节点已移除，因此它们不再算作任何
+        # 节点的当前工作，只作为历史记录保留。
+        # if task.payload.get('asset_kind')=='dressed_character' or task.payload.get('preproduction_id'):return 'compositing'
         return None  # Removed shot-reference images are history, never current work.
     if task.kind=='video':return 'rendering'
     if task.kind=='creative_watch' or (task.kind=='director' and task.payload.get('stage')=='board'):return 'storyboarding'
@@ -98,6 +100,30 @@ def node_snapshots(db,work):
         task=db.get(Task,work.data.get('production_nodes',{}).get(phase,''))
         result.append({'id':phase,'name':node['name'],'hint':node['hint'],'task':task_dict(task) if task else None})
     return result if work.data.get('production_nodes') else []
+
+
+def stopped_stage_media(db,work,phase=None):
+    """The image and video items of one stage that stopped and still need a new version.
+
+    A stage is not one task: it owns every picture and clip it produced. Asking those items
+    separately is what keeps a stopped film from being repaired one file at a time.
+    """
+    phase=phase or work.data.get('stage')
+    if phase not in NODES:return []
+    sid=work.data.get('director_id','')
+    related=_related(db,sid) if sid else []
+    replaced={task.payload.get('revision_of') for task in related if task.payload.get('revision_of')}
+    return [task for task in related if task.id not in replaced and saved_task_phase(task)==phase
+            and task.kind in ('image','video') and task.status in PROBLEM]
+
+
+def failure_summary(failed,limit=800,listed=6):
+    """Name every stopped item of one stage, not only whichever failed first."""
+    shown=failed[:listed]
+    labels=[f"{task.payload.get('title') or task.payload.get('shot_id') or task.payload.get('label') or task.kind}：{task.message}"
+            for task in shown]
+    if len(failed)>len(shown):labels.append(f'另有 {len(failed)-len(shown)} 项未列出')
+    return '；'.join(dict.fromkeys(labels))[:limit]
 
 
 def retry_current_node(db,work):
@@ -258,7 +284,9 @@ def run_node(task_id,payload,owner):
         if any(task.status in BUSY for task in related):return False
         replaced={task.payload.get('revision_of') for task in related if task.payload.get('revision_of')}
         failed=[task for task in related if task.payload.get('production_phase')==phase and task.id not in replaced and task.status in ('failed','needs_review')]
-        if failed:raise HTTPException(409,NODES[phase]['name']+'暂停：'+failed[0].message)
+        # Every stopped picture and clip is named, so the operator sees the whole stage instead of
+        # one error while other items quietly wait for a decision of their own.
+        if failed:raise HTTPException(409,NODES[phase]['name']+'暂停：'+failure_summary(failed))
 
     advance=lambda stage:lambda pid:creative.advance(pid,creative.Continue(stage=stage,confirm_review=True,confirm_paid=True),automatic=stage!='assets_review')
     if phase=='storyboarding':

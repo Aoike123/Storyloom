@@ -71,10 +71,9 @@ def test_director_three_stages_persist_and_approval_gates_images(setup_source,mo
     config={'style':'固定二维漫画画风和冷色光线','assets':{'actor':{'role':'character','name':'主角','notes':'固定短发和灰色服装'},'set':{'role':'scene','name':'影棚','notes':'门在左侧，窗在右侧，光源来自右侧'} }}
     assert client.post('/api/preproduction/'+pid,json=config).status_code==200
     token=client.get('/api/preproduction/'+pid).json()['stamp']
-    with Session.begin() as db:
-        db.add(Task(id='fitting',kind='image',status='completed',payload={'preproduction_id':pid,'preproduction_stamp':token,'reference_ids':['actor','set']},result={'asset_id':'fit'}))
-        db.add(Record(id='fit',kind='asset',data={'status':'approved','source_task':'fitting','media':'/media/prep.png'}))
-    assert client.post('/api/preproduction/'+pid+'/approve',json={'stamp':token,'asset_ids':['fit'],'note':'角色服装比例与影棚布局均已确认','confirm':True}).status_code==200
+    # 定装与试拍已移除：直接用已确认的人物身份与场景参考图锁定输入。
+    from backend.preproduction import approve_references
+    assert approve_references(pid,token)=={'approved':True,'mode':'reference_images'}
     b=board()
     for shot in b['shots']:shot['assets']=['actor','set']
     answers=iter([b,{'shots':[{k:s[k] for k in ('id','first_frame','motion_prompt')} for s in b['shots']]},review])

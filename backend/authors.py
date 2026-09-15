@@ -15,7 +15,8 @@ from . import creative, director
 from . import zhihu_stories
 from .catalog import labels
 from .skill_runtime import call_node
-from .production_nodes import NODES, queue_node, node_snapshots, is_node_task, phase_for_saved_state, retry_current_node
+from .production_nodes import (NODES, queue_node, node_snapshots, is_node_task, phase_for_saved_state,
+                               retry_current_node, stopped_stage_media)
 
 router = APIRouter(prefix='/api/author', tags=['author'])
 open_lock = Lock()
@@ -238,6 +239,29 @@ class ImageRetry(BaseModel):
     confirm_paid:bool=False
 
 
+def requeue_image(db,row,tid):
+    """Queue one fresh version of a rejected base picture, keeping its saved prompt and design."""
+    sid=row.data['director_id'];run=creative.get_run(db,sid);old=db.get(Task,tid)
+    saved=old.result.get('generation_request') or {}
+    prompt=saved.get('prompt') or old.payload.get('prompt')
+    if not prompt:raise HTTPException(409,'没有可恢复的图片提示词，请重新准备素材。')
+    task=Task(id=uid('image'),kind='image',payload={**old.payload,'prompt':prompt,'revision_of':tid})
+    db.add(task)
+    creative.prep.invalidate_downstream_references(db,sid,'失败的基础素材已重试并建立新版本',task.id)
+    run.data={**run.data,'items':[{**item,'task_id':task.id} if item['task_id']==tid else item for item in run.data['items']]}
+    run.version+=1
+    old.status='superseded'  # Keep the original rejection and request for history.
+    return task
+
+
+def open_repair_round(db,row):
+    """Let the round finish once the queued repairs are back, and stop the old supervisor."""
+    supervisor=db.get(Task,row.data.get('supervisor',''))
+    if supervisor and supervisor.status in creative.BUSY:raise HTTPException(409,'制作流程仍在运行，请等待后再处理。')
+    if supervisor:supervisor.status='superseded'
+    row.data={k:v for k,v in row.data.items() if k!='assets_confirmed_at'}
+
+
 @router.post('/projects/{pid}/images/{tid}/retry')
 def retry_image(pid:str,tid:str,body:ImageRetry):
     """Retry one rejected base image, keeping the approved design and other images."""
@@ -247,23 +271,35 @@ def retry_image(pid:str,tid:str,body:ImageRetry):
         if tid not in {item['task_id'] for item in retryable_images(db,row)}:
             raise HTTPException(409,'该图片当前不能单独重试；请检查是否已被替换、属于旧轮次，或调用结果仍不确定。')
         sid=row.data['director_id'];creative.get_project(db,sid);creative.no_active(db,sid)
-        run=creative.get_run(db,sid);old=db.get(Task,tid)
-        saved=old.result.get('generation_request') or {}
-        prompt=saved.get('prompt') or old.payload.get('prompt')
-        if not prompt:raise HTTPException(409,'没有可恢复的图片提示词，请重新准备素材。')
-        task=Task(id=uid('image'),kind='image',payload={**old.payload,'prompt':prompt,'revision_of':tid})
-        db.add(task)
-        creative.prep.invalidate_downstream_references(db,sid,'失败的基础素材已重试并建立新版本',task.id)
-        run.data={**run.data,'items':[{**item,'task_id':task.id} if item['task_id']==tid else item for item in run.data['items']]}
-        run.version+=1
-        supervisor=db.get(Task,row.data.get('supervisor',''))
-        if supervisor and supervisor.status in creative.BUSY:raise HTTPException(409,'制作流程仍在运行，请等待后再处理。')
-        if supervisor:supervisor.status='superseded'
-        old.status='superseded'  # Keep the original rejection and request for history.
-        row.data={k:v for k,v in row.data.items() if k!='assets_confirmed_at'}
-        schedule(db,row,'preparing')
+        task=requeue_image(db,row,tid)
+        open_repair_round(db,row)
+        # The supervisor can only finish once every rejected picture is back, so it is queued with
+        # the last repair. Queueing it earlier left it waiting on the other pictures and refused the
+        # visitor's next "重试这张图片" with "制作流程仍在运行".
+        if not [item for item in retryable_images(db,row) if item['task_id']!=tid]:schedule(db,row,'preparing')
         db.flush()
         return {'queued':True,'task':task_dict(task)}
+
+
+@router.post('/projects/{pid}/images/retry')
+def retry_images(pid:str,body:ImageRetry):
+    """Queue a fresh version of every rejected base picture in one action.
+
+    The panel lists one button per picture, so a stopped run of several pictures used to be
+    repaired one click at a time; a single visitor action must be able to bring the whole set back.
+    """
+    creative.paid(body,'image')
+    with attempt_lock,Session.begin() as db:
+        row=get_work(db,pid)
+        images=retryable_images(db,row)
+        if not images:
+            raise HTTPException(409,'当前没有可重试的失败图片；请检查是否已被替换、属于旧轮次，或调用结果仍不确定。')
+        sid=row.data['director_id'];creative.get_project(db,sid);creative.no_active(db,sid)
+        tasks=[requeue_image(db,row,item['task_id']) for item in images]
+        open_repair_round(db,row)
+        schedule(db,row,'preparing')
+        db.flush()
+        return {'queued':True,'tasks':[task_dict(task) for task in tasks]}
 
 
 @router.post('/projects/{pid}/redesign')
@@ -389,14 +425,21 @@ def resume(pid: str):
         if rejected:raise HTTPException(409,'请先重试失败图片：'+'、'.join(item['name'] for item in rejected)+'。其他已完成素材会保留。')
         if row.data['stage']=='preparing' and row.data.get('director_id'):
             creative.resume_saved_design(db,row.data['director_id'])
-        if row.data['stage']=='storyboarding' and row.data.get('director_id'):
-            creative.resume_saved_storyboard(db,row.data['director_id'])
-        if row.data['stage'] in NODES:queue_node(db,row,row.data['stage'])
-        elif row.data['stage'] in ('producing','compositing'):
+        if row.data['stage'] in ('producing','compositing'):
             run=creative.get_run(db,row.data['director_id'])
             if old:old.status='superseded'
-            queue_node(db,row,phase_for_saved_state(run.data['stage']))
-        else:schedule(db,row,row.data['stage'])
+            row.data={**row.data,'stage':phase_for_saved_state(run.data['stage'])}
+        if row.data['stage'] not in NODES:
+            schedule(db,row,row.data['stage'])
+        elif stopped_stage_media(db,row):
+            # Continuing must re-queue every stopped picture and clip of this stage: the stage is
+            # only re-runnable once its own items are back, so a fresh coordinator alone left the
+            # film stopping again on whichever item failed first.
+            retry_current_node(db,row)
+        else:
+            if row.data['stage']=='storyboarding' and row.data.get('director_id'):
+                creative.resume_saved_storyboard(db,row.data['director_id'])
+            queue_node(db,row,row.data['stage'])
     return {'queued':True}
 
 
@@ -526,7 +569,8 @@ def flow(task_id, payload):
         if payload.get('run_id')!=data.get('run_id'):raise HTTPException(409,'此任务属于已失效的旧轮次，不会更新当前制作。')
         sid=data.get('director_id')
     from .workflows import WORKFLOWS
-    if data.get('workflow','author-brainstorm-v1') not in WORKFLOWS:
+    # A record without a pinned version is pre-versioning work; the only live line applies to it.
+    if data.get('workflow','author-brainstorm-v7') not in WORKFLOWS:
         raise HTTPException(409,'制作工作流版本不可用，请由后台处理')
     if not sid:
         # Recover a director created before a supervisor interruption, rather than enqueue a duplicate.

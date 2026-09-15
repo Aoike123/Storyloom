@@ -14,6 +14,9 @@ REJECTIONS={
     451:('rejected','生图请求被服务商拒绝','请查看供应商说明；仅凭 HTTP 451 不能判定余额不足。'),
 }
 RETRYABLE_STATUS={400,401,402,403,404,409,422,429,451}
+# A refusal raised before anything reached the provider. Nothing can have been billed, so the
+# picture may be generated again; it is the one failure that carries no provider response.
+NOT_SUBMITTED='not_submitted'
 
 
 def safe_text(value,secrets=(),limit=800):
@@ -34,6 +37,33 @@ def describe(status):
         '生图服务暂时异常' if status>=500 else '生图请求未被接受',
         '请核对供应商记录后处理，未自动重复提交。'))
     return {'provider':'siliconflow','http_status':status,'category':category,'summary':summary,'advice':advice}
+
+
+def refusal_error(reason):
+    """A refusal raised before submission: the provider never saw this picture."""
+    return {'provider':'local','http_status':None,'category':NOT_SUBMITTED,'summary':'这次生图没有提交给供应商',
+            'advice':safe_text(reason) or '请确认这一步可以调用模型后重试这张图片。',
+            'provider_message':'','provider_code':'','request_id':'','source':NOT_SUBMITTED,
+            'captured_at':time.time()}
+
+
+def note_refusal(task_id,reason):
+    """Remember a refusal raised before submission, so the picture stays repairable.
+
+    Every other failure carries a provider response to inspect, and a picture with no response and
+    no record looked impossible to repair: a visitor who attached their own key after the operator's
+    key ran out could only ever regenerate the one picture that had been refused by the provider.
+    """
+    error=refusal_error(reason)
+    with Session.begin() as db:
+        task=db.get(Task,task_id)
+        if not task or task.kind!='image' or task.status!='running':return
+        task.result={**task.result,'provider_error':error}
+        activity=db.get(Record,'activity_'+task_id)
+        if activity:
+            event={'phase':'refused','message':error_message(error),'at':error['captured_at']}
+            activity.data={**activity.data,'phase':'refused','message':event['message'],
+                'updated_at':event['at'],'events':[*activity.data.get('events',[]),event][-24:]}
 
 
 def response_error(response,config):
@@ -57,6 +87,7 @@ def response_error(response,config):
 
 
 def error_message(error):
+    if not error.get('http_status'):return f"{error['summary']}。{error['advice']}"
     return f"{error['summary']}（HTTP {error['http_status']}）。{error['advice']}"
 
 
@@ -84,6 +115,8 @@ def task_error(task):
 
 
 def can_retry(task):
+    """Whether one picture may be generated again without repeating a paid submission."""
     error=task_error(task)
-    return bool(task.status in ('failed','needs_review') and not task.result.get('asset_id')
-        and not task.result.get('media') and error and error['http_status'] in RETRYABLE_STATUS)
+    if not error or task.status not in ('failed','needs_review'):return False
+    if task.result.get('asset_id') or task.result.get('media'):return False
+    return error.get('source')==NOT_SUBMITTED or error.get('http_status') in RETRYABLE_STATUS

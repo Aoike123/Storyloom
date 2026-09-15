@@ -62,7 +62,11 @@ def two_costume_design(system,payload,*args,**kwargs):
     return design_response(system,payload,*args,**kwargs)
 
 
-def test_real_workflow_fits_two_costumes_to_one_frozen_identity(creative,monkeypatch):
+def test_real_workflow_keeps_two_costumes_on_one_frozen_identity(creative,monkeypatch):
+    """一个身份可以有多套服装；服装与身份绑定后，同一镜头不能把两套服装当成两个角色。
+
+    定装合成步骤已移除，因此这里不再生成定装图；绑定与去重规则仍需成立。
+    """
     calls=[]
     def design(system,payload,*args,**kwargs):
         calls.append(payload['schema']['title'])
@@ -83,27 +87,34 @@ def test_real_workflow_fits_two_costumes_to_one_frozen_identity(creative,monkeyp
         assert len([i for i in items if i['role']=='costume'])==2
         assert len(list(db.scalars(select(Task).where(Task.kind=='image'))))==4
         assert 'wardrobe' not in identity_task.payload['asset_spec']
-    assert advance(creative,'assets_review').status_code==200
-    assert advance(creative,'trials_review').status_code==409
+    assert advance(creative,'assets_review').status_code==409
+    drain()
+    with Session.begin() as db:
+        run=db.get(Record,'creative_pid')
+        rows=[db.get(Record,db.get(Task,item['task_id']).result['asset_id']) for item in run.data['items']]
+        c.approve_images(db,[row.id for row in rows])
+        identity=next(row for row in rows if row.data.get('asset_kind')=='character_sheet')
+        costumes=[row for row in rows if row.data.get('asset_kind')=='costume_sheet']
+        scene=next(row for row in rows if row.data.get('asset_kind')=='scene_sheet')
+    assert identity.id==identity_asset
+    # 两套服装都绑定同一个人物身份：换装不会新增人物身份，两套服装可以并存。
+    prep.save('pid',prep.Setup(expected_version=0,style='固定二维漫画画风与冷色光线',assets={
+        identity.id:{'role':'character','name':'女主','notes':'固定短发与灰色服装'},
+        costumes[0].id:{'role':'costume','name':'外套','notes':'深灰长外套','identity_asset_id':identity.id},
+        costumes[1].id:{'role':'costume','name':'连衣裙','notes':'藏蓝连衣裙','identity_asset_id':identity.id},
+        scene.id:{'role':'scene','name':'走廊','notes':'门在左侧，窗在右侧'}}))
     with Session() as db:
-        run=db.get(Record,'creative_pid');assert run.data['stage']=='fittings_review'
-        fittings=[db.get(Task,look['task_id']) for look in run.data['looks']]
-        assert len(fittings)==2
-        assert {t.payload['identity_asset_id'] for t in fittings}=={identity_asset}
-        assert len({t.payload['costume_asset_id'] for t in fittings})==2
-        assert len({t.payload['reference_media'][0] for t in fittings})==1
-        assert all(len(t.payload['reference_media'])==2 for t in fittings)
-        assert all(t.payload['asset_dependencies'][0]['asset_id']==identity_asset for t in fittings)
-    drain()
-    assert advance(creative,'fittings_review').status_code==200
-    drain()
-    config=prep.get('pid')['config'];actors=[aid for aid,s in config['assets'].items() if s['role']=='character']
-    assert {config['assets'][aid]['identity_asset_id'] for aid in actors}=={identity_asset}
+        assert set(db.get(Record,'prep_pid').data['assets'])=={identity.id,costumes[0].id,costumes[1].id,scene.id}
+    # 同一镜头把同一身份的两个组合参考当作两个角色会被拒绝。
+    editable={identity.id:{'role':'character','identity_asset_id':identity.id},
+              costumes[0].id:{'role':'character','identity_asset_id':identity.id,'costume_asset_id':costumes[0].id},
+              costumes[1].id:{'role':'character','identity_asset_id':identity.id,'costume_asset_id':costumes[1].id},
+              scene.id:{'role':'scene'}}
     with pytest.raises(HTTPException,match='同一人物'):
-        asset_workflow.validate_shot_identities(actors,config['assets'])
-    with Session.begin() as db:db.get(Record,identity_asset).version+=1
+        asset_workflow.validate_shot_identities([identity.id,costumes[0].id,costumes[1].id,scene.id],editable)
+    with Session.begin() as db:db.get(Record,identity.id).version+=1
     with Session() as db:
-        with pytest.raises(HTTPException,match='版本'):
+        with pytest.raises(HTTPException,match='参考图已变化'):
             prep.snapshot(db,'pid')
 
 
@@ -128,16 +139,19 @@ def test_costume_edit_does_not_recreate_character_identity(creative,monkeypatch)
         assert len([t for t in db.scalars(select(Task).where(Task.kind=='image')) if t.payload.get('asset_kind')=='character_sheet'])==1
 
 
-def test_changed_identity_stops_fitting_before_paid_request(creative,monkeypatch):
-    creative.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'悬疑','confirm_paid':True});drain()
-    assert advance(creative,'assets_review').status_code==200
-    with Session.begin() as db:
-        look=db.get(Record,'creative_pid').data['looks'][0]
-        db.get(Record,look['identity_asset_id']).version+=1
-    monkeypatch.setattr(worker,'generate_image',lambda *a,**k:pytest.fail('A stale identity must not generate a new fitting'))
-    monkeypatch.setattr(worker,'generate_from_references',lambda *a,**k:pytest.fail('A stale identity must not compose a fitting'))
-    assert worker.process_one('fitting-test')
-    with Session() as db:assert db.get(Task,look['task_id']).status=='needs_review'
+# 已废弃线路：定装合成（v1–v5）。下面的用例验证"身份图变化后旧的定装任务不会重新提交"，随
+# queue_fittings 一起停用；当前线路不再生成定装图，版本失效规则由 prep.snapshot 与
+# prep.approve_references 承担（见上面的版本断言）。
+# def test_changed_identity_stops_fitting_before_paid_request(creative,monkeypatch):
+#     creative.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'悬疑','confirm_paid':True});drain()
+#     assert advance(creative,'assets_review').status_code==200
+#     with Session.begin() as db:
+#         look=db.get(Record,'creative_pid').data['looks'][0]
+#         db.get(Record,look['identity_asset_id']).version+=1
+#     monkeypatch.setattr(worker,'generate_image',lambda *a,**k:pytest.fail('A stale identity must not generate a new fitting'))
+#     monkeypatch.setattr(worker,'generate_from_references',lambda *a,**k:pytest.fail('A stale identity must not compose a fitting'))
+#     assert worker.process_one('fitting-test')
+#     with Session() as db:assert db.get(Task,look['task_id']).status=='needs_review'
 
 
 def test_legacy_prompt_cannot_reenter_asset_generation(creative,monkeypatch):
@@ -152,24 +166,25 @@ def test_legacy_prompt_cannot_reenter_asset_generation(creative,monkeypatch):
         assert not list(db.scalars(select(Task).where(Task.kind=='image')))
 
 
-def test_fitting_graph_reuses_unchanged_pair_and_rebuilds_only_changed_costume(creative,monkeypatch):
-    monkeypatch.setattr(c,'chat_json',two_costume_design)
-    creative.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'悬疑','confirm_paid':True});drain()
-    advance(creative,'assets_review');drain()
-    with Session.begin() as db:
-        run=db.get(Record,'creative_pid');before=copy.deepcopy(run.data['looks'])
-        assets={i['task_id']:db.get(Record,db.get(Task,i['task_id']).result['asset_id']) for i in run.data['items']}
-        asset_workflow.queue_fittings(db,run,'pid',assets)
-        assert run.data['looks']==before
-    with Session.begin() as db:
-        run=db.get(Record,'creative_pid')
-        costume_asset=db.get(Record,before[0]['costume_asset_id']);costume_asset.version+=1
-        assets={i['task_id']:db.get(Record,db.get(Task,i['task_id']).result['asset_id']) for i in run.data['items']}
-        asset_workflow.queue_fittings(db,run,'pid',assets)
-        after=run.data['looks']
-        assert after[0]['task_id']!=before[0]['task_id']
-        assert after[1]['task_id']==before[1]['task_id']
-        assert after[0]['identity_asset_id']==before[0]['identity_asset_id']
-        task=db.get(Task,after[0]['task_id'])
-        assert task.payload['revision_of']==before[0]['task_id']
-        assert len([t for t in db.scalars(select(Task).where(Task.kind=='image')) if t.payload.get('asset_kind')=='character_sheet'])==1
+# 已废弃线路：定装的复用规则（身份与服装都没变时沿用原定装任务，只有服装变化时重建该套定装）。
+# def test_fitting_graph_reuses_unchanged_pair_and_rebuilds_only_changed_costume(creative,monkeypatch):
+#     monkeypatch.setattr(c,'chat_json',two_costume_design)
+#     creative.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'悬疑','confirm_paid':True});drain()
+#     advance(creative,'assets_review');drain()
+#     with Session.begin() as db:
+#         run=db.get(Record,'creative_pid');before=copy.deepcopy(run.data['looks'])
+#         assets={i['task_id']:db.get(Record,db.get(Task,i['task_id']).result['asset_id']) for i in run.data['items']}
+#         asset_workflow.queue_fittings(db,run,'pid',assets)
+#         assert run.data['looks']==before
+#     with Session.begin() as db:
+#         run=db.get(Record,'creative_pid')
+#         costume_asset=db.get(Record,before[0]['costume_asset_id']);costume_asset.version+=1
+#         assets={i['task_id']:db.get(Record,db.get(Task,i['task_id']).result['asset_id']) for i in run.data['items']}
+#         asset_workflow.queue_fittings(db,run,'pid',assets)
+#         after=run.data['looks']
+#         assert after[0]['task_id']!=before[0]['task_id']
+#         assert after[1]['task_id']==before[1]['task_id']
+#         assert after[0]['identity_asset_id']==before[0]['identity_asset_id']
+#         task=db.get(Task,after[0]['task_id'])
+#         assert task.payload['revision_of']==before[0]['task_id']
+#         assert len([t for t in db.scalars(select(Task).where(Task.kind=='image')) if t.payload.get('asset_kind')=='character_sheet'])==1
