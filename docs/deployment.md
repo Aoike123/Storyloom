@@ -189,6 +189,46 @@ daemon's global registry configuration.
 bash scripts/deploy.sh
 ```
 
+### If the first deploy after a Compose change stops with "has active endpoints"
+
+`scripts/deploy.sh` runs `up --remove-orphans`, which makes Docker recreate the default network
+whenever its definition changes — for example the first release that pins
+`STORYLOOM_NETWORK_SUBNET`. Containers still attached to the old network block that recreate, and
+the run stops with:
+
+```text
+error while removing network: network storyloom_default has active endpoints
+```
+
+Stop the containers first, then deploy. Omitting `-v` keeps every named volume, so works, media and
+the database are untouched:
+
+```bash
+docker compose --env-file .env.production -f compose.production.yaml down --remove-orphans
+bash scripts/deploy.sh
+# The Caddyfile is mounted, not reloaded: restart Caddy so a new public path takes effect.
+docker compose --env-file .env.production -f compose.production.yaml restart caddy
+```
+
+Never add `-v` to that `down`: it deletes `postgres_data`, `story_data` and the Caddy volumes.
+
+### Verify the Zhihu login after deploying
+
+```bash
+curl -s https://<SITE_ADDRESS>/api/zhihu/status
+```
+
+`"configured":true` means the App ID, App Key and redirect URI were all read. Then confirm that the
+login actually sends the registered callback, which is the value the activity page must match
+character for character:
+
+```bash
+curl -s -o /dev/null -w '%{redirect_url}\n' https://<SITE_ADDRESS>/api/zhihu/login
+```
+
+The decoded `redirect_uri` must equal the address registered on the activity page. A mismatch there
+is the most common cause of a login that fails before the consent screen.
+
 The script validates Compose and Caddy configuration, builds immutable
 application images, starts services in dependency order, and waits for the
 database, API, worker, and web health checks. It never removes data volumes.
