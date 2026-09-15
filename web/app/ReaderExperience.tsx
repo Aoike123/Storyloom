@@ -160,7 +160,7 @@ export default function ReaderExperience() {
         const response = await fetch('/api/reader/catalog' + (force ? '?refresh=true' : ''), {
           signal: abort.signal, headers: modelAccessHeaders(),
         });
-        if (!response.ok) throw Error('暂时无法读取故事目录，请稍后重试。');
+        if (!response.ok) throw Error('暂时无法读取故事市场，请稍后重试。');
         const data: Catalog = await response.json();
         if (!alive) return;
         catalogRef.current = data; setCatalog(data); setMessage('');
@@ -397,29 +397,33 @@ export default function ReaderExperience() {
     {!story ? <div className="reader-catalog-page">
       <ReaderHero items={carouselItems} loading={loading || (!!catalog?.items.length && !carouselItems.length)} activeId={activeId} onActiveChange={setActiveId} onOpen={openItem}/>
       <section id="reader-shelf" className="reader-shelf">
-        <div className="reader-section-title">
-          <div><span className="reader-kicker">THE STORY COLLECTION</span><h2>脑洞微小说 · 故事目录</h2></div>
-          <span>{catalog ? catalog.brainstorm_count + ' 篇原作 · ' + productionTotal + ' 部公开漫剧' : '正在读取目录'}</span>
+        <div className="reader-section-title catalog-market-head">
+          <div className="catalog-market-copy"><span className="reader-kicker">STORY MARKET</span><h2>故事市场</h2>
+            <p>看公开版本，临时改写一段；也可以从同一篇原作开始，制作属于你的完整漫剧。</p>
+          </div>
+          {catalog ? <div className="catalog-summary" aria-label={`${catalog.brainstorm_count} 篇原作，${productionTotal} 个公开版本`}>
+            <span><strong>{catalog.brainstorm_count}</strong> 篇原作</span><i/><span><strong>{productionTotal}</strong> 个公开版本</span>
+          </div> : <div className="catalog-summary is-loading">正在载入市场…</div>}
         </div>
         <div className="catalog-toolbar">
-          <div className="catalog-filters" aria-label="筛选故事状态">{[['ready', '可观看 / 可改写'], ['pending', '等待第一版'], ['all', '全部故事']].map(([value, label]) =>
+          <div className="catalog-filters" aria-label="筛选故事市场">{[['ready', '正在放映'], ['pending', '等待创作'], ['all', '全部原作']].map(([value, label]) =>
             <button key={value} aria-pressed={filter === value} className={filter === value ? 'selected' : ''} onClick={() => setFilter(value)}>{label}</button>)}</div>
-          <label className="catalog-search"><Search size={16}/><input aria-label="搜索微小说" placeholder="搜索标题或简介" value={searchInput}
+          <label className="catalog-search"><Search size={16}/><input aria-label="搜索原作" placeholder="搜索原作标题或简介" value={searchInput}
             onCompositionStart={() => {composing.current = true;}}
             onCompositionEnd={event => {composing.current = false; setQuery(event.currentTarget.value);}}
             onChange={event => {setSearchInput(event.target.value); if (!composing.current) setQuery(event.target.value);}}/></label>
           <button className="catalog-refresh" disabled={loading} onClick={() => setRefresh(value => value + 1)}>
-            {loading && <LoaderCircle size={13} className="feedback-spin"/>}{loading ? '读取中…' : '刷新目录'}
+            {loading && <LoaderCircle size={13} className="feedback-spin"/>}{loading ? '刷新中…' : '刷新'}
           </button>
         </div>
-        {catalog?.warning && <div className="catalog-warning" role="status">{catalog.stale ? '故事服务暂不可用，正在显示已保存的目录。' : '故事目录暂时无法读取，当前仅展示本地可观看的作品。'}{catalog.fetched_at && <small>目录保存于 {new Date(catalog.fetched_at * 1000).toLocaleString('zh-CN')}</small>}</div>}
+        {catalog?.warning && <div className="catalog-warning" role="status">{catalog.stale ? '故事服务暂不可用，正在显示已保存的市场内容。' : '故事市场暂时无法读取，当前仅展示本地可观看的作品。'}{catalog.fetched_at && <small>内容保存于 {new Date(catalog.fetched_at * 1000).toLocaleString('zh-CN')}</small>}</div>}
         {message && <div className="catalog-warning catalog-error" role="alert">{message}<button onClick={() => setRefresh(value => value + 1)} disabled={loading}>重试读取</button></div>}
-        {loading && !catalog ? <div className="reader-story-grid catalog-skeleton-grid" role="status" aria-label="正在打开脑洞故事库"><span className="feedback-sr-only">正在打开脑洞故事库</span>{[0, 1, 2].map(id =>
+        {loading && !catalog ? <div className="reader-story-grid catalog-skeleton-grid" role="status" aria-label="正在打开故事市场"><span className="feedback-sr-only">正在打开故事市场</span>{[0, 1, 2].map(id =>
           <div className="reader-story-card catalog-skeleton" key={id} aria-hidden="true"><div className="catalog-poster"/><div className="catalog-story-info"><i/><i/><i/></div></div>)}</div>
           : !visible.length ? <div className="reader-empty" role="status">
-            <span>{query ? '没有找到匹配的微小说。' : filter === 'ready' ? '还没有人发布过漫剧。' : '暂时没有可展示的故事。'}</span>
-            <p>{filter === 'ready' && !query ? '切到「等待第一版」，选择一篇原作做出第一个完整版本。' : '可以刷新目录或调整筛选条件。'}</p>
-            {(filter !== 'all' || query) && <button onClick={clearFilters}>查看全部故事 →</button>}
+            <span>{query ? '没有找到匹配的原作。' : filter === 'ready' ? '还没有公开放映的版本。' : '暂时没有可展示的原作。'}</span>
+            <p>{filter === 'ready' && !query ? '切到「等待创作」，从一篇原作制作第一个完整版本。' : '可以刷新内容或调整筛选条件。'}</p>
+            {(filter !== 'all' || query) && <button onClick={clearFilters}>浏览全部原作 →</button>}
           </div> : <ReaderStoryGrid ids={shelfGroups.map(group => group.item.id)}>{shelfGroups.map(({item, productions, stacked, order}) => {
             const active = Math.min(versionChoice[item.id] ?? 0, Math.max(0, productions.length - 1));
             const release = productions[active] || item.release;
@@ -438,7 +442,7 @@ export default function ReaderExperience() {
                   <ReaderArtwork src={cover} order={order}/><span className="catalog-not-made">还没有人做出漫剧</span>
                 </Link>}
                 {playable && <ReaderCreatorAvatar creator={release?.creator} className="catalog-creator"/>}
-                <span className="catalog-status">{playable ? '可观看 · 可临时改写' : stage ? '我的制作 · ' + stage.name : '等待第一版'}</span>
+                <span className="catalog-status">{playable ? '公开放映 · 可临时改写' : stage ? '我的制作 · ' + stage.name : '等待创作'}</span>
                 {stacked && <span className="catalog-stack-count">{productions.length} 个版本</span>}
               </div>
               <div className="catalog-story-info">

@@ -86,15 +86,28 @@
 .catalog-skeleton .catalog-story-info{height:226px;gap:15px;padding-top:25px}
 .catalog-skeleton i{display:block;height:12px;width:75%;border-radius:3px;background:#c9dfab13}.catalog-skeleton i:first-child{width:35%;height:9px}.catalog-skeleton i:last-child{width:90%;height:54px}
 .reader-story-grid{position:relative}
-.reader-shelf{scroll-margin-top:20px}
+.reader-shelf{scroll-margin-top:20px;padding-top:42px}
+.catalog-market-head{align-items:flex-end;gap:32px;padding-bottom:19px;border-bottom:1px solid #ffffff12}
+.catalog-market-copy>.reader-kicker{display:block;color:#b4c99f;font-size:10px;letter-spacing:2.6px}
+.reader-section-title>.catalog-market-copy h2{margin:9px 0 6px;font-size:28px;line-height:1.35;letter-spacing:.2px}
+.catalog-market-copy>p{max-width:660px;margin:0;color:#87968b;font-size:11px;line-height:1.8}
+.catalog-summary{display:flex;flex:0 0 auto;align-items:center;gap:13px;min-height:48px;padding:8px 13px;border:1px solid #ffffff14;border-radius:8px;background:#ffffff03;color:#8f9e93}
+.catalog-summary span{display:flex;align-items:baseline;gap:4px;white-space:nowrap;font-size:10px}
+.catalog-summary strong{color:#cbdab9;font-size:18px;font-weight:500;font-variant-numeric:tabular-nums}
+.catalog-summary i{width:1px;height:21px;background:#ffffff14}
+.catalog-summary.is-loading{color:#849087;font-size:11px}
+.catalog-toolbar{gap:10px;margin:14px 0 28px}
+.catalog-filters{padding:3px;border-color:#ffffff14;background:#ffffff04}
 .reader-story-card:focus-within{border-color:#a0bc7d77}
 .catalog-poster>a:active,.catalog-poster>button:active{transform:scale(.992)}
 .catalog-filters button:active,.catalog-card-actions a:active,.catalog-card-actions button:active,.reader-save-wish:active:not(:disabled){transform:translateY(1px)}
-.catalog-filters button{min-height:40px;transition:background .16s,color .16s,transform .1s}
+.catalog-filters button{min-height:38px;padding:8px 15px;transition:background .16s,color .16s,transform .1s}
 .catalog-card-actions a,.catalog-card-actions button{min-height:32px}
 .catalog-search:focus-within{border-color:#b4d395;box-shadow:0 0 0 2px #b4d39516}
 .catalog-search input:focus{outline:0}
-.catalog-refresh{min-width:78px;min-height:40px;display:inline-flex;gap:5px;align-items:center;justify-content:center}
+.catalog-search{width:min(300px,28vw);min-height:44px;margin-left:auto;padding:9px 13px}
+.catalog-refresh{min-width:70px;min-height:44px;padding:0 13px;display:inline-flex;gap:5px;align-items:center;justify-content:center;border:1px solid #ffffff14;border-radius:7px;background:#ffffff03}
+.catalog-refresh:hover:not(:disabled){border-color:#8eaa78;background:#ffffff07;color:#cfe2b9!important}
 .catalog-error{display:flex;justify-content:space-between;gap:15px;align-items:center}.catalog-error button{white-space:nowrap;min-height:36px;text-decoration:underline;text-underline-offset:4px}
 .reader-world a:focus-visible,.reader-world button:focus-visible{outline:2px solid #d7efb4;outline-offset:3px}
 .reader-cover-link:focus-visible{outline:none!important}
@@ -132,8 +145,12 @@
   .reader-cover-skeleton{height:266px;overflow:hidden;padding-top:7px}.reader-cover-skeleton i{top:7px;width:210px;height:250px}
   .reader-cover-skeleton i:nth-child(1){translate:-50% -4px}.reader-cover-skeleton i:nth-child(2){translate:calc(-50% - 92px) 8px;scale:.86}.reader-cover-skeleton i:nth-child(3){translate:calc(-50% + 92px) 8px;scale:.86}
   .reader-cover-empty{height:266px}.reader-shelf{padding-top:30px}
+  .catalog-market-head{align-items:flex-start}.catalog-market-copy>p{max-width:520px}
+  .catalog-toolbar{flex-wrap:wrap}.catalog-search{width:auto;min-width:230px}
 }
 @media(max-width:620px){
+  .catalog-market-head{flex-direction:column;gap:14px;padding-bottom:16px}.reader-section-title>.catalog-market-copy h2{font-size:25px}
+  .catalog-summary{width:100%;justify-content:space-around}.catalog-toolbar{margin-top:12px}
   .catalog-search{min-width:0}.catalog-search input{min-width:0;font-size:16px}
   .catalog-filters button{min-height:44px;padding:9px 10px}.catalog-card-actions a,.catalog-card-actions button{min-height:44px}
   .catalog-card-actions{align-items:flex-start}.catalog-card-actions .catalog-create{max-width:52%}

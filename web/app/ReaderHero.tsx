@@ -42,7 +42,7 @@ export default function ReaderHero({items, loading, activeId, onActiveChange, on
       <a href="#reader-shelf" className="reader-browse-all" onClick={event => {
         event.preventDefault();
         document.getElementById('reader-shelf')?.scrollIntoView({behavior: reducedMotion() ? 'instant' : 'smooth', block: 'start'});
-      }}>浏览全部故事 <ArrowDown size={15}/></a>
+      }}>进入故事市场 <ArrowDown size={15}/></a>
     </div>
     <div className="reader-cover-stage">
       {loading && !items.length ? <div className="reader-cover-skeleton" aria-label="正在准备故事封面" role="status">
@@ -83,7 +83,7 @@ export default function ReaderHero({items, loading, activeId, onActiveChange, on
               <div className="reader-cover-visual">
                 <ReaderArtwork src={visible ? artwork : undefined} order={index} eager={distance <= 1} priority={offset === 0} showNumber={false}/>
                 {playable && <ReaderCreatorAvatar creator={item.release?.creator} className="reader-cover-creator"/>}
-                <span className="reader-cover-status">{playable ? '可观看 · 可改写' : '等待第一版'}</span>
+                <span className="reader-cover-status">{playable ? '公开放映' : '等待创作'}</span>
                 <div className="reader-cover-copy">
                   <span className="reader-cover-tags">{item.labels.slice(0, 2).join(' · ') || '脑洞故事'}</span>
                   <h2>{item.title || '未提供标题'}</h2>
