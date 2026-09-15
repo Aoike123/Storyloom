@@ -16,7 +16,7 @@ import type {ProviderFailure} from './ProviderError';
 export type ProgressTask = {production_phase?: string | null; id: string; kind: string; status: string; progress?: number; message?: string; created?: number; work_id?: string | null; label?: string | null; preview?: string | null; revision_of?: string | null; activity?: ActivityDisplay | null; generation?: GenerationInfo | null; provider_error?:ProviderFailure|null; skill_calls?:SkillCall[]; result?: {live?: StyleLive; replaced_assets?: string[]; media?: string}};
 export const activeStatuses = ['queued', 'running', 'waiting'];
 export const problemStatuses = ['failed', 'needs_review'];
-export const taskNames: Record<string, string> = {author_styles: '推荐创作风格', author_flow: '推进制作流程', author_composite: '图像合成（历史）', author_storyboard: '分镜生成', author_render: '漫剧生成', reader_branch_plan: '规划读者分支', director: '剧本与分镜', art_design: '人物与场景设计', image: '生成画面', video: '生成视频', creative_watch: '编排镜头', creative_revision: '按意见修改', plan: '理解剧情想法', render: '制作过渡片段', bridge: '衔接故事', export: '导出作品'};
+export const taskNames: Record<string, string> = {author_styles: '推荐创作风格', author_flow: '推进制作流程', author_storyboard: '分镜生成', author_render: '漫剧生成', reader_branch_plan: '规划读者分支', director: '剧本与分镜', art_design: '人物与场景设计', image: '生成画面', video: '生成视频', creative_watch: '编排镜头', creative_revision: '按意见修改', plan: '理解剧情想法', render: '制作过渡片段', bridge: '衔接故事', export: '导出作品'};
 export const statusNames: Record<string, string> = {queued: '排队中', running: '处理中', waiting: '等待结果', completed: '已完成', failed: '处理失败', needs_review: '需要处理', cancelled: '已停止', superseded: '已有新版本'};
 export const workStages = [
   {id: 'style', name: '选择风格', hint: '阅读微小说，确定画风与剧情气质'},
@@ -30,7 +30,7 @@ export const workStages = [
 
 // Kept for existing callers; real streaming views provide their own stable stream key.
 export function Typewriter({text}: {text: string}) {
-  return <StreamText text={text} active streamKey="legacy-typewriter"/>;
+  return <StreamText text={text} active streamKey="static-typewriter"/>;
 }
 
 export function ProgressBar({value, label}: {value?: number; label: string}) {
@@ -69,10 +69,6 @@ export function InteractionFeedback({busy, text, title = '创作助手', error =
 }
 
 export function WorkProgress({stage, viewedStage, onStepSelect, disabled = false, compact = false}: {stage?: string; viewedStage?: string; onStepSelect?: (stage:string)=>void; disabled?:boolean; compact?: boolean}) {
-  if(stage==='producing')stage='rendering';
-  if(stage==='compositing')stage='storyboarding';
-  if(viewedStage==='producing')viewedStage='rendering';
-  if(viewedStage==='compositing')viewedStage='storyboarding';
   const current = workStages.findIndex(s => s.id === stage);
   const viewed = workStages.findIndex(s => s.id === (viewedStage || stage));
   return <ol className={'work-progress' + (compact ? ' is-compact' : '')} aria-label="作品制作阶段">

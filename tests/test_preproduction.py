@@ -13,38 +13,8 @@ def prepare(client):
     assert client.post('/api/preproduction/prep_test',json=config).status_code==200
     return client.get('/api/preproduction/prep_test').json()['stamp']
 
-# 已废弃线路：试拍（v1–v5）。原来的两个用例分别验证"试拍必须同时包含演员与影棚"和"试拍审核
-# 必须覆盖全部素材"，随 /trial 与 /approve 一起停用。当前线路用 prep.approve_references 锁定
-# 已确认的人物身份、服装与场景参考图，覆盖规则见下面的用例。
-# def test_trial_requires_both_cast_and_set(client,monkeypatch):
-#     stamp=prepare(client)
-#     monkeypatch.setattr(p,'settings',lambda:{'paid_enabled':True,'image_configured':True})
-#     body={'stamp':stamp,'assets':['actor','prop'],'prompt':'Full costume trial','confirm_paid':True}
-#     assert client.post('/api/preproduction/prep_test/trial',json=body).status_code==422
-#     r=client.post('/api/preproduction/prep_test/trial',json={**body,'assets':['actor','scene','prop']})
-#     assert r.status_code==200
-#     with Session() as db:
-#         t=db.get(Task,r.json()['id'])
-#         assert len(t.payload['reference_media'])==3 and t.payload['preproduction_stamp']==stamp
-#
-# def test_trial_coverage_and_stale_assets(client):
-#     stamp=prepare(client)
-#     with Session.begin() as db:
-#         db.add(Task(id='trial',kind='image',status='completed',payload={'preproduction_id':'prep_test','preproduction_stamp':stamp,'reference_ids':['actor','scene']},result={'asset_id':'trial_image'}))
-#         db.add(Record(id='trial_image',kind='asset',data={'status':'approved','source_task':'trial'}))
-#     body={'stamp':stamp,'asset_ids':['trial_image'],'note':'Review all costume and spatial details','confirm':True}
-#     assert client.post('/api/preproduction/prep_test/approve',json=body).status_code==422
-#     with Session.begin() as db:
-#         t=db.get(Task,'trial');t.payload={**t.payload,'reference_ids':['actor','scene','prop']}
-#     assert client.post('/api/preproduction/prep_test/approve',json=body).status_code==200
-#     with Session() as db:assert p.ready(db,'prep_test')['stamp']==stamp
-#     with Session.begin() as db:db.get(Record,'actor').version+=1
-#     with Session() as db:
-#         with pytest.raises(HTTPException):p.ready(db,'prep_test')
-
-
 def test_locked_references_cover_every_bound_asset_and_reject_stale_versions(client):
-    """当前线路的锁定规则：approve_references 记下每个已绑定素材的版本，版本变了就失效。"""
+    """approve_references 记下每个已绑定素材的版本；版本变了，锁定的参考图立即失效。"""
     stamp=prepare(client)
     p.approve_references('prep_test',stamp)
     with Session() as db:
@@ -84,7 +54,7 @@ def test_board_reports_reference_limit_instead_of_claiming_assets_are_unselected
         p.validate_board(board,prep)
 
 
-def test_board_expands_legacy_stitched_boards_back_to_project_assets():
+def test_a_condensed_character_reference_expands_back_to_its_project_assets():
     from backend.director import Board
     from test_director import board,reference_prep
     prep=reference_prep();prep['assets'].update({

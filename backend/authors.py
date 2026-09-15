@@ -15,7 +15,7 @@ from . import creative, director
 from . import zhihu_stories
 from .catalog import labels
 from .skill_runtime import call_node
-from .production_nodes import (NODES, queue_node, node_snapshots, is_node_task, phase_for_saved_state,
+from .production_nodes import (NODES, queue_node, node_snapshots, is_node_task,
                                retry_current_node, stopped_stage_media)
 
 router = APIRouter(prefix='/api/author', tags=['author'])
@@ -61,10 +61,6 @@ def current_actor():
 
 def work_id_for(work_id, actor):
     """Stable per-owner id for one story, so two accounts never share one project record."""
-    # This exact hash was used before accounts existed. Keep it addressable for the one-time claim
-    # path; new owned projects include the actor in the hash and therefore never collide with it.
-    if not actor:
-        return 'work_zhihu_' + hashlib.sha256(str(work_id).encode()).hexdigest()[:32]
     return 'work_zhihu_' + hashlib.sha256(f'{work_id}|{actor}'.encode()).hexdigest()[:32]
 
 @router.post('/stories/{work_id}/open')
@@ -75,29 +71,12 @@ def open_story(work_id: str):
     from .model_access import public_demo_mode
     if public_demo_mode() and not actor:
         raise HTTPException(401, '请先登录，再制作属于自己的漫剧版本。')
-    # Records created before per-account ownership kept one shared id per story. That id is reused
-    # once so an account can pick up work started earlier, and it is claimed by whoever arrives
-    # first instead of staying visible to every visitor.
-    legacy_pid = work_id_for(work_id, None)
     pid = work_id_for(work_id, actor)
     with open_lock:
         with Session() as db:
             existing = db.get(Record, pid)
             if existing is not None and existing.kind == 'author_project':
                 return workspace(pid)
-            legacy = db.get(Record, legacy_pid)
-            claim = bool(actor) and legacy is not None and legacy.kind == 'author_project' \
-                and not legacy.data.get('owner')
-        if claim:
-            with Session.begin() as db:
-                legacy = db.get(Record, legacy_pid)
-                if legacy and legacy.kind == 'author_project' and not legacy.data.get('owner'):
-                    legacy.data = {**legacy.data, 'owner': actor}
-                    legacy.version += 1
-                    db.add(Record(id=uid('audit'), kind='audit', data={
-                        'target': legacy_pid, 'action': 'author_project_claimed', 'owner': actor,
-                        'note': '账号接手了尚未归属的旧作品'}))
-            return workspace(legacy_pid)
         if existing is None:
             listing = zhihu_stories.stories()
             selected = next((x for x in listing['items'] if x['work_id'] == work_id), None)
@@ -160,10 +139,6 @@ def workspace(pid: str):
             if review else None)
     data['creative'] = creative.workspace(sid) if sid else None
     data['display_stage']=data['stage']
-    if data['stage'] in ('producing','compositing') and data['creative']:
-        try:data['display_stage']=phase_for_saved_state(data['creative']['stage'])
-        except HTTPException:pass
-    data['asset_redesign_required']=bool(data['creative'] and data['creative'].get('items') and data['creative'].get('asset_schema')!=creative.asset_sheets.VERSION)
     if data.get('stage') in ('film_review','published'):
         from .skill_runtime import public,snapshot
         data['review_skill']=public(snapshot('film_review'))
@@ -418,17 +393,13 @@ async def recommendation_events(pid:str,task_id:str,request:Request):
 def resume(pid: str):
     with attempt_lock,Session.begin() as db:
         row=get_work(db,pid)
-        if row.data['stage'] not in ('preparing','producing','compositing',*NODES):raise HTTPException(409,'当前无需恢复')
+        if row.data['stage'] not in ('preparing',*NODES):raise HTTPException(409,'当前无需恢复')
         old=db.get(Task,row.data.get('supervisor',''))
         if old and old.status in creative.BUSY:raise HTTPException(409,'当前制作节点仍在运行。')
         rejected=retryable_images(db,row)
         if rejected:raise HTTPException(409,'请先重试失败图片：'+'、'.join(item['name'] for item in rejected)+'。其他已完成素材会保留。')
         if row.data['stage']=='preparing' and row.data.get('director_id'):
             creative.resume_saved_design(db,row.data['director_id'])
-        if row.data['stage'] in ('producing','compositing'):
-            run=creative.get_run(db,row.data['director_id'])
-            if old:old.status='superseded'
-            row.data={**row.data,'stage':phase_for_saved_state(run.data['stage'])}
         if row.data['stage'] not in NODES:
             schedule(db,row,row.data['stage'])
         elif stopped_stage_media(db,row):
@@ -598,23 +569,5 @@ def flow(task_id, payload):
         with Session.begin() as db:
             row=db.get(Record,payload['work_id']);row.data={**row.data,'stage':'assets_review'}
         return True
-    if payload['phase']!='producing': raise HTTPException(409,'流程阶段不匹配')
-    with Session.begin() as db:
-        legacy=db.get(Task,task_id);work=work_row(db,payload['work_id'])
-        if legacy and legacy.kind=='author_flow' and legacy.status=='running' and work.data.get('supervisor')==task_id:
-            phase=phase_for_saved_state(status)
-            legacy.status='completed';legacy.progress=100;legacy.message='已将保存的制作进度移交独立节点'
-            replacement=queue_node(db,work,phase)
-            legacy.result={**legacy.result,'handed_off_to':replacement.id}
-            return True
-    if status in ('assets_review','fittings_review','trials_review','samples_review','frames_review'):
-        creative.advance(sid,creative.Continue(stage=status,confirm_review=True,confirm_paid=True),automatic=status!='assets_review')
-        return False
-    if status=='videos_review':
-        result=creative.production.workspace(sid)
-        if not result['shots'] or any(not s['video_task'] or s['video_task']['status']!='completed' or not s['clip'] for s in result['shots']):
-            raise HTTPException(409,'部分镜头未完成，已保留结果，请在后台处理失败任务')
-        with Session.begin() as db:
-            row=db.get(Record,payload['work_id']);row.data={**row.data,'stage':'film_review'}
-        return True
+    # 基础素材之后的步骤由分镜、漫剧两个独立制作节点推进，作者流程只负责走到素材确认。
     raise HTTPException(409,'制作阶段未完成，请查看后台任务诊断')

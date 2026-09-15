@@ -6,10 +6,6 @@ from PIL import Image
 from .db import DATA, Record, Task, uid
 from .video_storage import identity as storage_identity, snapshot_asset, verify_file
 from .video_files import media_url
-# 已废弃线路（定装合成）使用的导入，只服务下方的注释代码：
-# from .reference_image_model import REFERENCE_IMAGE_MODEL, REFERENCE_IMAGE_STEPS
-# from .asset_sheets import VERSION, style_prompt
-# from .skill_runtime import render_node
 
 
 STITCHED_REFERENCE_VERSION='identity-costume-side-by-side-v1'
@@ -94,64 +90,15 @@ def validate_dependencies(db,payload):
     for dependency in payload.get('asset_dependencies',[]):
         asset=db.get(Record,dependency['asset_id'])
         if not asset or asset.version!=dependency['revision'] or asset.data.get('status')!='approved':
-            raise HTTPException(409,'依赖的人物身份或服装版本已变化，请重新确认并生成定装。')
+            raise HTTPException(409,'依赖的人物身份或服装版本已变化，请重新确认并生成参考图。')
         validate_asset_origin(db,asset)
         if dependency.get('file'):verify_file(dependency['file'])
-
-
-# 已废弃线路：定装合成（v1–v5 的 fittings 步骤）。当前线路直接用人物身份图、独立服装图与场景图
-# 组成分镜参考，不再合成定装图，也不再为定装提交生图请求。代码保留如下，运行时不再加载。
-#
-# def queue_fittings(db,run,pid,assets):
-#     if run.data.get('asset_schema')!=VERSION:
-#         raise HTTPException(409,'旧版素材尚未分离人物身份与服装，请先重做本轮素材。')
-#     people={item['character_id']:(item,assets[item['task_id']]) for item in run.data['items'] if item['role']=='character'}
-#     looks=[]
-#     costumes=[item for item in run.data['items'] if item['role']=='costume']
-#     costumed={item['character_ref'] for item in costumes}
-#     for costume in costumes:
-#         person,identity=people[costume['character_ref']]
-#         clothing=assets[costume['task_id']]
-#         validate_asset_origin(db,identity);validate_asset_origin(db,clothing)
-#         snapshots=[snapshot_asset(db,a) for a in (identity,clothing)]
-#         dependencies=[{'asset_revision_id':s.id,**s.data} for s in snapshots]
-#         previous=next((look for look in run.data.get('looks',[]) if look['character_key']==person['character_id'] and look['costume_key']==costume['costume_id']),None)
-#         prior=db.get(Task,previous['task_id']) if previous else None
-#         # An unchanged identity+costume pair reused its existing fitting instead of paying again.
-#         if prior and [d['asset_revision_id'] for d in prior.payload.get('asset_dependencies',[])]==[d['asset_revision_id'] for d in dependencies]:
-#             if prior.status!='completed':raise HTTPException(409,'相同身份与服装的定装任务尚未完成，请先处理原任务，不能重复提交。')
-#             looks.append(previous)
-#             continue
-#         task=Task(id=uid('fitting'),kind='image',payload={
-#             'mode':'live','creative_id':pid,'asset_kind':'dressed_character','asset_role':'look','asset_schema':VERSION,
-#             'title':person['name']+' · 定装 '+costume['name'],
-#             'character_key':person['character_id'],'costume_key':costume['costume_id'],
-#             'identity_asset_id':identity.id,'costume_asset_id':clothing.id,'asset_dependencies':dependencies,
-#             'revision_of':prior.id if prior else None,
-#             'reference_media':[s.data['file']['media'] for s in snapshots],'image_model':REFERENCE_IMAGE_MODEL,
-#             'image_inference_steps':REFERENCE_IMAGE_STEPS,
-#             **render_node('fitting',{'style':style_prompt(run.data['visual_style'])})})
-#         db.add(task)
-#         looks.append({'task_id':task.id,'name':person['name']+' · '+costume['name'],
-#             'character_key':person['character_id'],'costume_key':costume['costume_id'],
-#             'identity_asset_id':identity.id,'costume_asset_id':clothing.id})
-#     for person,identity in people.values():
-#         if person['character_id'] in costumed:continue
-#         if person.get('costume_mode','required')=='required':
-#             raise HTTPException(409,'缺少绑定人物身份的独立服装。')
-#         validate_asset_origin(db,identity)
-#         # The empty-clothing mode needed no fitting of its own: the identity sheet already answers it.
-#         looks.append({'task_id':person['task_id'],'name':person['name'],
-#             'character_key':person['character_id'],'costume_key':None,
-#             'identity_asset_id':identity.id,'costume_asset_id':None,'direct_identity':True})
-#     if not looks:raise HTTPException(409,'缺少可用的角色身份参考图。')
-#     run.data={**run.data,'looks':looks,'stage':'fittings_review'};run.version+=1
 
 
 def validate_shot_identities(ids,assets):
     identities=[assets[aid].get('identity_asset_id') or aid for aid in ids if assets[aid]['role']=='character']
     if len(identities)!=len(set(identities)):
-        raise HTTPException(422,'同一镜头不能把同一人物的不同服装当作两个角色，请只选一个定装结果。')
+        raise HTTPException(422,'同一镜头不能把同一人物的不同服装当作两个角色，每个角色每镜只选一套服装。')
     characters={aid for aid in ids if assets[aid]['role']=='character'}
     costumes=[aid for aid in ids if assets[aid]['role']=='costume']
     for costume in costumes:

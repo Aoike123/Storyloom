@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 
 from .environment import load_bootstrap_environment
-from sqlalchemy import JSON, Float, Integer, String, create_engine, delete, event, func, inspect, select, text
+from sqlalchemy import JSON, Float, Integer, String, create_engine, event, func, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -172,11 +172,3 @@ def task_dict(row):
 
 def init_db():
     Base.metadata.create_all(engine)
-    # Retire old sign-in data while preserving stories, media, jobs, and attribution.
-    with Session.begin() as db:
-        db.execute(delete(Record).where(Record.kind.in_(['author_account', 'author_session'])))
-        for row in db.scalars(select(Record).where(Record.kind.in_(['author_project', 'story_source', 'asset']))):
-            field = 'scope' if row.kind == 'asset' else 'owner'
-            if field in row.data:
-                row.data = {k: v for k, v in row.data.items() if k != field}
-    (DATA / 'admin-access.txt').unlink(missing_ok=True)

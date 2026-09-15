@@ -5,8 +5,7 @@ const finalStatuses = ['completed', 'cancelled', 'superseded'];
 
 export function hasActiveProgress(work: any) {
   return [...(work?.jobs || []), work?.task, work?.recommend_task_status].some(
-    task => task && !['legacy_trial', 'legacy_composition'].includes(task.production_phase || '')
-      && activeStatuses.includes(task.status),
+    task => task && activeStatuses.includes(task.status),
   );
 }
 
@@ -54,8 +53,7 @@ export function mergeProgress(current:any, incoming:any) {
       || (current.progress_at || 0)>(incoming.progress_at || 0)) return current;
   const tasks=new Map<string,ProgressTask>((current.jobs || []).map((task:ProgressTask)=>[task.id,task]));
   const stage=incoming.stage ?? current.stage;
-  const displayStage=['producing','compositing'].includes(stage) ? current.display_stage : stage;
-  return {...current,stage,display_stage:displayStage,progress_at:incoming.progress_at,
+  return {...current,stage,display_stage:stage,progress_at:incoming.progress_at,
     task:mergeTask(current.task,incoming.task),
     recommend_task_status:mergeTask(current.recommend_task_status,incoming.recommend_task_status),
     jobs:(incoming.jobs || []).map((task:ProgressTask)=>mergeTask(tasks.get(task.id),task)),
@@ -69,19 +67,9 @@ export function progressStructure(work: any) {
 
 export const authorStageIds=['style','preparing','assets_review','storyboarding','rendering','film_review','published'];
 export function authorDisplayStage(work:any) {
-  if(work?.display_stage&&work.display_stage!=='compositing')return work.display_stage;
-  if(work?.stage==='compositing'||work?.display_stage==='compositing')return 'storyboarding';
-  if(work?.stage!=='producing')return work?.stage;
-  const saved=work?.creative?.stage;
-  if(['assets_review','fittings_review','trials_review'].includes(saved))return 'storyboarding';
-  if(['composites_ready','references_ready','storyboarding'].includes(saved))return 'storyboarding';
-  return 'rendering';
+  return work?.display_stage || work?.stage;
 }
 export function viewedAuthorStage(actual:string|undefined,requested:string|null) {
-  if(actual==='producing')actual='rendering';
-  if(actual==='compositing')actual='storyboarding';
-  if(requested==='producing')requested='rendering';
-  if(requested==='compositing')requested='storyboarding';
   const target=authorStageIds.indexOf(requested || '');
   return target>=0 && target<=authorStageIds.indexOf(actual || '') ? requested! : actual;
 }

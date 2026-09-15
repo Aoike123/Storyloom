@@ -10,13 +10,18 @@ from test_author_step_navigation import completed_work
 
 
 def failed_image(client,status=451):
+    """A picture the provider refused: the response is saved on the task, as the real call does."""
+    from backend.image_errors import error_message,response_error
+    import httpx as _httpx
     completed_work(client,'preparing')
     with Session.begin() as db:
         run=db.get(Record,'creative_pid');old=copy.deepcopy(run.data)
         task=db.get(Task,run.data['items'][0]['task_id'])
         db.delete(db.get(Record,task.result['asset_id']))
-        task.result={'generation_request':{'prompt':'已保存的无人静态设定图提示词','model':'original-model'}}
-        task.status='needs_review';task.message=f'生图接口返回 HTTP {status}，未自动重新提交。'
+        error=response_error(_httpx.Response(status,json={'code':20001,'message':'供应商说明'}),{})
+        task.result={'generation_request':{'prompt':'已保存的无人静态设定图提示词','model':'original-model'},
+                     'provider_error':error}
+        task.status='needs_review';task.message=error_message(error)
         db.get(Task,'old-flow').status='needs_review'
         return task.id,old
 

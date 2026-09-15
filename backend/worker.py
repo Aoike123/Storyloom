@@ -89,16 +89,6 @@ def auto_retry_node(task_id):
     return True
 
 
-def is_removed_reference_image(task):
-    """Shot-reference images belong to the removed storyboard step and must never be submitted.
-
-    The old flow rendered one picture per shot before video. That endpoint no longer exists, so a
-    leftover queued task from before the change is retired instead of spending money on it.
-    """
-    return (task.kind=='image' and bool(task.payload.get('director_id'))
-            and not task.payload.get('preproduction_id')
-            and task.payload.get('asset_kind')!='dressed_character')
-
 def claim(owner,lane='any'):
     if lane not in ('any','branch','general'):raise ValueError('未知任务通道。')
     now=time.time()
@@ -108,11 +98,6 @@ def claim(owner,lane='any'):
         row=None
         for candidate in candidates:
             if not _lane_matches(candidate,lane):continue
-            if is_removed_reference_image(candidate):
-                # Retire it instead of paying for a picture the pipeline no longer uses.
-                candidate.status='cancelled'
-                candidate.message='镜头参考图步骤已移除，改为参考图直接生视频；此任务不再提交，记录保留。'
-                continue
             row=candidate;break
         if not row:return None
         if row.status=='running' and (row.kind=='author_flow' or row.kind in PRODUCTION_KINDS or (row.kind in ['video','image','director','art_design','creative_revision','creative_watch','author_styles'] and row.payload.get('mode')=='live' and not row.result.get('provider_id'))):
@@ -156,7 +141,7 @@ def save_video_result(task_id,owner,p,result,source):
         if current.owner!=owner or current.status!='running':return
         artifact=register_artifact(db,clip_id,source,{
             'origin':'generation','task_id':task_id,'provider_id':result['provider_id'],
-            'generation':result.get('generation',{'snapshot_status':'legacy_unverified'}),
+            'generation':result.get('generation',{}),
             'input_snapshot':p.get('input_snapshot'),
         })
         clip=db.get(Record,clip_id)

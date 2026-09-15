@@ -13,7 +13,7 @@ export default function ProductionProgress({tasks, outputs = [], stage, connecti
   const split = ['storyboarding','rendering'].includes(phase || '');
   const scoped = split && tasks.some(task=>task.production_phase===phase);
   const relevant = tasks.filter(task => task.kind !== 'author_styles' && (!scoped || task.production_phase === phase));
-  const allConcrete = relevant.filter(task => !['author_flow','author_composite','author_storyboard','author_render','creative_watch'].includes(task.kind));
+  const allConcrete = relevant.filter(task => !['author_flow','author_storyboard','author_render','creative_watch'].includes(task.kind));
   const visibleOutputs = scoped ? outputs.filter(output=>output.production_phase===phase) : outputs;
   const replaced = new Set([...allConcrete.map(task => task.revision_of), ...allConcrete.flatMap(task => task.result?.replaced_assets || [])].filter(Boolean));
   const isCurrent=(task:ProgressTask)=>!['cancelled','superseded'].includes(task.status);
@@ -25,7 +25,7 @@ export default function ProductionProgress({tasks, outputs = [], stage, connecti
   const media = concrete.filter(task => (task.kind === 'image' || task.kind === 'video') && !replaced.has(task.id));
   const ready = media.filter(task => task.status === 'completed').length;
   const waiting = relevant.some(task => activeStatuses.includes(task.status));
-  if (!relevant.some(isCurrent) && !['preparing','producing','storyboarding','rendering'].includes(stage)) return null;
+  if (!relevant.some(isCurrent) && !['preparing','storyboarding','rendering'].includes(stage)) return null;
   return <section className="production-progress" aria-label="本轮制作进展">
     <header><div><span className="studio-eyebrow">{node?.hint || (waiting ? '故事正在成形' : '本轮制作记录')}</span><h3>{node?.name || (waiting ? '可以边等，边看看。' : '这轮制作，进展到这里。')}</h3></div><small>{connection === 'fallback' ? '正在定期同步' : connection === 'live' ? '进展实时同步' : '正在连接进展'}</small></header>
     {node && <p className="studio-note">{node.task?.status==='completed'?'本节点已完成，结果单独保存。':node.task&&['failed','needs_review'].includes(node.task.status)?'问题停留在本节点，上游已完成结果会保留。':'本节点完成后自动进入下一步；这里只显示本节点的任务与结果。'}</p>}

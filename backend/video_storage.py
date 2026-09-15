@@ -10,7 +10,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
-from .db import DATA, Record, Session, Task, record_dict
+from .db import DATA, Record, Session, record_dict
 from .video_files import (StorageError, atomic_copy, digest, extract_boundary,
                           media_path, media_url, prepare_playback, probe_video)
 
@@ -144,7 +144,7 @@ def register_artifact(db, clip_id, source, provenance=None, keep_source=False):
 
 
 def attach_artifact(clip, artifact):
-    # Legacy releases remain readable with their original file and second offsets.
+    # A published clip keeps the file and offsets it was reviewed with.
     updates = {'artifact_id': artifact.id, 'storage_schema_version': 1}
     if not clip.data.get('locked'):
         updates.update(media=artifact.data['playback']['media'],
@@ -153,20 +153,12 @@ def attach_artifact(clip, artifact):
 
 
 def ensure_artifact(db, clip):
-    if clip.data.get('artifact_id'):
-        row = db.get(Record, clip.data['artifact_id'])
-        if not row or row.kind != 'clip_artifact' or row.data['clip_id'] != clip.id:
-            raise StorageError('片段的存储记录不完整。')
-        verify_file(row.data['source'])
-        verify_file(row.data['playback'])
-        return row
-    task = db.get(Task, clip.data.get('source_task', ''))
-    provenance = {'snapshot_status': 'legacy_unverified', 'source_task': clip.data.get('source_task')}
-    if task:
-        provenance.update(task_id=task.id, provider_id=task.result.get('provider_id'),
-                          input_snapshot=task.payload.get('input_snapshot'))
-    row = register_artifact(db, clip.id, media_path(clip.data['media']), provenance, keep_source=True)
-    attach_artifact(clip, row)
+    """The stored artifact of one clip, verified. Every saved clip registers one at ingest."""
+    row = db.get(Record, clip.data.get('artifact_id', ''))
+    if not row or row.kind != 'clip_artifact' or row.data['clip_id'] != clip.id:
+        raise StorageError('片段的存储记录不完整。')
+    verify_file(row.data['source'])
+    verify_file(row.data['playback'])
     return row
 
 
@@ -277,19 +269,6 @@ def read_storage(cid: str):
         if not clip or clip.kind != 'clip':
             raise HTTPException(404, '视频片段不存在。')
         return storage_view(db, clip)
-
-
-@router.post('/clips/{cid}/register-storage')
-def register_legacy(cid: str):
-    try:
-        with Session.begin() as db:
-            clip = db.get(Record, cid)
-            if not clip or clip.kind != 'clip':
-                raise HTTPException(404, '视频片段不存在。')
-            ensure_artifact(db, clip)
-            return storage_view(db, clip)
-    except StorageError as exc:
-        raise HTTPException(422, str(exc)) from None
 
 
 @router.get('/reader/releases/{rid}/manifest')

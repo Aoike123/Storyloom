@@ -63,14 +63,15 @@ def test_non_json_errors_and_empty_messages_have_safe_fallbacks():
     assert not response_error(httpx.Response(451,json={'error':{'message':{'unexpected':'shape'}}}),{})['provider_message']
 
 
-def test_legacy_diagnostics_do_not_invent_response_or_retry_uncertain_results():
+def test_a_failure_without_a_saved_response_is_reported_as_no_diagnosis():
+    """没有保存供应商响应的失败只显示任务自己的说明，不推断原因，也不提供重试入口。"""
     for status in (402,451,503):
         with Session.begin() as db:
-            task=Task(id='legacy-'+str(status),kind='image',status='needs_review',message=f'生图接口返回 HTTP {status}，未自动重新提交。',payload={},result={})
+            task=Task(id='bare-'+str(status),kind='image',status='needs_review',
+                      message=f'生图接口返回 HTTP {status}，未自动重新提交。',payload={},result={})
             db.add(task);db.flush()
-            error=task_dict(task)['provider_error']
-            assert error['source']=='legacy_status' and not error['provider_message'] and not error['request_id']
-            assert task.result=={} and can_retry(task)==(status in (402,451))
+            assert task_dict(task)['provider_error'] is None
+            assert task.result=={} and can_retry(task) is False
 
 
 def test_a_call_refused_before_submission_is_repairable_without_a_provider_response():

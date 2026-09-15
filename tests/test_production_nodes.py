@@ -21,7 +21,7 @@ def test_storyboard_finishes_before_any_image_or_video_is_started(monkeypatch):
     with Session() as db:
         assert db.get(Task,task_id).result['output_ids']==['S01','S02']
         assert db.get(Record,'work').data['stage']=='rendering'
-        assert not list(db.scalars(select(Task).where(Task.kind.in_(['image','video','author_composite']))))
+        assert not list(db.scalars(select(Task).where(Task.kind.in_(['image','video']))))
     assert list(NODES)==['storyboarding','rendering']
 
 
@@ -41,19 +41,6 @@ def test_interrupted_node_is_not_automatically_resubmitted():
     with Session.begin() as db:db.add(Task(id='interrupted',kind='author_storyboard',status='running',lease=0,payload={'mode':'live'}))
     assert worker.claim('new-owner') is None
     with Session() as db:assert db.get(Task,'interrupted').status=='needs_review'
-
-
-def test_leftover_shot_reference_image_is_retired_instead_of_submitted():
-    """The removed storyboard image step must never spend money on a leftover queued task."""
-    with Session.begin() as db:
-        db.add(Task(id='stale-frame',kind='image',status='queued',payload={
-            'mode':'live','director_id':'director-1','shot_id':'S01','consistency_stamp':'v1',
-            'reference_media':['/media/ref.png']}))
-        db.add(Task(id='usable',kind='video',status='queued',payload={'mode':'live','director_id':'director-1'}))
-    assert worker.claim('cleanup-owner')=='usable'
-    with Session() as db:
-        stale=db.get(Task,'stale-frame')
-        assert stale.status=='cancelled' and '参考图直接生视频' in stale.message
 
 
 def test_failed_node_recovers_once_automatically_then_waits_for_a_person():

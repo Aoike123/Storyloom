@@ -31,10 +31,8 @@ def drain():
     for _ in range(30):
         if not worker.process_one('creative-test'):break
 
-def advance(client,stage):return client.post('/api/creative/pid/continue',json={'stage':stage,'confirm_review':True,'confirm_paid':True})
-
-def test_base_assets_are_ready_and_the_removed_fitting_stages_refuse(creative):
-    """基础素材照常生成；定装与试拍已从线路中移除，既不再推进，也不再创建任何生图任务。
+def test_base_assets_are_ready_and_the_removed_fitting_stages_are_gone(creative):
+    """基础素材照常生成；定装与试拍已从代码中删除，既没有推进入口，也不会创建生图任务。
 
     当前线路从"确认基础素材"到分镜、视频、审片的完整流程由
     ``test_authors.test_author_flow_stops_only_for_assets_and_film`` 覆盖。
@@ -46,7 +44,7 @@ def test_base_assets_are_ready_and_the_removed_fitting_stages_refuse(creative):
     assert data['stage']=='assets_review' and data['production']['shots']==[]
     for stage in ('assets_review','fittings_review','trials_review'):
         response=client.post('/api/creative/pid/continue',json={'stage':stage,'confirm_review':True,'confirm_paid':True})
-        assert response.status_code==409 and '已移除' in response.json()['detail']
+        assert response.status_code==404
     with Session() as db:
         assert not [t for t in db.scalars(select(Task).where(Task.kind=='image'))
                     if t.payload.get('asset_kind')=='dressed_character' or t.payload.get('preproduction_id')]

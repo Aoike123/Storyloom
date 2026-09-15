@@ -76,12 +76,11 @@ test('earlier steps can be revisited without unlocking future steps',()=>{
   assert.equal(viewedAuthorStage('assets_review','unknown'),'assets_review');
 });
 
-test('legacy producing records display the saved responsibility without replaying work',()=>{
-  assert.equal(authorDisplayStage({stage:'producing',creative:{stage:'fittings_review'}}),'storyboarding');
-  assert.equal(authorDisplayStage({stage:'producing',creative:{stage:'storyboarding'}}),'storyboarding');
-  assert.equal(authorDisplayStage({stage:'producing',creative:{stage:'videos_review'}}),'rendering');
+test('the displayed stage is the saved stage and a future step stays locked',()=>{
+  assert.equal(authorDisplayStage({stage:'rendering',display_stage:'rendering'}),'rendering');
+  assert.equal(authorDisplayStage({stage:'storyboarding'}),'storyboarding');
   assert.equal(viewedAuthorStage('storyboarding','rendering'),'storyboarding');
-  assert.equal(viewedAuthorStage('rendering','compositing'),'storyboarding');
+  assert.equal(viewedAuthorStage('rendering','rendering'),'rendering');
 });
 
 test('a delayed old-round snapshot cannot restore invalidated progress or assets',()=>{

@@ -1,5 +1,14 @@
 from backend.db import Session,Record,Task,DATA
 from backend import production as p
+from backend.video_storage import attach_artifact,register_artifact
+
+
+def saved_clip(db,cid,path='prod.mp4',**extra):
+    """A clip as the worker saves it: the media file and its storage record together."""
+    artifact=register_artifact(db,cid,DATA/'media'/path,{'origin':'generation','task_id':'video_'+cid})
+    clip=Record(id=cid,kind='clip',data={'status':'pending',**extra})
+    attach_artifact(clip,artifact);db.add(clip)
+    return clip
 
 
 def setup(db):
@@ -56,7 +65,7 @@ def test_review_publish_reader_and_pause_intent(client,monkeypatch,sample_video)
     monkeypatch.setattr(p,'validate_references',lambda *a:None)
     with Session.begin() as db:
         setup(db)
-        db.add(Record(id='prod_clip',kind='clip',data={'duration':5,'media':'/media/prod.mp4','status':'pending'}))
+        saved_clip(db,'prod_clip')
         db.add(Task(id='video_prod',kind='video',status='completed',payload={'director_id':'director_prod','director_version':3,'shot_id':'S01'},result={'clip_id':'prod_clip'}))
     publish='/api/production/director_prod/publish'
     assert client.post(publish,json={'version':3,'confirm':True}).status_code==422

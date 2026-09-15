@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from backend import asset_sheets as sheets, asset_workflow, creative as c, worker, preproduction as prep
 from backend.db import DATA,Record,Session,Task
-from test_creative import creative,drain,advance
+from test_creative import creative,drain
 from asset_spec_fixtures import character,costume,scene,style,design_response
 
 
@@ -87,7 +87,6 @@ def test_real_workflow_keeps_two_costumes_on_one_frozen_identity(creative,monkey
         assert len([i for i in items if i['role']=='costume'])==2
         assert len(list(db.scalars(select(Task).where(Task.kind=='image'))))==4
         assert 'wardrobe' not in identity_task.payload['asset_spec']
-    assert advance(creative,'assets_review').status_code==409
     drain()
     with Session.begin() as db:
         run=db.get(Record,'creative_pid')
@@ -139,52 +138,14 @@ def test_costume_edit_does_not_recreate_character_identity(creative,monkeypatch)
         assert len([t for t in db.scalars(select(Task).where(Task.kind=='image')) if t.payload.get('asset_kind')=='character_sheet'])==1
 
 
-# 已废弃线路：定装合成（v1–v5）。下面的用例验证"身份图变化后旧的定装任务不会重新提交"，随
-# queue_fittings 一起停用；当前线路不再生成定装图，版本失效规则由 prep.snapshot 与
-# prep.approve_references 承担（见上面的版本断言）。
-# def test_changed_identity_stops_fitting_before_paid_request(creative,monkeypatch):
-#     creative.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'悬疑','confirm_paid':True});drain()
-#     assert advance(creative,'assets_review').status_code==200
-#     with Session.begin() as db:
-#         look=db.get(Record,'creative_pid').data['looks'][0]
-#         db.get(Record,look['identity_asset_id']).version+=1
-#     monkeypatch.setattr(worker,'generate_image',lambda *a,**k:pytest.fail('A stale identity must not generate a new fitting'))
-#     monkeypatch.setattr(worker,'generate_from_references',lambda *a,**k:pytest.fail('A stale identity must not compose a fitting'))
-#     assert worker.process_one('fitting-test')
-#     with Session() as db:assert db.get(Task,look['task_id']).status=='needs_review'
-
-
-def test_legacy_prompt_cannot_reenter_asset_generation(creative,monkeypatch):
+def test_a_design_from_another_schema_is_refused_instead_of_replayed(creative,monkeypatch):
+    """只有当前 asset-sheets-v4 的设计结果能继续生图，其它版本一律停止而不是照旧重放。"""
     result=creative.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'悬疑','confirm_paid':True})
     with Session.begin() as db:
         task=db.get(Task,result.json()['id']);task.payload={**task.payload,'asset_schema':'asset-sheets-v2'}
         run=db.get(Record,'creative_pid');run.data={**run.data,'raw_design':{'visual_language':'主角打斗时的漫画风格','items':[]}}
-    monkeypatch.setattr(c,'chat_json',lambda *a,**k:pytest.fail('Legacy narrative output must not be replayed'))
-    worker.process_one('legacy-test')
+    monkeypatch.setattr(c,'chat_json',lambda *a,**k:pytest.fail('另一个版本的输出不允许重放'))
+    worker.process_one('schema-test')
     with Session() as db:
         assert db.get(Task,result.json()['id']).status=='needs_review'
         assert not list(db.scalars(select(Task).where(Task.kind=='image')))
-
-
-# 已废弃线路：定装的复用规则（身份与服装都没变时沿用原定装任务，只有服装变化时重建该套定装）。
-# def test_fitting_graph_reuses_unchanged_pair_and_rebuilds_only_changed_costume(creative,monkeypatch):
-#     monkeypatch.setattr(c,'chat_json',two_costume_design)
-#     creative.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'悬疑','confirm_paid':True});drain()
-#     advance(creative,'assets_review');drain()
-#     with Session.begin() as db:
-#         run=db.get(Record,'creative_pid');before=copy.deepcopy(run.data['looks'])
-#         assets={i['task_id']:db.get(Record,db.get(Task,i['task_id']).result['asset_id']) for i in run.data['items']}
-#         asset_workflow.queue_fittings(db,run,'pid',assets)
-#         assert run.data['looks']==before
-#     with Session.begin() as db:
-#         run=db.get(Record,'creative_pid')
-#         costume_asset=db.get(Record,before[0]['costume_asset_id']);costume_asset.version+=1
-#         assets={i['task_id']:db.get(Record,db.get(Task,i['task_id']).result['asset_id']) for i in run.data['items']}
-#         asset_workflow.queue_fittings(db,run,'pid',assets)
-#         after=run.data['looks']
-#         assert after[0]['task_id']!=before[0]['task_id']
-#         assert after[1]['task_id']==before[1]['task_id']
-#         assert after[0]['identity_asset_id']==before[0]['identity_asset_id']
-#         task=db.get(Task,after[0]['task_id'])
-#         assert task.payload['revision_of']==before[0]['task_id']
-#         assert len([t for t in db.scalars(select(Task).where(Task.kind=='image')) if t.payload.get('asset_kind')=='character_sheet'])==1

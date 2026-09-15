@@ -107,11 +107,7 @@ def task_error(task):
     if task.kind!='image':return None
     if task.status in ('queued','running','waiting','completed'):return None
     saved=task.result.get('provider_error')
-    if isinstance(saved,dict):return saved
-    match=re.search(r'生图接口返回 HTTP (\d{3})',task.message or '')
-    if match:
-        return {**describe(int(match[1])),'source':'legacy_status','provider_message':'','provider_code':'','request_id':''}
-    return None
+    return saved if isinstance(saved,dict) else None
 
 
 def can_retry(task):

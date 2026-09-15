@@ -41,13 +41,6 @@ def base_model_config():
     saved={} if os.getenv('STORYLOOM_DEMO_MODE','local').lower()=='public' else {
         k:v for k,v in dotenv_values(env_file()).items() if k in keys and v is not None}
     configured.update(saved)
-    # Existing installations store the full chat endpoint. Preserve that provider
-    # when upgrading to the base-URL setting instead of sending its key elsewhere.
-    legacy=saved.get('LLM_ENDPOINT') if 'LLM_BASE_URL' not in saved else None
-    if legacy is None and 'LLM_BASE_URL' not in configured:
-        legacy=configured.get('LLM_ENDPOINT')
-    if legacy:
-        configured['LLM_BASE_URL']=legacy.rstrip('/').removesuffix('/chat/completions')
     values={**DEFAULTS,**configured}
     return values
 

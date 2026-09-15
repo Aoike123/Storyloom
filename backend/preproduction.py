@@ -6,11 +6,6 @@ from typing import Literal
 from sqlalchemy import select
 from .db import HISTORY_LIMIT, Session, Record, Task, bounded, record_dict, uid
 from .image_provider import local_frame_data
-# 已废弃线路（试拍）使用的导入，只服务下方的注释代码：
-# from .db import task_dict
-# from .providers import paid_gate,settings
-# from .reference_image_model import REFERENCE_IMAGE_MODEL, REFERENCE_IMAGE_STEPS
-# from .skill_runtime import render_node
 router=APIRouter(prefix='/api/preproduction',tags=['preproduction'])
 
 # The reference-video provider accepts up to nine reference images per request; shots are
@@ -354,8 +349,8 @@ def repair_board_assets(board,prep):
                 if spec.get('role')=='scene' and name and (location==name or suffix and suffix in '，,、；;：:（( '):matches.append(aid)
             if len(matches)==1:
                 unique.append(matches[0]);changes.append({'shot_id':shot.id,'action':'bind_unique_named_scene','asset_id':matches[0]})
-        # Reference images are attached as reviewed project assets; legacy stitched boards are
-        # expanded back into their identity and costume sources instead of being merged again.
+        # Reference images are attached as reviewed project assets; a locally stitched character
+        # board is expanded back into its identity and costume sources instead of being merged again.
         expanded=[]
         for asset_id in unique:
             spec=assets.get(asset_id,{})
@@ -416,10 +411,7 @@ def get(pid:str):
         try:
             _,token=snapshot(db,pid);ready(db,pid);passed=True;reason='参考图已确认，可编写组合分镜'
         except HTTPException as e:reason=e.detail
-        # 已废弃线路：试拍任务查询，只服务下面的 trials 列表。
-        # jobs=[t for t in db.scalars(select(Task).where(Task.kind=='image').order_by(Task.created.desc())) if t.payload.get('preproduction_id')==pid and t.payload.get('preproduction_stamp')==token]
         previous=db.get(Record,'prep_'+p.data.get('restart_of','')) if p.data.get('restart_of') else None
-        # 已废弃线路：试拍图列表。当前线路不生成试拍图，因此响应里不再返回 trials 列表。
         return {'previous_config':previous.data if previous else None,'config':record_dict(r) if r else None,'stamp':token,'approved':passed,'reason':reason,
             'assets':[record_dict(a) for a in db.scalars(select(Record).where(Record.kind=='asset')) if a.data.get('media') and a.data.get('status')=='approved']}
 
@@ -448,7 +440,8 @@ def save(pid:str,body:Setup):
                 identity_spec=body.assets.get(spec.identity_asset_id or '')
                 if spec.role!='costume' or not identity or not identity_spec or identity_spec.role!='character' or a.data.get('asset_spec',{}).get('character_ref')!=identity.data.get('asset_spec',{}).get('character_id'):
                     raise HTTPException(422,'独立服装必须绑定本次选定的正确人物身份图。')
-            if a.data.get('asset_kind') in ('dressed_character','character_costume_reference'):
+            # 局部拼接参考（人物身份＋独立服装）是当前流程的产物，必须保留真实的依赖关系。
+            if a.data.get('asset_kind')=='character_costume_reference':
                 spec=body.assets[aid]
                 if spec.role!='character' or spec.identity_asset_id!=a.data.get('identity_asset_id') or spec.costume_asset_id!=a.data.get('costume_asset_id'):
                     raise HTTPException(422,'人物服装组合参考必须保留真实的身份和服装依赖，不能重新绑定。')
@@ -479,37 +472,8 @@ def save(pid:str,body:Setup):
         else:r=Record(id='prep_'+pid,kind='preproduction',data=data);db.add(r)
         db.flush();return record_dict(r)
 
-# 已废弃线路：试拍（v1–v5 的 trial 步骤）。它按"定装＋场景"提交一张参考图，用来检查定装与场景
-# 的组合效果；当前线路不再生成定装图或试拍图，直接在分镜里绑定人物身份、服装与场景参考图。
-# class Trial(BaseModel):
-#     stamp:str
-#     assets:list[str]=Field(min_length=2,max_length=3)
-#     prompt:str=Field(min_length=5,max_length=1500)
-#     confirm_paid:bool=False
-#
-# @router.post('/{pid}/trial')
-# def trial(pid:str,body:Trial):
-#     with Session() as db:
-#         run=db.get(Record,'creative_'+pid)
-#         if run and run.data.get('direct_reference_inputs'):raise HTTPException(409,'当前流程不再创建试拍，直接使用基础参考图生成分镜。')
-#     if not body.confirm_paid:raise HTTPException(422,'请确认试拍生图费用。')
-#     cfg=settings()
-#     refusal=paid_gate(cfg,'image')
-#     if refusal:raise HTTPException(422,refusal)
-#     with Session.begin() as db:
-#         project(db,pid);r,token=snapshot(db,pid)
-#         if token!=body.stamp:raise HTTPException(409,'设定已变更。')
-#         if len(set(body.assets))!=len(body.assets) or not set(body.assets)<=set(r.data['assets']):raise HTTPException(422,'参考图必须来自本次选角与影棚。')
-#         if not {'character','scene'}<={r.data['assets'][a]['role'] for a in body.assets}:raise HTTPException(422,'试拍必须同时包含演员与影棚。')
-#         refs=[db.get(Record,a) for a in body.assets]
-#         t=Task(id=uid('image'),kind='image',payload={'mode':'live','preproduction_id':pid,'preproduction_stamp':token,'reference_ids':body.assets,
-#             'reference_media':[a.data['media'] for a in refs],'image_model':REFERENCE_IMAGE_MODEL,
-#             'image_inference_steps':REFERENCE_IMAGE_STEPS,'title':'定装与影棚试拍',
-#             **render_node('scene_trial',{'style':r.data['style'],'references':json.dumps([r.data['assets'][a] for a in body.assets],ensure_ascii=False),'requirements':body.prompt})})
-#         db.add(t);db.flush();return task_dict(t)
-
 def approve_references(pid,stamp):
-    """Lock already confirmed character/scene references without generating trial images."""
+    """Lock the confirmed character and scene references that the storyboard will use."""
     with Session.begin() as db:
         project(db,pid);references,token=snapshot(db,pid)
         if stamp!=token:raise HTTPException(409,'参考图已变化，请重新确认。')
@@ -523,30 +487,3 @@ def approve_references(pid,stamp):
         else:db.add(Record(id='prep_gate_'+pid,kind='preproduction_gate',data=data))
         db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'reference_inputs_locked','asset_ids':list(data['assets']),'stamp':token}))
     return {'approved':True,'mode':'reference_images'}
-
-# 已废弃线路：试拍的图片审核。它要求审核对象是"由试拍任务产出的图片"（preproduction_id 与
-# preproduction_stamp 都指向本次设定），并检查试拍覆盖了全部演员、影棚与道具；当前线路用
-# 上面的 approve_references 直接锁定已确认的人物身份、服装与场景参考图。
-# class Approve(BaseModel):
-#     stamp:str
-#     asset_ids:list[str]=Field(min_length=1,max_length=30)
-#     note:str=Field(min_length=10,max_length=1000)
-#     confirm:bool=False
-#
-# @router.post('/{pid}/approve')
-# def approve(pid:str,body:Approve):
-#     if not body.confirm:raise HTTPException(422,'请确认角色、服装、比例、空间和画风。')
-#     with Session.begin() as db:
-#         project(db,pid);r,token=snapshot(db,pid)
-#         if token!=body.stamp:raise HTTPException(409,'设定已变更。')
-#         versions={};covered=set()
-#         for aid in body.asset_ids:
-#             a=db.get(Record,aid);t=db.get(Task,a.data.get('source_task','')) if a else None
-#             if not a or a.data.get('status')!='approved' or not t or t.payload.get('preproduction_id')!=pid or t.payload.get('preproduction_stamp')!=token:raise HTTPException(422,'试拍必须来自当前设定，并先审核图片。')
-#             versions[aid]=a.version;covered.update(t.payload['reference_ids'])
-#         if not set(r.data['assets'])<=covered:raise HTTPException(422,'试拍需要覆盖所有选定演员、影棚及道具；可分组生成。')
-#         gate=db.get(Record,'prep_gate_'+pid);data={'stamp':token,'assets':versions,'note':body.note}
-#         if gate and gate.data.get('history'):data['history']=gate.data['history']
-#         if gate:gate.data=data;gate.version+=1
-#         else:db.add(Record(id='prep_gate_'+pid,kind='preproduction_gate',data=data))
-#         return {'approved':True}

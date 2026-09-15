@@ -57,7 +57,7 @@ def test_video_freezes_reviewed_project_references(client,monkeypatch):
         assert '以所给首帧为起点' not in payload['prompt']
 
 
-def test_new_schemas_write_reference_prompts_and_read_legacy_shot_data():
+def test_shot_schemas_carry_reference_prompts_instead_of_keyframe_fields():
     from test_director import board
     parsed=director.Board.model_validate(board()).model_dump()
     assert all('reference_prompt' in shot and 'first_frame' not in shot for shot in parsed['shots'])

@@ -36,27 +36,21 @@ def test_each_payer_sees_only_its_own_works(story_api,monkeypatch):
     assert {item['id'] for item in second.get('/api/author/projects').json()}=={other.json()['id']}
 
 
-def test_work_started_before_accounts_is_claimed_once(story_api,monkeypatch):
-    """Pre-account records have no owner; the first signed-in visitor to open them takes them over."""
+def test_an_ownerless_project_is_never_reachable_or_takeable(story_api,monkeypatch):
+    """作品按付款身份取独立 ID；没有归属者的记录不会出现在列表里，也不能被顶替。"""
     monkeypatch.setenv('STORYLOOM_DEMO_MODE','public')
-    legacy=authors.work_id_for('7',None)
     with Session.begin() as db:
-        db.add(Record(id=legacy,kind='author_project',data={'title':'旧作品','stage':'style'}))
-    claimant=own_key_client(monkeypatch,'sk-claiming-visitor')
-    # Public listings and direct ids cannot expose an unclaimed legacy project.
-    assert claimant.get('/api/author/projects').json()==[]
-    assert claimant.get('/api/author/projects/'+legacy).status_code==404
-    response=claimant.post('/api/author/stories/7/open',json={})
-    assert response.status_code==200 and response.json()['id']==legacy
-    with Session() as db:
-        assert db.get(Record,legacy).data['owner'].startswith('access:')
-        claimed=[row for row in db.query(Record).filter(Record.kind=='audit').all()
-                 if row.data.get('action')=='author_project_claimed']
-    assert claimed
-    # It now belongs to that visitor, and a different payer cannot take it.
+        db.add(Record(id='work_zhihu_ownerless',kind='author_project',data={'title':'无名作品','stage':'style'}))
+    visitor=own_key_client(monkeypatch,'sk-arriving-visitor')
+    assert visitor.get('/api/author/projects').json()==[]
+    assert visitor.get('/api/author/projects/work_zhihu_ownerless').status_code==404
+    opened=visitor.post('/api/author/stories/7/open',json={})
+    assert opened.status_code==200 and opened.json()['id']!= 'work_zhihu_ownerless'
+    assert opened.json()['owner'].startswith('access:')
+    # 另一个付款身份会拿到自己的工作，既看不到也接管不了前一位的作品。
     stranger=own_key_client(monkeypatch,'sk-stranger-visitor')
-    assert stranger.get('/api/author/projects/'+legacy).status_code==404
-    assert stranger.post('/api/author/stories/7/open',json={}).json()['id']!=legacy
+    assert stranger.get('/api/author/projects/'+opened.json()['id']).status_code==404
+    assert stranger.post('/api/author/stories/7/open',json={}).json()['id']!=opened.json()['id']
 
 
 def test_public_browser_cannot_create_an_ownerless_project(story_api,monkeypatch):
@@ -179,14 +173,16 @@ def test_author_flow_stops_only_for_assets_and_film(creative,monkeypatch,sample_
             if not worker.process_one('author-test'):break
     assert c.get_status('pid')=='videos_review'
     with Session() as db:
-        assert not [task for task in db.scalars(select(Task).where(Task.kind=='image')) if task.payload.get('preproduction_id')=='pid' or task.payload.get('asset_kind')=='dressed_character']
-        assert not [asset for asset in db.scalars(select(Record).where(Record.kind=='asset'))
-                    if asset.data.get('asset_kind')=='character_costume_reference']
+        assert not [task for task in db.scalars(select(Task).where(Task.kind=='image')) if task.payload.get('preproduction_id')=='pid']
+    # 每个片段用真实的保存路径登记：片段、存储记录与播放文件一起落库，和供应商返回时一致。
+    with Session() as db:
+        videos=[(t.id,dict(t.payload),{**dict(t.result),'provider_id':f'provider-{t.id}'})
+                for t in db.scalars(select(Task).where(Task.kind=='video'))]
     with Session.begin() as db:
-        for t in db.scalars(select(Task).where(Task.kind=='video')):
-            t.status='completed';t.result={'clip_id':t.id+'_clip','media':'/media/'+t.id+'.mp4'}
-            shutil.copyfile(sample_video,DATA/'media'/f'{t.id}.mp4')
-            db.add(Record(id=t.id+'_clip',kind='clip',data={'media':t.result['media'],'duration':5,'status':'pending'}))
+        for tid,_,_ in videos:
+            task=db.get(Task,tid);task.status='running';task.owner='clip-owner'
+    for tid,payload,result in videos:
+        worker.save_video_result(tid,'clip-owner',payload,result,sample_video)
     with Session.begin() as db:
         for t in db.scalars(select(Task).where(Task.kind.in_(PRODUCTION_KINDS),Task.status=='waiting')):t.lease=0
     assert worker.process_one('author-test')

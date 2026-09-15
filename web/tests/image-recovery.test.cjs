@@ -9,13 +9,13 @@ const {renderToStaticMarkup}=require('react-dom/server');
 function load(file){const ctx={exports:{},require};vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname,'../app',file),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText,ctx);return ctx.exports.default;}
 const ProviderError=load('ProviderError.tsx'),ImageRecovery=load('author/ImageRecovery.tsx');
 
-test('provider explanation and trace are visible and escaped; legacy does not invent a reason',()=>{
+test('provider explanation and trace are visible and escaped',()=>{
   const error={http_status:451,summary:'生图请求被服务商拒绝',advice:'请查看供应商说明',source:'response',provider_message:'<script>provider detail</script>',request_id:'trace-123',provider_code:'policy'};
   const html=renderToStaticMarkup(React.createElement(ProviderError,{error}));
   assert.match(html,/HTTP 451/);assert.match(html,/trace-123/);assert.match(html,/policy/);
   assert.doesNotMatch(html,/<script>/);assert.match(html,/&lt;script&gt;/);
-  const legacy=renderToStaticMarkup(React.createElement(ProviderError,{error:{...error,source:'legacy_status',provider_message:'',request_id:'',provider_code:''}}));
-  assert.match(legacy,/历史任务未保存原始响应/);assert.doesNotMatch(legacy,/供应商说明：/);
+  const bare=renderToStaticMarkup(React.createElement(ProviderError,{error:{...error,provider_message:'',request_id:'',provider_code:''}}));
+  assert.match(bare,/供应商未返回可展示的错误说明/);assert.doesNotMatch(bare,/供应商说明：/);
 });
 
 test('a picture stopped before submission shows its reason without inventing a provider response',()=>{

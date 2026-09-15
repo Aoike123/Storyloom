@@ -6,9 +6,7 @@ const productionStages: Record<string, number> = {
   preparing: 2,
   assets_review: 3,
   storyboarding: 4,
-  compositing: 4,
   rendering: 5,
-  producing: 5,
   film_review: 6,
   published: 7,
 };
