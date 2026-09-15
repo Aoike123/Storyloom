@@ -8,7 +8,8 @@ import ReaderArtwork from './ReaderArtwork';
 import ReaderHero from './ReaderHero';
 import ReaderStoryGrid from './ReaderStoryGrid';
 import {canWatch, productionLink} from './reader-types';
-import {modelAccessHeaders, modelSetupLink} from './model-access';
+import {modelAccessHeaders} from './model-access';
+import AccountDock from './AccountDock';
 import {rankByProduction} from './reader-carousel';
 import type {Catalog, CatalogItem, ReaderBranch, Release, ReleaseEntry} from './reader-types';
 import './reader-catalog.css';
@@ -420,7 +421,10 @@ export default function ReaderExperience() {
   return <div className="reader-world">
     <nav className="reader-nav">
       <button className="reader-brand" onClick={() => {if (story) back(); else window.scrollTo({top: 0, behavior: 'instant'});}}>叙间<span>每个故事，都有另一种可能</span></button>
-      <div className="reader-entry-links"><Link href="/setup?next=%2Fauthor" prefetch={false} onClick={() => {if (!story) remember('nav:author');}} data-reader-focus="nav:author">漫剧生成 <ArrowRight size={14}/></Link></div>
+      <div className="reader-entry-links">
+        <Link href="/author" prefetch={false} onClick={() => {if (!story) remember('nav:author');}} data-reader-focus="nav:author">漫剧生成 <ArrowRight size={14}/></Link>
+        <AccountDock next={story ? '/?story=' + encodeURIComponent(story.id) : '/'}/>
+      </div>
     </nav>
     {!story ? <div className="reader-catalog-page">
       <ReaderHero items={carouselItems} loading={loading || (!!catalog?.items.length && !carouselItems.length)} activeId={activeId} onActiveChange={setActiveId} onOpen={openItem}/>
@@ -507,7 +511,7 @@ export default function ReaderExperience() {
         <textarea ref={input} aria-label="你的剧情想法" value={text} onChange={event => {setText(event.target.value); drafts.current[story.id] = event.target.value;}} placeholder="如果换我来演，这一刻我会……"/>
         <button className="reader-cta reader-save-wish" disabled={!paused || text.trim().length < 2 || busy || awaitingFirstBranch} onClick={saveWish}>{busy ? '正在提交这一刻…' : awaitingFirstBranch ? '正在准备第一段分支…' : '生成这一种可能'}</button>
         <div className="reader-feedback-slot"><InteractionFeedback title="故事回应" busy={busy || !!branchWorking} text={busy ? '正在冻结暂停画面与当前剧情状态…' : reply} error={!busy && replyError}/></div>
-        {replyError && /模型|权限|配置/.test(reply) && <Link className="reader-model-link" href={modelSetupLink('/?story=' + encodeURIComponent(story.id))} prefetch={false}>选择模型使用方式 <ArrowRight size={13}/></Link>}
+        {replyError && /模型|权限|配置|算力豆/.test(reply) && <span className="reader-model-link">请在右上角的账号面板里登录领取算力豆，或填写自己的 API Key <ArrowRight size={13}/></span>}
         <small>改写只复用当前场景、人物与着装。分支开始后不能向前跳看；后续视频会逐段生成并提前加载。</small>
         {wishes.map((wish, i) => <blockquote key={i}><small>{Math.floor(wish.at)} 秒 · 你的另一种可能</small><p>{wish.text}</p></blockquote>)}
       </aside></div>

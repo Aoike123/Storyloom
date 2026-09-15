@@ -49,6 +49,7 @@
 
 ## 额度
 
-- 视频预留按请求时长计算，并被每镜上限封顶：`PUBLIC_POOL_VIDEO_RESERVE_PER_SECOND_CNY × 秒数`，下限 `PUBLIC_POOL_VIDEO_RESERVE_FLOOR_CNY`，上限 `PUBLIC_POOL_VIDEO_RESERVE_CNY`。
-- 每日预算必须覆盖"每片镜头数 × 每镜预留"。共享体验模式下，切片节点会按当日剩余额度自动限制整片镜头总数；额度不足一个短片时会直接说明，而不是拍到一半停下。
-- 供应商拒绝（HTTP 4xx）会退还预留；超时或 5xx 等结果不确定的调用保留预留，不会自动重发。
+- 计价：文本 `BEANS_LLM_COST`、生图 `BEANS_IMAGE_COST`、视频 `BEANS_VIDEO_COST_PER_SECOND × 秒数`；每个账号只赠送一次 `BEANS_INITIAL_GRANT`。
+- 提交时才扣豆，排队不扣；供应商拒绝（HTTP 4xx）会退回豆子，超时或 5xx 等结果不确定的调用保留扣费，不会自动重发。
+- 切片节点会按账号剩余豆子限制整片镜头总数；不足以完成一个短片时会直接说明，而不是拍到一半停下。
+- 登录账号的豆子花完后，页面会提示改用自带 API Key；未登录访客必须先登录或用自带 Key，二者都不具备时只会得到说明，不会发起付费调用。

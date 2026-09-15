@@ -1,0 +1,88 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const vm=require('node:vm');
+const ts=require('typescript');
+
+function load(relative, modules={}, globals={}) {
+  const context={exports:{},require:name=>{
+    if(name.endsWith('.css'))return {};
+    if(Object.prototype.hasOwnProperty.call(modules,name))return modules[name];
+    return require(name);
+  },...globals};
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname,'..',relative),'utf8'),{
+    compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2022},
+  }).outputText,context);
+  return context.exports;
+}
+
+// account-dock.ts imports the model-access helpers by relative path, which the sandbox cannot
+// resolve on its own.
+const modelAccess=load('app/model-access.ts');
+// The transpiled module reads `window` from its own sandbox, so the fake browser goes in there.
+const fakeWindow={};
+class FakeCustomEvent{constructor(type,init){this.type=type;this.detail=init?.detail;}}
+const dock=load('app/account-dock.ts',{'./model-access':modelAccess},{window:fakeWindow,CustomEvent:FakeCustomEvent});
+const account=load('app/zhihu-account.ts');
+const types=load('app/reader-types.ts');
+
+test('a wallet that cannot cover the next step is recognised from the server message',()=>{
+  assert.equal(dock.isBeansProblem('算力豆不足：这一步需要 MiniMax 视频。请填写自己的 API Key 继续。'),true);
+  assert.equal(dock.isBeansProblem('算力豆已用完'),true);
+  assert.equal(dock.isBeansProblem('任务仍在运行。'),false);
+  assert.equal(dock.isBeansProblem(''),false);
+});
+
+test('the beans signal reaches whoever is listening',()=>{
+  const seen=[];
+  const listeners={};
+  fakeWindow.addEventListener=(name,handler)=>{listeners[name]=handler;};
+  fakeWindow.removeEventListener=(name)=>{delete listeners[name];};
+  fakeWindow.dispatchEvent=(event)=>{listeners[event.type]?.(event);};
+  dock.announceBeansProblem('算力豆不足');
+  assert.deepEqual(seen,[]);
+  const stop=dock.onBeansProblem(detail=>seen.push(detail));
+  dock.announceBeansProblem('算力豆不足');
+  stop();
+  assert.deepEqual(seen,['算力豆不足']);
+});
+
+test('announcing without a browser is harmless',()=>{
+  // The helper is imported by pages that may render on the server.
+  const bare=load('app/account-dock.ts',{'./model-access':modelAccess},{window:undefined,CustomEvent:undefined});
+  assert.doesNotThrow(()=>bare.announceBeansProblem('算力豆不足'));
+});
+
+test('entering a story goes straight to the studio instead of a model-access detour',()=>{
+  assert.equal(types.productionLink({work_id:'123'}),'/author?story=123');
+  assert.equal(types.productionLink({project_id:'work_x'}),'/author?work=work_x');
+  assert.equal(types.productionLink({}),'/author');
+  assert.doesNotMatch(types.productionLink({work_id:'123'}),/setup/);
+});
+
+test('the callback flag maps to readable copy and ignores anything unknown',()=>{
+  assert.match(account.zhihuNotice('ok').text,/算力豆已到账/);
+  assert.equal(account.zhihuNotice('ok').error,false);
+  assert.match(account.zhihuNotice('denied').text,/取消了知乎授权/);
+  assert.match(account.zhihuNotice('error').text,/没有完成/);
+  assert.equal(account.zhihuNotice(null),null);
+  assert.equal(account.zhihuNotice('something-else'),null);
+});
+
+test('the login link only ever points back into this site',()=>{
+  assert.equal(account.zhihuLoginLink('/author'),'/api/zhihu/login?next=%2Fauthor');
+  for (const hostile of ['https://evil.example.com','//evil.example.com','javascript:alert(1)']) {
+    const href=account.zhihuLoginLink(hostile);
+    assert.match(href,/next=%2Fauthor$/,hostile);
+    assert.doesNotMatch(href,/evil|javascript/);
+  }
+});
+
+test('low balance is judged against one clip, not a fixed number',()=>{
+  const wallet={uid:'525',beans:'500.00',granted:'500.00',costs:{llm:'1',image:'5',video:'48'},ledger:[]};
+  assert.equal(account.isLowBeans(wallet),false);
+  assert.equal(account.isLowBeans({...wallet,beans:'47.99'}),true);
+  assert.equal(account.isLowBeans({...wallet,beans:'48'}),false);
+  assert.equal(account.isLowBeans(null),false);
+});

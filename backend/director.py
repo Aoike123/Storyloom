@@ -233,7 +233,7 @@ def segment_stage(payload,passages,task_id,save_stage,treatment):
 
 
 def shot_budget_limit():
-    """Cap the whole-film shot count to what the shared pool can still pay for."""
+    """Cap the whole-film shot count to what this account's beans can still pay for."""
     try:
         from .model_access import affordable_shot_budget
     except ImportError:return None,''

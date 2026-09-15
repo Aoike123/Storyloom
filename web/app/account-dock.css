@@ -1,0 +1,25 @@
+.account-dock{position:relative;z-index:40}
+.account-dock-trigger{display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border:1px solid #d9cfa8;border-radius:999px;background:#fffdf4cc;color:#4a4432;font-size:12px;cursor:pointer;backdrop-filter:blur(6px)}
+.account-dock-trigger:hover{border-color:#c3b17a}
+.account-dock-trigger img{width:22px;height:22px;border-radius:50%;object-fit:cover;background:#e8e2c9}
+.account-dock-dot{width:8px;height:8px;border-radius:50%;background:#c3b17a}
+.account-dock-name{max-width:9em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.account-dock-beans{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:999px;background:#efe7c8;color:#6b5f2f;font-weight:600}
+.account-dock-beans.is-low{background:#f6dcc9;color:#8a4a24}
+.account-dock-panel{position:absolute;right:0;top:calc(100% + 8px);width:min(340px,calc(100vw - 32px));padding:16px;border:1px solid #d9cfa8;border-radius:12px;background:#fffdf6;box-shadow:0 14px 34px #3b33191f;text-align:left}
+.account-dock-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.account-dock-head strong{font-size:14px}
+.account-dock-close{border:0;background:transparent;color:#8b8265;cursor:pointer;padding:2px}
+.account-dock-alert{margin:0 0 12px;padding:10px 12px;border:1px solid #e5b98d;border-left:4px solid #cf8b4a;border-radius:8px;background:#fdf3e6;color:#7d4d1d;font-size:12px;line-height:1.7}
+.account-dock-line{margin:0 0 6px;font-size:12px;color:#5a5341}
+.account-dock-costs{margin:0 0 12px;font-size:11px;color:#8b8265;line-height:1.7}
+.account-dock-actions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.account-dock-actions .button{margin:0}
+.account-dock-keys{display:grid;gap:8px;padding-top:12px;border-top:1px solid #ece5cd}
+.account-dock-subtitle{margin:0;font-size:12px;font-weight:600;color:#4a4432}
+.account-dock-hint{margin:0 0 2px;font-size:11px;color:#8b8265;line-height:1.7}
+.account-dock-keys input{padding:9px 11px;border:1px solid #ded6bb;border-radius:7px;background:#fff;font-size:12px;color:#4a4432}
+.account-dock-keys .button{justify-self:start;margin:2px 0 0}
+.account-dock-note{margin:10px 0 0;font-size:11px;color:#5f7a45}
+.account-dock-note.is-error{color:#a4563a}
+@media(max-width:640px){.account-dock-name{display:none}}

@@ -7,7 +7,8 @@ from .model_access import (
     ModelAccessError,
     access_paid_states,
     authorize_call,
-    mark_public_provider_unavailable,
+    note_operator_key_rejection,
+    payer_requirement_message,
     public_demo_mode,
 )
 
@@ -82,23 +83,17 @@ def session_prerequisite_message() -> str | None:
         return None
     return SESSION_EXPIRED_HINT if public_demo_mode() else None
 
-
 def payment_message(*kinds, cfg=None):
     """Explain exactly which provider blocks this step, instead of an all-or-nothing prompt."""
     missing=unpaid_kinds(*kinds,cfg=cfg)
     if not missing:return None
-    from .model_access import current_access_mode, public_demo_mode, public_pool_status
-    if not public_demo_mode():
-        return '这一步需要的模型调用未开启或额度不足：'+'、'.join(PROVIDER_LABELS.get(kind,kind) for kind in missing)+'。'
+    from .model_access import current_access_mode
     if current_access_mode() is None:
-        return SESSION_EXPIRED_HINT
-    if current_access_mode()=='public':
-        status=public_pool_status(refresh=False)
-        reasons=[f'{PROVIDER_LABELS.get(item["kind"],item["kind"])}：{item["reason"]}'
-                 for item in status['providers'] if item['kind'] in missing]
-        detail='；'.join(reasons) or '、'.join(PROVIDER_LABELS.get(kind,kind) for kind in missing)
-        return '共享体验池暂时无法完成这一步：'+detail+'。可以改用自己的 Key，或稍后再试。'
-    return '这一步需要的模型调用未开启：'+'、'.join(PROVIDER_LABELS.get(kind,kind) for kind in missing)+'。'
+        return payer_requirement_message() or SESSION_EXPIRED_HINT
+    if current_access_mode()=='account':
+        # The account is signed in, so a missing kind means its bean wallet cannot cover it.
+        return '算力豆不足：这一步需要 '+'、'.join(PROVIDER_LABELS.get(kind,kind) for kind in missing)+'。请填写自己的 API Key 继续。'
+    return '这一步需要的模型调用未开启或额度不足：'+'、'.join(PROVIDER_LABELS.get(kind,kind) for kind in missing)+'。'
 
 
 def endpoint(kind,config=None):
@@ -150,7 +145,7 @@ def chat_json(system,payload,task_id,profile='default',*,on_event=None):
             with httpx.stream('POST',target,**request) as response:
                 if response.status_code>=300:
                     finish(entry,status='rejected')
-                    mark_public_provider_unavailable('llm',response.status_code)
+                    note_operator_key_rejection('llm',response.status_code)
                     raise ProviderError(f'语言模型返回 HTTP {response.status_code}；请核对模型权限与流式接口支持情况。')
                 on_event('connected','')
                 data=read_completion(response,on_event,timeout)
@@ -158,7 +153,7 @@ def chat_json(system,payload,task_id,profile='default',*,on_event=None):
             response=httpx.post(target,**request)
             if response.status_code>=300:
                 finish(entry,status='rejected')
-                mark_public_provider_unavailable('llm',response.status_code)
+                note_operator_key_rejection('llm',response.status_code)
                 raise ProviderError(f'语言模型返回 HTTP {response.status_code}；请核对模型权限与接口格式。')
             data=response.json()
         finish(entry,data.get('usage',{}))
@@ -214,7 +209,7 @@ def submit_video(prompt,task_id,image_url=None,*,local_frame=False,reference_ima
                      json=body,timeout=60)
         if r.status_code>=400:
             finish(entry,status='rejected')
-            mark_public_provider_unavailable('video',r.status_code)
+            note_operator_key_rejection('video',r.status_code)
             raise ProviderError(f'视频接口返回 HTTP {r.status_code}；本任务不自动重新提交。')
         task=r.json().get('task_id' if minimax else 'id')
         if not task: raise ProviderError('视频接口未返回任务编号，请核对供应商记录。')
@@ -235,7 +230,7 @@ def poll_video(provider_id):
         r=httpx.get(target,
                     headers={'Authorization':f'Bearer {cfg.get("VIDEO_API_KEY")}'},timeout=30)
         if r.status_code>=400:
-            mark_public_provider_unavailable('video',r.status_code)
+            note_operator_key_rejection('video',r.status_code)
             raise ProviderError(f'查询视频任务返回 HTTP {r.status_code}。')
         data=r.json()
         if minimax:

@@ -36,7 +36,6 @@ def begin(kind, model, task, access=None):
 def finish(entry, usage=None, status="completed"):
     if not entry:
         return
-    refund = None
     beans_refund = None
     with Session.begin() as db:
         row = db.get(Record, entry)
@@ -45,18 +44,10 @@ def finish(entry, usage=None, status="completed"):
             if status == "rejected" and not row.data.get("released_at"):
                 # The provider refused the request, so this reservation never became a charge.
                 data["released_at"] = time.time()
-                if data.get("mode") == "public":
-                    refund = (data.get("pool_kind"), data.get("reserved_cny"), data.get("pool_day"))
-                elif data.get("mode") == "account":
+                if data.get("mode") == "account":
                     beans_refund = (data.get("uid"), data.get("kind"), data.get("task"),
                                     data.get("beans_cost"))
             row.data = data
-    if refund:
-        from .model_access import release_public_call
-
-        kind, amount, day = refund
-        if kind and amount:
-            release_public_call(kind, amount, day)
     if beans_refund:
         uid, kind, task, amount = beans_refund
         if uid and kind and amount:

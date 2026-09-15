@@ -1,0 +1,147 @@
+'use client';
+import {useEffect, useRef, useState} from 'react';
+import {Coins, KeyRound, LogOut, X} from 'lucide-react';
+import {clearModelAccess, readModelAccess} from './model-access';
+import {readZhihuStatus, zhihuLoginLink, zhihuLogout, type ZhihuStatus} from './zhihu-account';
+import {isBeansProblem, onBeansProblem, saveOwnKeys, type OwnKeyInput} from './account-dock';
+import './account-dock.css';
+
+const emptyKeys: OwnKeyInput = {deepseek: '', siliconflow: '', minimax: ''};
+
+/**
+ * The single place that answers "who is paying".
+ *
+ * Sits in the top-right on every page. A signed-in account shows its beans; anyone can switch to
+ * their own keys here, either by choice or because the dock was asked to explain the way forward
+ * after a wallet ran out.
+ */
+export default function AccountDock({next = '/'}: {next?: string}) {
+  const [status, setStatus] = useState<ZhihuStatus | null>(null);
+  const [open, setOpen] = useState(false);
+  const [keys, setKeys] = useState(emptyKeys);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+  const [noteError, setNoteError] = useState(false);
+  const [reason, setReason] = useState('');
+  const panel = useRef<HTMLDivElement>(null);
+
+  async function reload() {
+    try {
+      setStatus(await readZhihuStatus());
+    } catch {
+      setStatus({configured: false, authorized: false, account: null, wallet: null});
+    }
+  }
+
+  useEffect(() => {void reload();}, []);
+
+  useEffect(() => onBeansProblem(detail => {
+    // A page hit the end of the wallet: open the dock and explain rather than just showing an error.
+    setReason(detail);
+    setOpen(true);
+  }), []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (panel.current && !panel.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {if (event.key === 'Escape') setOpen(false);};
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  async function submitKeys(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true); setNote(''); setNoteError(false);
+    try {
+      await saveOwnKeys(keys);
+      setKeys(emptyKeys);
+      setReason('');
+      setNote('已改用你自己的 API Key，额度不再来自账号。');
+      await reload();
+    } catch (error) {
+      setNote((error as Error).message);
+      setNoteError(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const usingOwnKeys = !!readModelAccess();
+  const account = status?.account ?? null;
+  const wallet = status?.wallet ?? null;
+  const beans = wallet ? Number(wallet.beans) : null;
+
+  const label = account ? (account.fullname || '知乎账号')
+    : usingOwnKeys ? '使用自己的 Key'
+    : '登录';
+
+  return <div className="account-dock" ref={panel}>
+    <button className="account-dock-trigger" aria-expanded={open} onClick={() => setOpen(value => !value)}>
+      {account?.avatar_path
+        ? <img src={account.avatar_path} alt=""/>
+        : <span className="account-dock-dot" aria-hidden="true"/>}
+      <span className="account-dock-name">{label}</span>
+      {beans !== null && <span className={'account-dock-beans' + (beans < Number(wallet?.costs?.video ?? 0) ? ' is-low' : '')}>
+        <Coins size={12}/>{beans.toFixed(0)}
+      </span>}
+      {beans === null && usingOwnKeys && <KeyRound size={12}/>}
+    </button>
+
+    {open && <div className="account-dock-panel" role="dialog" aria-label="账号与额度">
+      <div className="account-dock-head">
+        <strong>{account ? (account.fullname || '知乎账号') : '账号与额度'}</strong>
+        <button className="account-dock-close" aria-label="关闭" onClick={() => setOpen(false)}><X size={14}/></button>
+      </div>
+
+      {reason && <p className="account-dock-alert">
+        {reason}
+        <br/>填写自己的 API Key 就能继续；已经做好的图片和分镜都会保留。
+      </p>}
+
+      {account && wallet && <>
+        <p className="account-dock-line">
+          剩余 <strong>{beans!.toFixed(0)}</strong> 算力豆（赠送 {Number(wallet.granted).toFixed(0)}）
+        </p>
+        <p className="account-dock-costs">
+          文本 {wallet.costs.llm} 豆／次 · 生图 {wallet.costs.image} 豆／张 · 视频 {wallet.costs.video} 豆／镜
+        </p>
+      </>}
+
+      {!account && status?.configured && <p className="account-dock-line">
+        用知乎账号登录即可领取算力豆，也可以直接填写自己的 API Key。
+      </p>}
+      {!account && status && !status.configured && <p className="account-dock-line">
+        当前部署未开通知乎登录，请填写自己的 API Key。
+      </p>}
+
+      <div className="account-dock-actions">
+        {!account && status?.configured &&
+          <a className="button primary" href={zhihuLoginLink(next)}>用知乎账号登录</a>}
+        {account && <button className="button secondary" disabled={busy} onClick={async () => {
+          await zhihuLogout(); clearModelAccess(); setNote('已退出登录。'); await reload();
+        }}><LogOut size={13}/> 退出登录</button>}
+      </div>
+
+      <form className="account-dock-keys" onSubmit={submitKeys}>
+        <p className="account-dock-subtitle">使用自己的 API Key</p>
+        <p className="account-dock-hint">只填需要的那个也可以，缺哪一个就在需要它的那一步提示。</p>
+        <input type="password" autoComplete="off" placeholder="DeepSeek API Key（文本）"
+               value={keys.deepseek} onChange={e => setKeys({...keys, deepseek: e.target.value})}/>
+        <input type="password" autoComplete="off" placeholder="硅基流动 API Key（生图）"
+               value={keys.siliconflow} onChange={e => setKeys({...keys, siliconflow: e.target.value})}/>
+        <input type="password" autoComplete="off" placeholder="MiniMax API Key（视频）"
+               value={keys.minimax} onChange={e => setKeys({...keys, minimax: e.target.value})}/>
+        <button className="button secondary" disabled={busy || !Object.values(keys).some(v => v.trim())}>
+          {busy ? '正在保存…' : '用这些 Key 继续'}
+        </button>
+      </form>
+      {note && <p className={'account-dock-note' + (noteError ? ' is-error' : '')} role="status">{note}</p>}
+    </div>}
+  </div>;
+}

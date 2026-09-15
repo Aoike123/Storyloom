@@ -1,27 +1,26 @@
 # Storyloom public demo deployment
 
-This stack publishes Storyloom as an anonymous public demo on one Linux server.
-It packages Caddy, Next.js, FastAPI, the background worker, and PostgreSQL with
-persistent named volumes. Only ports 80 and 443 are published.
+This stack publishes Storyloom on one Linux server: Caddy, Next.js, FastAPI, the background worker
+and PostgreSQL with persistent named volumes. Only ports 80 and 443 are published.
 
-Visitors first open the model-access page and choose one of two modes:
+Generation is paid for in one of two ways, and the account dock in the top-right corner is the only
+place that manages it:
 
-- **Shared pool** — uses the operator's three API keys while each key's daily
-  internal budget and provider check are available. Each provider is metered
-  independently, and reservations are first come, first served.
-- **Bring your own keys** — accepts only DeepSeek, SiliconFlow, and MiniMax keys.
-  Provider endpoints and model identifiers are fixed by the application.
+- **Compute beans** — every visitor signs in with a Zhihu account and receives a one-time bean
+  grant. Their calls spend that grant instead of the operator's budget, so one visitor cannot use
+  up the day's allowance before anyone else arrives.
+- **Own API keys** — accepts DeepSeek, SiliconFlow and MiniMax keys, and is the way forward once a
+  wallet is empty. Provider endpoints and model identifiers stay fixed by the application.
 
-There is no site password and no product account. BYOK credentials are encrypted
-with `MODEL_ACCESS_SECRET`, retained for a short anonymous session, and selected
-tasks store only its opaque id. Switching modes affects newly submitted tasks;
-already-running tasks keep the session with which they were created.
+There is no site password and no anonymous shared pool. Own-key credentials are encrypted with
+`MODEL_ACCESS_SECRET`, retained for a short session, and tasks store only its opaque id. The bean
+wallet is keyed by the Zhihu account id held as text, because `uid` is an int64 that JavaScript
+cannot represent exactly.
 
-This is intentionally a public demo, not a tenant-isolated SaaS platform. Works,
-progress, and media are shared across visitors. The stack includes lightweight
-per-IP request limits, a global active-task cap, and container resource ceilings,
-but it has no CAPTCHA, distributed abuse scoring, or upstream DDoS protection.
-Keep the daily pool budget conservative.
+This is intentionally a public demo, not a tenant-isolated SaaS platform. Works, progress and media
+are shared across visitors. The stack includes per-IP request limits, a global active-task cap and
+container resource ceilings, but no CAPTCHA, distributed abuse scoring or upstream DDoS protection.
+Size `BEANS_INITIAL_GRANT` so the total across expected signups stays inside your provider budget.
 
 ## 1. Prepare the server and DNS
 
@@ -62,35 +61,13 @@ The public deployment locks their transports and models to the product-tested
 combination in `backend/environment.py`; visitors cannot submit alternate URLs
 or model ids.
 
-Set `PUBLIC_POOL_LLM_DAILY_BUDGET_CNY`,
-`PUBLIC_POOL_IMAGE_DAILY_BUDGET_CNY`, and
-`PUBLIC_POOL_VIDEO_DAILY_BUDGET_CNY` to the maximum amounts Storyloom may
-reserve from the corresponding operator key each Shanghai calendar day.
-
-The video daily budget must cover **every shot of one film**, or the demo stops
-halfway through a story. A clip reserves
-`PUBLIC_POOL_VIDEO_RESERVE_PER_SECOND_CNY × VIDEO_DURATION`, floored by
-`PUBLIC_POOL_VIDEO_RESERVE_FLOOR_CNY` and capped by `PUBLIC_POOL_VIDEO_RESERVE_CNY`.
-With the defaults (0.60/s, floor 1.00, cap 6.00, 8 s clips) one clip reserves
-4.80, so a 6-shot film needs about 28.80 of video budget before retries. Start
-from `shot count × per-clip reserve × 1.3` and round up.
-
-`PUBLIC_POOL_LLM_RESERVE_CNY` and `PUBLIC_POOL_IMAGE_RESERVE_CNY` stay flat per
-submission. These are conservative estimates, not provider invoices. A provider
-that rejects the request (HTTP 4xx) refunds its reservation; a timeout or 5xx
-keeps it, because that call may still be billed. In shared-pool mode the cutting
-step caps a film's total shot count to what the remaining daily budget can pay
-for, and refuses to start a film when fewer than four shots are affordable.
-
-DeepSeek exposes an official balance endpoint, so the pool verifies that account
-before it can be selected. SiliconFlow retired its `/user/info` balance endpoint
-on 2026-08-14 and MiniMax does not currently document an equivalent general
-balance API. Those two providers are guarded by their independent daily
-reservation caps; an authentication, payment, or permission response (HTTP
-401/402/403) disables only that provider's shared key for the remainder of that
-Shanghai day. Their dashboards remain the source of truth for recharge amounts.
-
-Set `PUBLIC_POOL_ENABLED=false` at any time to offer BYOK only.
+There is no anonymous shared pool. An operator key is spent only through a signed-in account's bean
+wallet, and the size of that wallet is what bounds the spend: `BEANS_INITIAL_GRANT` per account,
+with `BEANS_LLM_COST`, `BEANS_IMAGE_COST` and `BEANS_VIDEO_COST_PER_SECOND` setting the price of
+each call. Size the grant so the total across expected signups stays inside your provider budget.
+An authentication, payment, or permission response (HTTP 401/402/403) from a provider pauses that
+provider for the rest of the Shanghai day, and affected accounts are told to bring their own key;
+the provider dashboards remain the source of truth for recharge amounts.
 
 For a 2 vCPU / 2 GiB demo host, the supplied defaults allow 180 read requests
 and 20 write requests per client IP per minute, and at most 32 queued, running,
@@ -233,19 +210,20 @@ The script validates Compose and Caddy configuration, builds immutable
 application images, starts services in dependency order, and waits for the
 database, API, worker, and web health checks. It never removes data volumes.
 
-Open `https://YOUR_DOMAIN`. The story catalog is public; entering production
-first opens `/setup`, where a visitor chooses an available shared pool or enters
-their own three keys. Useful checks:
+Open `https://YOUR_DOMAIN`. The story catalog is public. Entering a story sends a visitor to Zhihu
+to sign in and receive their bean grant, unless they would rather attach their own keys from the
+account dock in the top-right corner. Useful checks:
 
 ```bash
 docker compose --env-file .env.production -f compose.production.yaml ps
 docker compose --env-file .env.production -f compose.production.yaml logs --tail=100 api worker web caddy
 curl https://YOUR_DOMAIN/api/health
+curl https://YOUR_DOMAIN/api/zhihu/status
 curl https://YOUR_DOMAIN/api/model-access/status
 ```
 
-A healthy response reports PostgreSQL and an online worker. The model-access
-status must report `pool.available: true` before the shared option is selectable.
+A healthy response reports PostgreSQL and an online worker. `/api/zhihu/status` must report
+`"configured": true` before the sign-in button can work.
 
 ## Updates and rollback
 

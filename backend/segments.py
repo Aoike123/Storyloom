@@ -14,8 +14,8 @@ from .providers import ModelOutputError,ProviderError
 MAX_SEGMENTS=10
 MAX_SHOTS_PER_SEGMENT=6
 MAX_TOTAL_SHOTS=24
-# Below this, a film has no room for setup, turn and payoff, so the pool budget is reported as
-# insufficient instead of producing a fragment.
+# Below this, a film has no room for setup, turn and payoff, so an unaffordable wallet is reported
+# as insufficient instead of producing a fragment.
 MIN_AFFORDABLE_SHOTS=4
 SEGMENT_PATTERN=r'^G[0-9]{2}$'
 REFERENCE_PATTERN=re.compile(r'^P([0-9]{3,})$')

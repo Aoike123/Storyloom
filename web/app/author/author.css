@@ -31,6 +31,7 @@
 .asset-feedback-permission{margin:10px 0;color:#526c42!important}.asset-feedback-note{display:block;margin-top:5px;color:#7c8c6e;font-size:11px;line-height:1.8}
 
 /* Zhihu account sign-in and bean balance */
+.studio-header-right{display:flex;align-items:center;gap:14px}
 .zhihu-account{margin:0 0 18px;padding:16px 18px;border:1px solid #d7e2ca;border-radius:10px;background:#f7faf1}
 .zhihu-account-heading{display:flex;align-items:center;gap:10px;color:#4c6440}
 .zhihu-account-heading strong{font-size:15px;font-weight:600}

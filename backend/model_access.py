@@ -1,8 +1,17 @@
-"""Anonymous model-access sessions and the shared public-demo budget gate.
+"""Who pays for a model call.
 
-Visitors never choose endpoints or model identifiers.  They either borrow the
-operator-funded pool or provide keys for the three fixed providers.  BYOK
-credentials are encrypted at rest and tasks retain only an opaque session id.
+Two modes, and no third:
+
+``account``
+    A signed-in Zhihu account spends the compute beans granted to it at first login. This is the
+    normal path: the account owns its budget, so one visitor cannot consume the day's allowance
+    before anyone else arrives.
+``own``
+    A visitor who attached their own provider keys. This is the fallback once a wallet runs out,
+    and the only mode that does not spend the operator's budget.
+
+Visitors never choose endpoints or model identifiers. BYOK credentials are encrypted at rest and
+tasks retain only an opaque session id.
 """
 
 from __future__ import annotations
@@ -16,46 +25,23 @@ import secrets
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from datetime import datetime
 from pathlib import Path
-from threading import Lock
 from zoneinfo import ZoneInfo
 
-import httpx
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
-from sqlalchemy import text
-
 
 ACCESS_HEADER = "X-Storyloom-Model-Access"
 SESSION_KIND = "model_access_session"
 ACCOUNT_TOKEN_PREFIX = "zhihu:"
-POOL_KIND = "public_pool_day"
-BALANCE_KIND = "public_pool_balance"
-FILM_KIND = "public_pool_film"
+OPERATOR_KEY_KIND = "operator_key_day"
 _access_id: ContextVar[str] = ContextVar("storyloom_model_access", default="")
-_pool_lock = Lock()
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
 _KEY_FIELDS = ("LLM_API_KEY", "IMAGE_API_KEY", "VIDEO_API_KEY")
-_RESERVES = {
-    "llm": ("PUBLIC_POOL_LLM_RESERVE_CNY", "0.20"),
-    "image": ("PUBLIC_POOL_IMAGE_RESERVE_CNY", "0.50"),
-    "video": ("PUBLIC_POOL_VIDEO_RESERVE_CNY", "6.00"),
-}
-# A video reservation that ignores the requested length burns one whole clip's worth of
-# budget per attempt, so short clips are priced by the second instead of by the flat cap.
-_VIDEO_RESERVE_PER_SECOND = ("PUBLIC_POOL_VIDEO_RESERVE_PER_SECOND_CNY", "0.60")
-_VIDEO_RESERVE_FLOOR = ("PUBLIC_POOL_VIDEO_RESERVE_FLOOR_CNY", "1.00")
-_VIDEO_DEFAULT_SECONDS = 8
-_BUDGETS = {
-    "llm": ("PUBLIC_POOL_LLM_DAILY_BUDGET_CNY", "0"),
-    "image": ("PUBLIC_POOL_IMAGE_DAILY_BUDGET_CNY", "0"),
-    "video": ("PUBLIC_POOL_VIDEO_DAILY_BUDGET_CNY", "0"),
-}
 _PROVIDER_KEYS = {"llm": "LLM_API_KEY", "image": "IMAGE_API_KEY", "video": "VIDEO_API_KEY"}
-_PROVIDER_NAMES = {"llm": "DeepSeek", "image": "硅基流动", "video": "MiniMax"}
+_KINDS = ("llm", "image", "video")
 
 
 class ModelAccessError(Exception):
@@ -169,6 +155,31 @@ def current_account_uid() -> str | None:
     return uid or None
 
 
+def has_payer() -> bool:
+    """Whether this browser can pay for a generation call at all."""
+    if not public_demo_mode():
+        # A local run uses the operator's own configured keys, so there is nothing to gate.
+        return True
+    record = _access_record()
+    if not record:
+        return False
+    mode = record.get("mode")
+    if mode == "own":
+        return True
+    if mode == "account":
+        return bool(record.get("uid"))
+    return False
+
+
+def payer_requirement_message() -> str | None:
+    """Explain how to become able to generate, or None when this browser already can."""
+    if has_payer():
+        return None
+    if not public_demo_mode():
+        return None
+    return "请先用知乎账号登录领取算力豆；如果想用自己的额度，也可以在模型使用方式页面填写自己的 API Key。"
+
+
 def _secret_material() -> str:
     configured = os.getenv("MODEL_ACCESS_SECRET", "").strip()
     if configured:
@@ -178,8 +189,8 @@ def _secret_material() -> str:
     if public_demo_mode():
         raise ModelAccessError("公网部署缺少 MODEL_ACCESS_SECRET，暂不能保存自带 Key。")
 
-    # Local development gets one durable process-shared secret without asking
-    # the user to manage another file. Production must use the environment key.
+    # Local development gets one durable process-shared secret without asking the user to manage
+    # another file. Production must use the environment key.
     from .environment import ROOT
 
     data = Path(os.getenv("DATA_DIR", str(ROOT / "data"))).resolve()
@@ -255,8 +266,8 @@ def _locked_config(base: dict[str, str] | None = None) -> dict[str, str]:
     from .environment import LOCKED_MODEL_CONFIG
 
     configured = dict(LOCKED_MODEL_CONFIG)
-    # Visitors cannot select a transport target or model. The operator can still
-    # replace a retired DeepSeek model in the environment without a code release.
+    # Visitors cannot select a transport target or model. The operator can still replace a retired
+    # DeepSeek model in the environment without a code release.
     if base:
         for key in ("LLM_MODEL", "LLM_FAST_MODEL"):
             if base.get(key):
@@ -265,7 +276,7 @@ def _locked_config(base: dict[str, str] | None = None) -> dict[str, str]:
 
 
 def effective_model_config(base: dict[str, str]) -> dict[str, str]:
-    """Overlay the active anonymous session without mutating global settings."""
+    """Overlay the active session without mutating global settings."""
     record = _access_record()
     if not record:
         if not public_demo_mode():
@@ -284,7 +295,10 @@ def effective_model_config(base: dict[str, str]) -> dict[str, str]:
         # visitor did not supply, so every key the session did not bring is cleared.
         configured.update({key: "" for key in _KEY_FIELDS})
         configured.update(visitor)
-    elif record.get("mode") not in ("public", "account"):
+    elif record.get("mode") == "account":
+        # A signed-in account spends beans against the operator's keys, which is the intended path.
+        pass
+    else:
         configured.update({key: "" for key in _KEY_FIELDS})
         configured["ALLOW_PAID_CALLS"] = "false"
         return configured
@@ -292,124 +306,117 @@ def effective_model_config(base: dict[str, str]) -> dict[str, str]:
     return configured
 
 
-def _decimal_env(name: str, default: str) -> Decimal:
-    try:
-        value = Decimal(os.getenv(name, default).strip())
-    except (InvalidOperation, AttributeError):
-        raise ModelAccessError(f"{name} 不是有效金额。") from None
-    if value < 0 or value > Decimal("1000000"):
-        raise ModelAccessError(f"{name} 超出允许范围。")
-    return value.quantize(Decimal("0.01"))
-
-
-def _enabled(name: str, default: str = "false") -> bool:
-    return os.getenv(name, default).strip().lower() == "true"
-
-
-def _pool_day(now: datetime | None = None) -> str:
+def _day(now: datetime | None = None) -> str:
     return (now or datetime.now(_SHANGHAI)).date().isoformat()
 
 
-def _video_seconds(duration_seconds=None) -> int:
-    try:
-        seconds = int(duration_seconds) if duration_seconds is not None else int(os.getenv("VIDEO_DURATION", str(_VIDEO_DEFAULT_SECONDS)))
-    except (TypeError, ValueError):
-        seconds = _VIDEO_DEFAULT_SECONDS
-    return max(1, min(seconds, 60))
+def _operator_key_id(day: str, kind: str) -> str:
+    return f'operator_key_{day.replace("-", "")}_{kind}'
 
 
-def reserve_amount(kind: str, duration_seconds=None) -> Decimal:
-    """Reservation for one call. Video scales with requested seconds up to the configured cap."""
-    if kind == "video":
-        cap = _decimal_env(*_RESERVES["video"])
-        per_second = _decimal_env(*_VIDEO_RESERVE_PER_SECOND)
-        if per_second > 0:
-            floor = _decimal_env(*_VIDEO_RESERVE_FLOOR)
-            scaled = max(floor, per_second * _video_seconds(duration_seconds))
-            return min(cap, scaled).quantize(Decimal("0.01"))
-        return cap
-    return _decimal_env(*_RESERVES[kind])
+def note_operator_key_rejection(kind: str, status_code: int) -> None:
+    """Remember that the operator's key for one provider was refused today.
 
-
-def _pool_record_id(day: str, kind: str) -> str:
-    return f'public_pool_{day.replace("-", "")}_{kind}'
-
-
-def _pool_state(day: str, kind: str) -> dict:
-    from .db import Record, Session
-
-    with Session() as db:
-        row = db.get(Record, _pool_record_id(day, kind))
-        return dict(row.data) if row and row.kind == POOL_KIND else {
-            "day": day, "kind": kind, "reserved_cny": "0.00", "blocked": {},
-        }
-
-
-def _next_reset_at() -> float:
-    now = datetime.now(_SHANGHAI)
-    return (datetime.combine(now.date() + timedelta(days=1), datetime.min.time(), tzinfo=_SHANGHAI)).timestamp()
-
-
-def _balance_cache() -> dict | None:
-    from .db import Record, Session
-
-    with Session() as db:
-        row = db.get(Record, "public_pool_balance_deepseek")
-        return dict(row.data) if row and row.kind == BALANCE_KIND else None
-
-
-def _save_balance_cache(data: dict) -> None:
+    Without this, every visitor would keep retrying a dead key and see a raw provider error. Only
+    the account path is affected: a visitor's own rejected key is their own business.
+    """
+    if kind not in _KINDS or status_code not in (401, 402, 403):
+        return
+    if current_access_mode() != "account":
+        return
+    day = _day()
     from .db import Record, Session
 
     with Session.begin() as db:
-        row = db.get(Record, "public_pool_balance_deepseek")
+        key = _operator_key_id(day, kind)
+        row = db.get(Record, key)
+        data = {"day": day, "kind": kind, "blocked": {"at": time.time(), "status": status_code}}
         if row:
-            row.data = data
+            row.data = {**row.data, **data}
         else:
-            db.add(Record(id="public_pool_balance_deepseek", kind=BALANCE_KIND, data=data))
+            db.add(Record(id=key, kind=OPERATOR_KEY_KIND, data=data))
 
 
-def _deepseek_balance(base: dict[str, str], refresh: bool) -> dict:
-    if not _enabled("PUBLIC_POOL_VERIFY_DEEPSEEK_BALANCE", "true"):
-        return {"state": "budget_guard", "available": True}
-    cached = _balance_cache()
-    ttl = float(os.getenv("PUBLIC_POOL_BALANCE_CACHE_SECONDS", "60"))
-    if cached and time.time() - float(cached.get("checked_at", 0)) < max(15, min(ttl, 600)):
-        return cached
-    key = base.get("LLM_API_KEY", "")
-    if not key:
-        return {"state": "missing_key", "available": False, "checked_at": time.time()}
-    # A failed probe is a transport problem, not proof that the balance is gone: keep the last
-    # known verdict so one timeout cannot take the whole shared pool offline.
-    def unreachable(reason: str) -> dict:
-        if cached and cached.get("state") == "verified":
-            return {**cached, "checked_at": time.time(), "state": "verified",
-                    "degraded": reason, "available": bool(cached.get("available"))}
-        return {"state": "unavailable", "available": False, "checked_at": time.time(),
-                "degraded": reason}
+def _operator_key_blocked(kind: str) -> bool:
+    from .db import Record, Session
+
+    with Session() as db:
+        row = db.get(Record, _operator_key_id(_day(), kind))
+        return bool(row and row.kind == OPERATOR_KEY_KIND and row.data.get("blocked"))
+
+
+def _reserve_account_call(record: dict, kind: str, duration_seconds=None, task_id=None) -> dict:
+    """A signed-in account pays from its own bean wallet."""
+    from . import beans
+    uid = str(record.get("uid") or "")
+    if not uid:
+        raise ModelAccessError("登录账号信息不完整，请重新登录。")
+    if _operator_key_blocked(kind):
+        raise ModelAccessError("运营方提供的该模型 Key 今日已被供应商暂停。请填写自己的 API Key 继续。")
     try:
-        response = httpx.get(
-            "https://api.deepseek.com/user/balance",
-            headers={"Authorization": f"Bearer {key}"},
-            timeout=5,
-            follow_redirects=False,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        available = payload.get("is_available") is True
-        cny = next((item.get("total_balance") for item in payload.get("balance_infos", []) if item.get("currency") == "CNY"), None)
-        if cny is not None:
-            available = available and Decimal(str(cny)) > _decimal_env("PUBLIC_POOL_MIN_DEEPSEEK_CNY", "0.05")
-        result = {"state": "verified", "available": available, "checked_at": time.time()}
-    except httpx.HTTPStatusError as exc:
-        # An explicit rejection (401/402/403) does mean the key cannot be used.
-        result = ({"state": "rejected", "available": False, "checked_at": time.time()}
-                  if exc.response is not None and exc.response.status_code in (401, 402, 403)
-                  else unreachable(type(exc).__name__))
-    except (httpx.HTTPError, ValueError, TypeError, InvalidOperation) as exc:
-        result = unreachable(type(exc).__name__)
-    _save_balance_cache(result)
-    return result
+        charged = beans.debit(uid, kind, task_id, duration_seconds)
+    except beans.BeansExhausted as exc:
+        raise ModelAccessError(str(exc)) from None
+    return {"mode": "account", "uid": uid, "kind": kind, **charged}
+
+
+def authorize_call(kind: str, duration_seconds=None, task_id: str | None = None) -> dict:
+    record = _access_record()
+    if not record:
+        if not public_demo_mode():
+            return {"mode": "local"}
+        raise ModelAccessError("请先用知乎账号登录领取算力豆，或填写自己的 API Key。")
+    mode = record.get("mode")
+    if mode == "own":
+        return {"mode": "own"}
+    if mode == "account":
+        return _reserve_account_call(record, kind, duration_seconds, task_id)
+    raise ModelAccessError("模型使用会话无效，请重新配置。")
+
+
+def affordable_shot_budget() -> tuple[int, str] | None:
+    """How many shots this account's beans can still pay for, or None when unbounded.
+
+    A film that plans more shots than the wallet can pay for dies half-finished, so the shot plan is
+    capped to the affordable count instead of failing at the last clip. Visitors on their own keys
+    are not capped here.
+    """
+    uid = current_account_uid()
+    if not uid:
+        return None
+    from . import beans
+
+    per_clip = beans.cost_of("video")
+    if per_clip <= 0:
+        return None
+    affordable = int(beans.balance(uid) // per_clip)
+    # Keep roughly one clip in hand so a single retry does not end the film.
+    reserve = 1 if affordable >= 4 else 0
+    limit = max(0, affordable - reserve)
+    return (limit, f"算力豆剩余可支持 {limit} 个镜头")
+
+
+def access_paid_states() -> dict[str, bool] | None:
+    """Per-kind payability for the current session. None means "not governed here" (local mode)."""
+    record = _access_record()
+    if not record:
+        if public_demo_mode():
+            return {"all": False, **{kind: False for kind in _KINDS}}
+        return None
+    mode = record.get("mode")
+    if mode == "own":
+        return {"all": True, **{kind: True for kind in _KINDS}}
+    if mode == "account":
+        from . import beans
+        uid = str(record.get("uid") or "")
+        by_kind = {kind: bool(uid) and beans.affordable(uid, kind) for kind in _KINDS}
+        return {"all": any(by_kind.values()), **by_kind}
+    return {"all": False, **{kind: False for kind in _KINDS}}
+
+
+def access_paid_state() -> bool | None:
+    states = access_paid_states()
+    return states["all"] if states is not None else None
 
 
 def fixed_providers() -> list[dict[str, str]]:
@@ -423,353 +430,13 @@ def fixed_providers() -> list[dict[str, str]]:
     ]
 
 
-def public_pool_status(*, refresh: bool = True) -> dict:
-    from .environment import base_model_config
-
-    day = _pool_day()
-    enabled = _enabled("PUBLIC_POOL_ENABLED")
-    values: dict[str, dict] = {}
-    try:
-        for kind in _BUDGETS:
-            state = _pool_state(day, kind)
-            limit = _decimal_env(*_BUDGETS[kind])
-            reserve = reserve_amount(kind)
-            used = Decimal(str(state.get("reserved_cny", "0"))).quantize(Decimal("0.01"))
-            if used < 0:
-                raise InvalidOperation
-            values[kind] = {
-                "state": state,
-                "limit": limit,
-                "reserve": reserve,
-                "used": used,
-                "remaining": max(Decimal("0"), limit - used),
-            }
-    except (ModelAccessError, InvalidOperation):
-        return {
-            "available": False, "reason": "共享池预算配置无效", "day": day,
-            "next_reset_at": _next_reset_at(), "providers": [],
-        }
-
-    base = base_model_config()
-    llm_ready = bool(base.get(_PROVIDER_KEYS["llm"]))
-    deepseek = _deepseek_balance(base, refresh) if enabled and llm_ready else {
-        "state": "not_checked" if not enabled else "missing_key",
-        "available": llm_ready,
-    }
-    checks = []
-    for kind, item in values.items():
-        key_ready = bool(base.get(_PROVIDER_KEYS[kind]))
-        blocked = item["state"].get("blocked")
-        budget_ready = item["limit"] > 0 and item["reserve"] > 0 and item["remaining"] >= item["reserve"]
-        balance_ready = bool(deepseek["available"]) if kind == "llm" else True
-        available = enabled and key_ready and budget_ready and not blocked and balance_ready
-        if not enabled:
-            reason = "共享池未开启"
-            check = "disabled"
-        elif not key_ready:
-            reason = "共享 Key 未配置"
-            check = "missing_key"
-        elif blocked:
-            reason = "供应商 Key 今日已暂停"
-            check = "provider_error"
-        elif item["limit"] <= 0:
-            reason = "今日额度未配置"
-            check = "daily_budget"
-        elif item["reserve"] <= 0:
-            reason = "单次预留金额配置无效"
-            check = "daily_budget"
-        elif item["remaining"] < item["reserve"]:
-            reason = "今日额度不足"
-            check = "daily_budget"
-        elif kind == "llm" and not balance_ready:
-            reason = "暂时无法确认余额"
-            check = deepseek["state"]
-        else:
-            reason = "可用"
-            check = deepseek["state"] if kind == "llm" else "daily_budget"
-        checks.append({
-            "kind": kind,
-            "provider": _PROVIDER_NAMES[kind],
-            "check": check,
-            "available": available,
-            "reason": reason,
-            "daily_limit_cny": f'{item["limit"]:.2f}',
-            "reserve_cny": f'{item["reserve"]:.2f}',
-            "used_cny": f'{item["used"]:.2f}',
-            "remaining_cny": f'{item["remaining"]:.2f}',
-            **({"calls_affordable": int(item["remaining"] // item["reserve"])} if item["reserve"] > 0 else {}),
-        })
-
-    available = bool(checks) and all(item["available"] for item in checks)
-    # The pool is still worth entering when only some providers are usable: text or image work can
-    # continue, and the step that needs a spent provider reports it by name instead of the whole
-    # pool looking broken. `available` keeps meaning "all three are usable today".
-    selectable = enabled and any(item["available"] for item in checks)
-    if not enabled:
-        reason = "共享体验池暂未开启"
-    elif not available:
-        unavailable = next(item for item in checks if not item["available"])
-        reason = f'{unavailable["provider"]}：{unavailable["reason"]}'
-    else:
-        reason = "共享额度今日均可用，先到先得"
-    return {
-        "available": available,
-        "selectable": selectable,
-        "reason": reason,
-        "day": day,
-        "next_reset_at": _next_reset_at(),
-        "providers": checks,
-    }
-
-
-def _reserve_public_call(kind: str, duration_seconds=None) -> dict:
-    if kind not in _RESERVES:
-        raise ModelAccessError("未知的共享模型调用类型。")
-    # This check includes the cached provider-balance result. The transaction
-    # below repeats the monetary comparison while holding the worker lock.
-    status = public_pool_status(refresh=False)
-    provider = next((item for item in status["providers"] if item["kind"] == kind), None)
-    if not provider or not provider["available"]:
-        raise ModelAccessError(provider["reason"] if provider else status["reason"])
-    cost = reserve_amount(kind, duration_seconds)
-    limit = _decimal_env(*_BUDGETS[kind])
-    day = _pool_day()
-    from .db import Record, Session
-
-    with _pool_lock, Session.begin() as db:
-        # Serialize the read-compare-write across API and worker processes; the in-process
-        # lock alone lets two containers overspend the same daily budget. The lock is taken
-        # before the read so the read cannot be stale by the time the write happens.
-        _lock_pool_row(db)
-        row = db.get(Record, _pool_record_id(day, kind))
-        data = dict(row.data) if row else {
-            "day": day, "kind": kind, "reserved_cny": "0.00", "blocked": {},
-        }
-        used = Decimal(str(data.get("reserved_cny", "0")))
-        if data.get("blocked"):
-            raise ModelAccessError("该共享供应商今日已暂停，请改用自己的 Key。")
-        if used + cost > limit:
-            raise ModelAccessError("今日共享额度不足以开始这次调用，请改用自己的 Key。")
-        data = {**data, "reserved_cny": f"{used + cost:.2f}"}
-        if row:
-            row.data = data
-        else:
-            db.add(Record(id=_pool_record_id(day, kind), kind=POOL_KIND, data=data))
-    return {"mode": "public", "pool_day": day, "pool_kind": kind, "reserved_cny": f"{cost:.2f}"}
-
-
-def _lock_pool_row(db) -> None:
-    """Take a database-level lock so API and worker cannot both pass the budget check."""
-    if db.bind.dialect.name == "postgresql":
-        db.execute(text("SELECT pg_advisory_xact_lock(782347190322)"))
-
-
-def release_public_call(kind: str, amount, day: str | None = None) -> bool:
-    """Return a reservation that never became a real charge.
-
-    Called when the provider rejected the request (HTTP error) or the task failed before any
-    provider submission. Repeating the release is harmless because the counter is clamped at zero.
-    """
-    if kind not in _RESERVES:
-        return False
-    try:
-        refund = Decimal(str(amount))
-    except (InvalidOperation, TypeError, ValueError):
-        return False
-    if refund <= 0:
-        return False
-    target_day = day or _pool_day()
-    from .db import Record, Session
-
-    with _pool_lock, Session.begin() as db:
-        _lock_pool_row(db)
-        row = db.get(Record, _pool_record_id(target_day, kind))
-        if not row:
-            return False
-        data = dict(row.data)
-        used = Decimal(str(data.get("reserved_cny", "0")))
-        data["reserved_cny"] = f"{max(Decimal('0'), used - refund):.2f}"
-        row.data = data
-    return True
-
-
-def authorize_call(kind: str, duration_seconds=None, task_id: str | None = None) -> dict:
-    record = _access_record()
-    if not record:
-        if not public_demo_mode():
-            return {"mode": "local"}
-        raise ModelAccessError("请先在模型使用方式页面选择共享池或配置自己的 Key。")
-    mode = record.get("mode")
-    if mode == "own":
-        return {"mode": "own"}
-    if mode == "account":
-        return _reserve_account_call(record, kind, duration_seconds, task_id)
-    if mode == "public":
-        return _reserve_public_call(kind, duration_seconds)
-    raise ModelAccessError("模型使用会话无效，请重新配置。")
-
-
-def _reserve_account_call(record: dict, kind: str, duration_seconds=None, task_id=None) -> dict:
-    """A signed-in account pays from its own bean wallet instead of the anonymous pool."""
-    from . import beans
-    uid = str(record.get("uid") or "")
-    if not uid:
-        raise ModelAccessError("登录账号信息不完整，请重新登录。")
-    try:
-        charged = beans.debit(uid, kind, task_id, duration_seconds)
-    except beans.BeansExhausted as exc:
-        raise ModelAccessError(str(exc)) from None
-    return {"mode": "account", "uid": uid, "kind": kind, **charged}
-
-
-def affordable_shot_budget() -> tuple[int, str] | None:
-    """How many shots the shared pool can still pay for, or None when no pool governs.
-
-    A film that plans more shots than the remaining budget can pay for dies half-finished, so the
-    shot plan is capped to the affordable count instead of failing at the last clip.
-    """
-    if not public_demo_mode() or not _enabled("PUBLIC_POOL_ENABLED"):
-        return None
-    try:
-        status = public_pool_status(refresh=False)
-    except ModelAccessError:
-        return None
-    video = next((item for item in status["providers"] if item["kind"] == "video"), None)
-    if not video:
-        return None
-    if not video["available"]:
-        return (0, video["reason"])
-    affordable = int(video.get("calls_affordable", 0))
-    # Keep one call in hand so a single retry does not end the day mid-film.
-    return (max(0, affordable - 1), "共享额度今日剩余可支持 " + str(max(0, affordable - 1)) + " 个镜头")
-
-
-def claim_public_film() -> str | None:
-    """Reserve one shared-pool film for this anonymous session today.
-
-    First-come-first-served with no per-visitor limit let the first visitor spend the whole daily
-    video budget, so nobody after them could watch anything. Returns a refusal reason, or None when
-    the film may start. Sessions bringing their own keys are never limited.
-    """
-    if not public_demo_mode() or not _enabled("PUBLIC_POOL_ENABLED"):
-        return None
-    record = _access_record()
-    if not record or record.get("mode") != "public":
-        return None
-    limit = _configured_positive_int("PUBLIC_POOL_FILMS_PER_SESSION_PER_DAY", 1)
-    if limit <= 0:
-        return None
-    access_id = current_access_id()
-    day = _pool_day()
-    from .db import Record, Session
-
-    key = f'pool_film_{day.replace("-", "")}_{hashlib.sha256(access_id.encode()).hexdigest()[:16]}'
-    with _pool_lock, Session.begin() as db:
-        _lock_pool_row(db)
-        row = db.get(Record, key)
-        used = int(row.data.get("films", 0)) if row and row.kind == FILM_KIND else 0
-        if used >= limit:
-            return f"共享体验池每天为每位访客保留 {limit} 部漫剧；今天已经用完了。可以改用自己的 Key，或明天再来。"
-        data = {"day": day, "session": hashlib.sha256(access_id.encode()).hexdigest()[:16],
-                "films": used + 1, "updated_at": time.time()}
-        if row:
-            row.data = data
-        else:
-            db.add(Record(id=key, kind=FILM_KIND, data=data))
-    return None
-
-
-def release_public_film() -> None:
-    """Give the film allowance back when the run never reached a paid submission."""
-    if not public_demo_mode() or not _enabled("PUBLIC_POOL_ENABLED"):
-        return
-    access_id = current_access_id()
-    if not access_id:
-        return
-    day = _pool_day()
-    from .db import Record, Session
-
-    key = f'pool_film_{day.replace("-", "")}_{hashlib.sha256(access_id.encode()).hexdigest()[:16]}'
-    with _pool_lock, Session.begin() as db:
-        _lock_pool_row(db)
-        row = db.get(Record, key)
-        if not row or row.kind != FILM_KIND:
-            return
-        data = dict(row.data)
-        data["films"] = max(0, int(data.get("films", 0)) - 1)
-        data["updated_at"] = time.time()
-        row.data = data
-
-
-def _configured_positive_int(name: str, default: int) -> int:
-    try:
-        value = int(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
-        value = default
-    return max(0, min(value, 1000))
-
-
-def access_paid_state() -> bool | None:
-    states = access_paid_states()
-    return states["all"] if states is not None else None
-
-
-def access_paid_states() -> dict[str, bool] | None:
-    record = _access_record()
-    if not record:
-        return {"all": False, **{kind: False for kind in _BUDGETS}} if public_demo_mode() else None
-    if record.get("mode") == "own":
-        return {"all": True, **{kind: True for kind in _BUDGETS}}
-    if record.get("mode") == "account":
-        from . import beans
-        uid = str(record.get("uid") or "")
-        by_kind = {kind: bool(uid) and beans.affordable(uid, kind) for kind in _BUDGETS}
-        return {"all": any(by_kind.values()), **by_kind}
-    if record.get("mode") == "public":
-        status = public_pool_status(refresh=False)
-        by_kind = {item["kind"]: bool(item["available"]) for item in status["providers"]}
-        return {"all": bool(status["available"]), **{kind: by_kind.get(kind, False) for kind in _BUDGETS}}
-    return {"all": False, **{kind: False for kind in _BUDGETS}}
-
-
-def mark_public_provider_unavailable(kind: str, status_code: int) -> None:
-    if kind not in _BUDGETS or current_access_mode() != "public" or status_code not in (401, 402, 403):
-        return
-    day = _pool_day()
-    from .db import Record, Session
-
-    with _pool_lock, Session.begin() as db:
-        # Same database lock as the budget path: two containers marking the same provider must not
-        # overwrite each other's block record.
-        _lock_pool_row(db)
-        row = db.get(Record, _pool_record_id(day, kind))
-        data = dict(row.data) if row else {
-            "day": day, "kind": kind, "reserved_cny": "0.00", "blocked": {},
-        }
-        data["blocked"] = {"at": time.time(), "status": status_code}
-        if row:
-            row.data = data
-        else:
-            db.add(Record(id=_pool_record_id(day, kind), kind=POOL_KIND, data=data))
-
-
 def _create_session(body: SessionRequest) -> dict:
     mode = body.mode.strip().lower()
-    if mode not in ("public", "own"):
-        raise ModelAccessError("请选择共享体验池或使用自己的 Key。")
-    if mode == "public":
-        if body.keys is not None:
-            raise ModelAccessError("共享体验池不接收个人 Key。")
-        status = public_pool_status(refresh=True)
-        if not status["selectable"]:
-            raise ModelAccessError(
-                status["reason"] if not _enabled("PUBLIC_POOL_ENABLED")
-                else "共享体验池今天没有可用额度，请改用自己的 Key。")
-        credentials = ""
-    else:
-        if body.keys is None:
-            raise ModelAccessError("请至少填写一把要使用的 API Key。")
-        credentials = _encrypt_keys(body.keys)
+    if mode != "own":
+        raise ModelAccessError("共享体验池已停用：请用知乎账号登录领取算力豆，或填写自己的 API Key。")
+    if body.keys is None:
+        raise ModelAccessError("请至少填写一把要使用的 API Key。")
+    credentials = _encrypt_keys(body.keys)
 
     token = secrets.token_urlsafe(32)
     access_id = _record_id(token)
@@ -794,7 +461,7 @@ def _session_summary() -> dict | None:
 
 @router.get("/status")
 def status():
-    return {"fixed_providers": fixed_providers(), "pool": public_pool_status(refresh=True), "session": _session_summary()}
+    return {"fixed_providers": fixed_providers(), "session": _session_summary()}
 
 
 @router.post("/sessions")

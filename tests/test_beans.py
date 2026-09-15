@@ -72,11 +72,8 @@ def test_each_account_has_its_own_wallet(wallet):
     assert beans.wallet_id('9007199254740992') != beans.wallet_id(OTHER_UID)
 
 
-def test_account_session_spends_beans_instead_of_the_shared_pool(wallet, monkeypatch):
+def test_account_session_spends_beans_without_touching_any_pool(wallet, monkeypatch):
     monkeypatch.setenv('STORYLOOM_DEMO_MODE', 'public')
-    monkeypatch.setenv('PUBLIC_POOL_ENABLED', 'true')
-    monkeypatch.setattr(model_access, 'public_pool_status',
-                        lambda *a, **k: {'available': True, 'selectable': True, 'reason': '可用', 'providers': []})
     created = model_access.create_account_session('session-abc', UID)
     with model_access.access_scope(created['access_id']):
         access = model_access.authorize_call('image', task_id='task-9')
@@ -84,9 +81,6 @@ def test_account_session_spends_beans_instead_of_the_shared_pool(wallet, monkeyp
         assert access['beans_cost'] == '5.00'
         assert model_access.access_paid_states()['image'] is True
     assert beans.balance(UID) == 95
-    with Session() as db:
-        # Nothing was taken from the anonymous daily pool.
-        assert not [row for row in db.query(Record).all() if row.kind == model_access.POOL_KIND]
 
 
 def test_account_without_beans_reports_every_kind_as_unaffordable(wallet, monkeypatch):

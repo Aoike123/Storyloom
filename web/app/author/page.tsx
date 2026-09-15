@@ -1,7 +1,7 @@
 'use client';
 import {useCallback,useEffect,useState} from 'react';
 import Link from 'next/link';
-import {ArrowLeft,ArrowRight,BookOpen,Check,Clapperboard,Settings2} from 'lucide-react';
+import {ArrowLeft,ArrowRight,BookOpen,Check,Clapperboard} from 'lucide-react';
 import {activeStatuses,problemStatuses,InteractionFeedback,TaskProgress,WorkProgress,workStages,ProgressTask} from '../ProgressFeedback';
 import './author.css';
 import StyleProgress from '../StyleProgress';
@@ -15,29 +15,24 @@ import AttemptHistory from './AttemptHistory';
 import ImageRecovery from './ImageRecovery';
 import AssetFeedback from './AssetFeedback';
 import useModelPermission from './useModelPermission';
-import ZhihuAccount from './ZhihuAccount';
+import AccountDock from '../AccountDock';
 import NodeSkillsPanel from '../NodeSkills';
-import {clearModelAccess,modelAccessHeaders,modelSetupLink,readModelAccess} from '../model-access';
-import {emptyZhihuStatus,readZhihuStatus,zhihuNotice,type ZhihuStatus} from '../zhihu-account';
-async function api(path:string,body?:unknown,signal?:AbortSignal){const headers=modelAccessHeaders();const r=await fetch('/api/author'+path,body===undefined?{headers,signal}:{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body),signal});const d=await r.json();if(r.status===401&&typeof window!=='undefined'){clearModelAccess();window.location.href=modelSetupLink(window.location.pathname+window.location.search);}if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:'暂时无法完成操作，请稍后再试。');return d;}
+import {clearModelAccess,modelAccessHeaders,readModelAccess} from '../model-access';
+import {announceBeansProblem,isBeansProblem} from '../account-dock';
+import {emptyZhihuStatus,readZhihuStatus,zhihuLoginLink,zhihuNotice,type ZhihuStatus} from '../zhihu-account';
+async function api(path:string,body?:unknown,signal?:AbortSignal){const headers=modelAccessHeaders();const r=await fetch('/api/author'+path,body===undefined?{headers,signal}:{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body),signal});const d=await r.json();if(r.status===401&&typeof window!=='undefined')clearModelAccess();const detail=typeof d.detail==='string'?d.detail:'暂时无法完成操作，请稍后再试。';if(!r.ok){if(isBeansProblem(detail))announceBeansProblem(detail);throw Error(detail);}return d;}
 const stages:Record<string,string>={style:'先为这个故事，选择一种气质。',preparing:'故事中的人物，正在走向画面。',assets_review:'这些形象，符合你的想象吗？',producing:'从静止的画面，到会动的故事。',compositing:'让人物、服装和场景对上。',storyboarding:'这段故事，拆成怎样的镜头？',rendering:'让分镜真正动起来。',film_review:'最后一次审片，让故事准备好登场。',published:'这段脑洞，已经有了画面。'};
 export default function Author(){
  const [accessReady,setAccessReady]=useState(false);
  const [works,setWorks]=useState<any[]>([]),[selected,setSelected]=useState(''),[work,setWork]=useState<any>(null),[opening,setOpening]=useState(true);
  const [art,setArt]=useState(''),[tone,setTone]=useState(''),[confirmed,setConfirmed]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[messageError,setMessageError]=useState(false),[syncError,setSyncError]=useState(''),[updated,setUpdated]=useState('');
  const [zhihu,setZhihu]=useState<ZhihuStatus|null>(emptyZhihuStatus);
- const [zhihuBusy,setZhihuBusy]=useState(false);
  const [zhihuFlag,setZhihuFlag]=useState<string|null>(null);
  const [paid,setPaid]=useModelPermission(selected);
  const [notes,setNotes]=useState<Record<string,string>>({}),[index,setIndex]=useState(0),[filter,setFilter]=useState('all'),[expanded,setExpanded]=useState(false);
  const [viewedStep,setViewedStep]=useState<string|null>(null);
  const [refresh,setRefresh]=useState(0),[actionLabel,setActionLabel]=useState('正在提交操作，等待服务确认…');
  const refreshWorkspace=useCallback(()=>setRefresh(n=>n+1),[]);
- const reloadZhihu=useCallback(async()=>{
-  setZhihuBusy(true);
-  try{setZhihu(await readZhihuStatus());}
-  finally{setZhihuBusy(false);}
- },[]);
  const recommendation=work?.recommend_task_status;
  const progressActive=hasActiveProgress(work);
  const streamConnection=useProjectProgress(work,progressActive,setWork,refreshWorkspace);
@@ -54,12 +49,15 @@ export default function Author(){
   setZhihuFlag(flag);
  },[]);
  useEffect(()=>{
-  // A signed-in Zhihu account is a valid payer on its own; only a visitor with neither a login nor a
-  // chosen model-access mode is sent to the setup page.
+  // Entering a story signs the account in: without a payer, send the visitor straight to Zhihu and
+  // come back to this exact page. A deployment without login configured just loads normally.
   if(!zhihu)return;
-  if(!readModelAccess()&&!zhihu.authorized){window.location.replace(modelSetupLink(window.location.pathname+window.location.search));return;}
+  if(!zhihu.authorized&&!readModelAccess()&&zhihu.configured){
+    window.location.replace(zhihuLoginLink(window.location.pathname+window.location.search));
+    return;
+  }
   setAccessReady(true);
- },[zhihu]);
+},[zhihu]);
  useEffect(()=>{
   if(!accessReady)return;
   let live=true;const params=new URLSearchParams(window.location.search),id=params.get('work'),story=params.get('story');
@@ -115,12 +113,11 @@ export default function Author(){
  const activeShot=shots[index],recommending=activeStatuses.includes(work?.recommend_task_status?.status),currentStage=workStages.find(s=>s.id===stage);
  const retryCurrentNode=!browsingEarlier&&canRetryCurrentNode(work,stage);
  return <main className="author-page">
-  <header className="studio-header"><Link href="/" className="studio-brand">叙间<span>STORYLOOM / STUDIO</span></Link><Link className="studio-back" href="/"><ArrowLeft size={15}/>返回脑洞目录</Link></header>
+  <header className="studio-header"><Link href="/" className="studio-brand">叙间<span>STORYLOOM / STUDIO</span></Link><div className="studio-header-right"><Link className="studio-back" href="/"><ArrowLeft size={15}/>返回脑洞目录</Link><AccountDock next={'/author'+(selected?'?work='+encodeURIComponent(selected):'')}/></div></header>
   <div className="studio-heading"><div><span className="studio-eyebrow">MICROFICTION TO MOTION</span><h1>把一个脑洞，拍成一幕。</h1><p>阅读原文，选择风格，见证微小说成为漫剧的每一步。</p></div>{works.length>0&&<label className="studio-picker">继续已有制作<select aria-label="继续已有制作" value={selected} onChange={e=>{if(e.target.value)window.location.href='/author?work='+encodeURIComponent(e.target.value);}}><option value="">选择微小说</option>{works.map(w=><option value={w.id} key={w.id}>{w.title}</option>)}</select></label>}</div>
   <InteractionFeedback busy={opening||busy} text={opening?'正在读取所选微小说原文与制作记录…':busy?actionLabel:message} error={!opening&&!busy&&messageError}/>
   {syncError&&<div className="studio-error" role="alert">{syncError}{work?' · 当前显示上次同步结果。':''}<button disabled={busy} onClick={()=>setRefresh(n=>n+1)}>重新同步</button></div>}
   {zhihuFlag&&(()=>{const notice=zhihuNotice(zhihuFlag);return notice?<div className={notice.error?'studio-error':'studio-notice'} role="status">{notice.text}</div>:null;})()}
-  {accessReady&&<ZhihuAccount status={zhihu} busy={zhihuBusy} onChanged={()=>{void reloadZhihu();}} next={'/author'+(selected?'?work='+encodeURIComponent(selected):'')}/>}
   {!opening&&!selected&&<section className="studio-empty"><BookOpen size={35}/><h2>从一篇微小说开始</h2><p>前往读者目录选择脑洞故事，即可阅读原文、确定画风并体验从零生成视频的过程。</p><a className="button primary" href="/">选择脑洞微小说 <ArrowRight size={15}/></a><WorkProgress/></section>}
   {!opening&&selected&&!work&&!syncError&&<InteractionFeedback busy text="正在同步这篇微小说的制作进度…"/>}
   {work&&<>
@@ -153,6 +150,6 @@ export default function Author(){
     </div>
    </div>
   </>}
-  <footer className="studio-footer"><span>叙间 · 从一篇微小说，到一个可观看的故事</span><button onClick={()=>window.location.href=modelSetupLink(window.location.pathname+window.location.search)}><Settings2 size={14}/>切换模型额度</button></footer>
+  <footer className="studio-footer"><span>叙间 · 从一篇微小说，到一个可观看的故事</span></footer>
  </main>;
 }

@@ -1,7 +1,7 @@
 """Prepaid compute beans for signed-in Zhihu accounts.
 
-A signed-in account does not draw on the anonymous shared pool. It spends from its own bean wallet,
-granted once at first login. Beans measure the operator's model budget, not money, and are debited
+Every generation call is paid for by the signed-in account's own bean wallet, granted once at first
+login. Beans measure the operator's model budget, not money, and are debited
 when a call is actually submitted rather than when a task is queued, so a cancelled or
 provider-refused call does not cost the account anything. When the wallet runs out the account must
 switch to its own API keys, which is the behaviour the interface explains at that point.

@@ -349,10 +349,6 @@ def schedule(db, row, phase):
 @router.post('/projects/{pid}/start')
 def start(pid: str, body: Start):
     creative.paid(body,'llm','image')
-    # Shared-pool visitors get a bounded number of films per day so later visitors still have budget.
-    from .model_access import claim_public_film
-    refusal=claim_public_film()
-    if refusal:raise HTTPException(429,refusal)
     with attempt_lock,Session.begin() as db:
         row = get_work(db, pid)
         if row.data['stage'] != 'style' and not body.restart: raise HTTPException(409, '制作已开始')

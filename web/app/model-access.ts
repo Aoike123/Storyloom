@@ -29,8 +29,3 @@ export function modelAccessHeaders(): Record<string, string> {
   const session = readModelAccess();
   return session ? {'X-Storyloom-Model-Access': session.token} : {};
 }
-
-export function modelSetupLink(next: string) {
-  const safe = next.startsWith('/') && !next.startsWith('//') ? next : '/author';
-  return '/setup?next=' + encodeURIComponent(safe);
-}
