@@ -453,6 +453,10 @@ def run_director(payload,task_id,save_stage):
             {'source':source,'source_passages':passages,'brief':payload['brief'],'schema':Treatment.model_json_schema()},task_id,
             validator=treatment_contract)
         save_stage('treatment',treatment.model_dump(),30)
+        # The cut happens here, before any artwork exists. Two reasons: the design stage then only
+        # creates the characters and places the scenes actually need, and every later generation
+        # step works inside one segment instead of the whole story.
+        segment_stage(payload,passages,task_id,save_stage,treatment)
     if payload.get('stage')=='treatment':return {'stage':'awaiting_preproduction'}
     preproduction=payload.get('preproduction')
     model_preproduction=preproduction

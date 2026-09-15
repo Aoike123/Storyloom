@@ -49,6 +49,33 @@ def test_base_assets_are_ready_and_the_removed_fitting_stages_are_gone(creative)
         assert not [t for t in db.scalars(select(Task).where(Task.kind=='image'))
                     if t.payload.get('asset_kind')=='dressed_character' or t.payload.get('preproduction_id')]
 
+
+def test_the_cut_reaches_the_design_stage_so_only_needed_assets_are_drawn(creative,monkeypatch):
+    """切情节前置之后，美术设计拿到情节清单，只为真正出场的人物与场景生图。
+
+    这是省钱的关键一步：以前设计只看原文，会给没有情节安排的配角与地点也建身份、生图。
+    """
+    from test_director import segment_plan
+    seen={}
+    def capture(system,payload,*args,**kwargs):
+        seen[payload['schema']['title']]=payload
+        return design_response(system,payload,*args,**kwargs)
+    monkeypatch.setattr(c,'chat_json',capture)
+    cut=segment_plan(groups=(('P001',),('P002',)))
+    cut['segments'][0]['characters']=['女主']
+    cut['segments'][1]['characters']=['女主','狗头怪']
+    cut['segments'][1]['location']='公寓走廊'
+    with Session.begin() as db:
+        project=db.get(Record,'pid');project.data={**project.data,'segments':cut}
+    assert creative.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'温馨','confirm_paid':True}).status_code==200
+    drain()
+    roster=seen['CharacterPlan']['segment_roster']
+    assert [entry['segment_id'] for entry in roster]==['G01','G02']
+    assert roster[1]['characters']==['女主','狗头怪'] and roster[1]['location']=='公寓走廊'
+    # 同一份清单也交给服装与场景节点。
+    assert seen['CostumePlan']['segment_roster']==roster
+    assert seen['ScenePlan']['segment_roster']==roster
+
 def test_natural_language_revision_retains_old_image(creative,monkeypatch):
     client=creative
     client.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'温馨','confirm_paid':True});drain()

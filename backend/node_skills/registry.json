@@ -90,6 +90,7 @@
       "schema": "CharacterPlan",
       "inputs": [
         "source_passages",
+        "segment_roster",
         "excerpt_scope",
         "visual_style",
         "schema"
@@ -124,6 +125,7 @@
       "schema": "CostumePlan",
       "inputs": [
         "source_passages",
+        "segment_roster",
         "excerpt_scope",
         "locked_characters",
         "visual_style",
@@ -159,6 +161,7 @@
       "schema": "ScenePlan",
       "inputs": [
         "source_passages",
+        "segment_roster",
         "excerpt_scope",
         "visual_style",
         "schema"
@@ -365,12 +368,18 @@
         {
           "bundle": "film",
           "skill": "shape-story-blueprint",
-          "sections": ["Workflow", "Boundaries"]
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
         },
         {
           "bundle": "film",
           "skill": "plan-camera-shots",
-          "sections": ["Workflow", "Boundaries"]
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
         }
       ],
       "adapter": "adapters/reader-branch-plan/SKILL.md"

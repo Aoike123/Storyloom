@@ -52,7 +52,8 @@ def test_director_three_stages_persist_and_approval_gates_images(setup_source,mo
     treatment={k:'设计依据' for k in ['premise','dramatic_question','protagonist_goal','excerpt_scope','visual_strategy','information_strategy']}
     treatment.update(rules=[{'rule':'女主看不清','quote':'女主看不清鬼怪','consequence':'认知错位'}],boundaries=['完整结局未知'])
     review={'approved':True,'issues':[],'continuity':'可衔接','dramatic_logic':'成立','editability':'可剪辑','production_feasibility':'待视觉审核'}
-    answers=iter([treatment,board(),{'shots':[{k:s[k] for k in ('id','first_frame','motion_prompt')} for s in board()['shots']]},review]);calls=[]
+    # The cut now happens in the same task as the treatment, before any artwork exists.
+    answers=iter([treatment,segment_plan(),board(),{'shots':[{k:s[k] for k in ('id','first_frame','motion_prompt')} for s in board()['shots']]},review]);calls=[]
     def chat(*args):calls.append(args);return next(answers),{}
     monkeypatch.setattr(d,'chat_json',chat)
     response=client.post('/api/director',json={'source_id':'source_test','confirm_paid':True});assert response.status_code==200
@@ -60,7 +61,9 @@ def test_director_three_stages_persist_and_approval_gates_images(setup_source,mo
     assert client.post('/api/director',json={'source_id':'source_test','confirm_paid':True}).status_code==409
     assert worker.process_one('director_worker')
     p=client.get('/api/director/source_test').json()[0]
-    assert len(calls)==1 and p['status']=='awaiting_preproduction' and 'board' not in p
+    assert len(calls)==2 and p['status']=='awaiting_preproduction' and 'board' not in p
+    # The cut is saved before the artwork stage, so the design only draws what a scene needs.
+    assert [segment['id'] for segment in p['segments']['segments']]==['G01']
     assert client.post('/api/director/projects/'+pid+'/storyboard',json={'version':p['version'],'confirm_paid':True}).status_code==409
     from backend.db import DATA
     from PIL import Image
@@ -77,13 +80,11 @@ def test_director_three_stages_persist_and_approval_gates_images(setup_source,mo
     b=board()
     for shot in b['shots']:shot['assets']=['actor','set']
     answers=iter([b,{'shots':[{k:s[k] for k in ('id','first_frame','motion_prompt')} for s in b['shots']]},review])
-    with Session.begin() as db:
-        row=db.get(Record,pid);row.data={**row.data,'segments':segment_plan()}
     assert client.post('/api/director/projects/'+pid+'/storyboard',json={'version':p['version'],'confirm_paid':True}).status_code==200
     assert worker.process_one('board_worker')
     p=client.get('/api/director/source_test').json()[0]
-    assert len(calls)==4 and p['status']=='pending_review'
-    assert calls[1][1]['preproduction']['assets']['set']['notes']==config['assets']['set']['notes']
+    assert len(calls)==5 and p['status']=='pending_review'
+    assert calls[2][1]['preproduction']['assets']['set']['notes']==config['assets']['set']['notes']
     path='/api/director/projects/'+pid
     # 镜头参考图步骤已移除：分镜不再接受单镜图片生成请求。
     assert client.post(path+'/shots/S01/image',json={'version':p['version'],'confirm_paid':True}).status_code==404

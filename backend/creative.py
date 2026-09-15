@@ -12,6 +12,24 @@ router=APIRouter(prefix='/api/creative',tags=['creative'])
 BUSY=('queued','running','waiting')
 
 def get_project(db,pid):return prep.project(db,pid)
+
+
+def segment_roster(cut):
+    """Who and where the cut film actually needs, so the design stage draws nothing else.
+
+    The cut already names the characters and location of every scene. Handing that list to the
+    design nodes is what keeps a story's background cast and unused places from being drawn and
+    billed: only what appears in an ordered scene gets an identity, a costume or a set.
+    """
+    if not isinstance(cut,dict):return []
+    roster=[]
+    for segment in cut.get('segments') or []:
+        roster.append({'segment_id':segment.get('id'),'title':segment.get('title'),
+            'characters':list(segment.get('characters') or []),'location':segment.get('location') or '',
+            'shot_budget':segment.get('shot_budget')})
+    return roster
+
+
 def get_run(db,pid):
     r=db.get(Record,'creative_'+pid)
     if not r:raise HTTPException(409,'先选择画风和剧情风格。')
@@ -48,7 +66,11 @@ def design(pid:str,body:Style):
         original=db.get(Task,p.data['task_id'])
         old=db.get(Record,'creative_'+pid)
         if old:raise HTTPException(409,'已有设计，请在图片上提出修改意见；整体换风格请归档后重做。')
-        t=Task(id=uid('art'),kind='art_design',payload={'mode':'live','creative_id':pid,'source':original.payload['source'],'treatment':p.data['treatment'],'art':body.art,'tone':body.tone,'asset_schema':asset_sheets.VERSION,'skill_pipeline':'node-skills-v1'})
+        t=Task(id=uid('art'),kind='art_design',payload={'mode':'live','creative_id':pid,'source':original.payload['source'],'treatment':p.data['treatment'],
+            # The cut decides which characters and places are worth drawing, so it travels with the
+            # design task instead of being produced later by the storyboard node.
+            **({'segments':p.data['segments']} if p.data.get('segments') else {}),
+            'art':body.art,'tone':body.tone,'asset_schema':asset_sheets.VERSION,'skill_pipeline':'node-skills-v1'})
         db.add(Record(id='creative_'+pid,kind='creative_run',data={'art':body.art,'tone':body.tone,'stage':'designing','items':[],'watch':t.id}))
         db.add(t);db.flush();return task_dict(t)
 
@@ -59,7 +81,9 @@ def redesign(db,pid,body):
     if run.data['stage']!='assets_review':raise HTTPException(409,'仅可在初次人物与场景确认阶段重做设定图。')
     original=db.get(Task,p.data['task_id'])
     task=Task(id=uid('art'),kind='art_design',payload={'mode':'live','creative_id':pid,
-        'source':original.payload['source'],'treatment':p.data['treatment'],'art':body.art,'tone':body.tone,
+        'source':original.payload['source'],'treatment':p.data['treatment'],
+        **({'segments':p.data['segments']} if p.data.get('segments') else {}),
+        'art':body.art,'tone':body.tone,
         'asset_schema':asset_sheets.VERSION,'skill_pipeline':'node-skills-v1','replaces_assets':[i['task_id'] for i in run.data['items']]})
     prep.invalidate_downstream_references(db,pid,'基础人物、服装与场景已整体重做',task.id)
     history=[*run.data.get('design_history',[]),{k:v for k,v in run.data.items() if k!='design_history'}]
@@ -246,7 +270,8 @@ def run_design(task_id,payload):
                 r=get_run(db,payload['creative_id'])
                 if r.data.get('watch')!=task_id:raise ProviderError('美术设计任务已更新，旧结果不再使用。')
                 r.data={**r.data,key:value,'raw_design_task_id':task_id}
-        context={'source_passages':passages,'excerpt_scope':payload['treatment'].get('excerpt_scope','')}
+        context={'source_passages':passages,'excerpt_scope':payload['treatment'].get('excerpt_scope',''),
+                 'segment_roster':segment_roster(payload.get('segments'))}
         identity=checkpoints.get('identity_plan')
         if identity is None:
             style=checkpoints.get('style_plan')
