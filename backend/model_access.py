@@ -164,6 +164,19 @@ def _fernet() -> Fernet:
     return Fernet(key)
 
 
+def seal_secret(value: str) -> str:
+    """Encrypt a server-side secret with the deployment key (used for OAuth tokens at rest)."""
+    return _fernet().encrypt(value.encode("utf-8")).decode("ascii")
+
+
+def open_secret(ciphertext: str) -> str | None:
+    """Decrypt a server-side secret; None means it can no longer be read."""
+    try:
+        return _fernet().decrypt(str(ciphertext).encode("ascii")).decode("utf-8")
+    except (InvalidToken, UnicodeError, ValueError, TypeError):
+        return None
+
+
 def _encrypt_keys(keys: OwnKeys) -> str:
     provided = {
         "LLM_API_KEY": keys.deepseek,
