@@ -485,6 +485,155 @@ def redo(pid:str,body:NodeRetry):
         db.flush()
         return {'queued':True,'task':task_dict(task)}
 
+
+class StageRedo(BaseModel):
+    stage: str
+    confirm_paid: bool = False
+
+
+REDO_STAGES = ('segments_review','preparing','assets_review','storyboarding','rendering','film_review','published')
+
+
+def _drop_asset(db,asset_id):
+    from .production_nodes import DATA as MEDIA_ROOT
+    row=db.get(Record,asset_id)
+    if not row:return
+    media=(row.data or {}).get('media')
+    if isinstance(media,str) and media.startswith('/media/'):
+        path=(MEDIA_ROOT/'media'/media.removeprefix('/media/')).resolve()
+        if path.is_relative_to((MEDIA_ROOT/'media').resolve()):path.unlink(missing_ok=True)
+    db.delete(row)
+
+
+def _drop_run(db,run):
+    """Delete the design run with the pictures it produced; the author is starting this step over."""
+    from .production_nodes import delete_task_outputs
+    if not run:return []
+    removed=[]
+    for item in run.data.get('items') or []:
+        task=db.get(Task,item.get('task_id',''))
+        if not task:continue
+        delete_task_outputs(db,task)
+        asset_id=(task.result or {}).get('asset_id')
+        if asset_id:_drop_asset(db,asset_id)
+        removed.append(task.id)
+        db.delete(task)
+    db.delete(run)
+    return removed
+
+
+def _drop_downstream(db,sid,keep=()):
+    """Delete every task of this run except the ones the new attempt still needs."""
+    from .production_nodes import delete_task_outputs
+    removed=[]
+    for task in list(db.scalars(select(Task))):
+        if task.id in keep:continue
+        if not any(task.payload.get(key)==sid for key in ('creative_id','director_id','preproduction_id','project_id')):
+            continue
+        delete_task_outputs(db,task)
+        removed.append(task.id)
+        db.delete(task)
+    return removed
+
+
+def _reset_creative(db,sid,stage):
+    run=db.get(Record,'creative_'+sid)
+    if not run:return
+    run.data={**{key:value for key,value in run.data.items()
+                 if key in ('art','tone','run_id','production_split','direct_reference_inputs')},
+              'stage':stage,'items':[]}
+    run.version+=1
+
+
+@router.post('/projects/{pid}/redo')
+def redo_any(pid:str,body:StageRedo):
+    """Redo one completed step: its work and everything after it is deleted, then it runs again.
+
+    Redoing an early step therefore redoes the whole branch below it, and redoing the last finished
+    step redoes only that step — the same button, and the scope is whatever depends on it.
+    """
+    target=body.stage
+    if target not in REDO_STAGES:raise HTTPException(409,'这一步不能重做。')
+    creative.paid(body,*(('video',) if target in ('rendering','film_review','published') else ('llm',)))
+    with attempt_lock,Session.begin() as db:
+        row=get_work(db,pid)
+        order=list(REDO_STAGES)
+        current=row.data.get('stage')
+        if current not in REDO_STAGES:raise HTTPException(409,'当前制作还没有可重做的步骤。')
+        if order.index(target)>order.index(current):raise HTTPException(409,'这一步还没有开始，不能重做。')
+        sid=row.data.get('director_id')
+        project=db.get(Record,sid) if sid else None
+        if not project:raise HTTPException(409,'导演项目不存在，不能重做。')
+        old=db.get(Task,row.data.get('supervisor',''))
+        if old and old.status in creative.BUSY:raise HTTPException(409,'后台任务正在运行，请等待结束后重做。')
+        removed=[]
+        if target in ('storyboarding','rendering'):
+            # These two stages are the production nodes; the node redo already deletes its own work
+            # and the work of the nodes after it.
+            row.data={**row.data,'stage':target}
+            db.flush()
+            task=redo_stage_node(db,row)
+            db.flush()
+            return {'queued':True,'stage':target,'task':task_dict(task),'removed':[]}
+        if target=='segments_review':
+            # The cut is remade from the same treatment; everything drawn or planned from the old
+            # cut disappears with it, including the pictures that were made for those episodes.
+            keep=set()
+            origin=db.get(Task,project.data.get('task_id',''))
+            if origin:keep.add(origin.id)
+            removed=_drop_downstream(db,sid,keep)
+            _drop_run(db,db.get(Record,'creative_'+sid))
+            project.data={key:value for key,value in project.data.items()
+                          if key not in ('segments','units','board','review','board_diagnostics',
+                                         'board_chunk_diagnostics','board_progress','board_repairs',
+                                         'preproduction_stamp','status','requires_preproduction')}
+            project.data={**project.data,'status':'awaiting_preproduction'}
+            project.version+=1
+            row.data={**{key:value for key,value in row.data.items()
+                         if key not in ('segments_approved_at','assets_confirmed_at','production_nodes')},
+                      'stage':'segments_review'}
+            if origin:
+                origin.status='queued';origin.lease=0;origin.owner=''
+                origin.message='正在按你的要求重新分析原文并切割情节'
+                row.data={**row.data,'recut_task':origin.id,'supervisor':origin.id}
+            db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'stage_redone',
+                'stage':target,'discarded_task_ids':removed}))
+            db.flush()
+            return {'queued':True,'stage':'segments_review','recut':bool(origin),'removed':removed}
+        if target in ('preparing','assets_review'):
+            # Artwork is remade from the same treatment and the same cut.
+            keep={db.get(Record,sid).data.get('task_id')}
+            removed=_drop_downstream(db,sid,keep)
+            _drop_run(db,db.get(Record,'creative_'+sid))
+            project.data={**project.data,'status':'awaiting_preproduction','requires_preproduction':True}
+            project.version+=1
+            row.data={**{key:value for key,value in row.data.items()
+                         if key not in ('segments_approved_at','assets_confirmed_at','production_nodes')},
+                      'stage':'preparing'}
+            creative.design(sid,creative.Style(art=row.data.get('art') or '沿用当前风格',
+                tone=row.data.get('tone') or '沿用当前气质',confirm_paid=True))
+            db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'stage_redone',
+                'stage':target,'discarded_task_ids':removed}))
+            db.flush()
+            return {'queued':True,'stage':'preparing','removed':removed}
+        # 审片与发布：删掉片段与已发布的版本，从漫剧生成重新做一次。
+        removed=_drop_downstream(db,sid,keep={db.get(Record,sid).data.get('task_id')})
+        _reset_creative(db,sid,'storyboard_ready')
+        if target=='published':
+            release=db.get(Record,f'release_{sid}')
+            if release:db.delete(release)
+        project.data={**project.data,'status':'approved'}
+        project.version+=1
+        row.data={**{key:value for key,value in row.data.items()
+                     if key not in ('assets_confirmed_at','production_nodes','release_id')},
+                  'stage':'rendering'}
+        db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'stage_redone',
+            'stage':target,'discarded_task_ids':removed}))
+        db.flush()
+        task=queue_node(db,row,'rendering',reopen=True)
+        db.flush()
+        return {'queued':True,'stage':'rendering','task':task_dict(task),'removed':removed}
+
 def schedule(db, row, phase):
     old = db.get(Task, row.data.get('supervisor', ''))
     if old and old.status in creative.BUSY: raise HTTPException(409, '后台任务正在运行')

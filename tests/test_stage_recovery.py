@@ -113,6 +113,41 @@ def test_redoing_a_stage_deletes_its_work_instead_of_archiving_it(creative):
         assert audit and audit[0].data['phase']=='rendering'
 
 
+def test_any_completed_step_can_be_redone_and_takes_its_branch_with_it(creative):
+    """每个已完成的步骤都能重做：在这一步重做就会丢弃它之后的所有成果。"""
+    from backend.production_nodes import queue_node
+    with Session.begin() as db:
+        work=Record(id='back-work',kind='author_project',data={'title':'重做','source_id':'source',
+            'stage':'rendering','director_id':'director','run_id':'round','art':'手绘漫画','tone':'温馨'})
+        db.add(work)
+        db.add(Record(id='creative_director',kind='creative_run',data={'stage':'videos_review','items':[]}))
+        db.add(Record(id='director',kind='director',data={
+            'board':{'title':'短场景','shots':[{'id':'G01-S01'}]},
+            'segments':{'segments':[{'id':'G01'}]},
+            'units':{'G01':{'segment_id':'G01','board':{'title':'t','scope_note':'s','shots':[]}}},
+            'status':'approved'}))
+        db.flush();node=queue_node(db,work,'rendering')
+        node.status='needs_review';node.message='第 1 段失败'
+        work.data={**work.data,'supervisor':node.id,'production_nodes':{'rendering':node.id}}
+        db.add(Task(id='video-1',kind='video',status='needs_review',message='第 1 段失败',
+            payload={'mode':'live','director_id':'director','shot_id':'G01-S01',
+                     'production_phase':'rendering','production_node':node.id}))
+    # 在还没有完成的步骤上重做会被拒绝，避免把未来的步骤提前跑掉。
+    assert creative.post('/api/author/projects/back-work/redo',json={'stage':'film_review','confirm_paid':True}).status_code==409
+    # 重做分镜生成：这一集的分镜与它之后的视频一起消失，并且从分镜步骤重新开始。
+    response=creative.post('/api/author/projects/back-work/redo',json={'stage':'storyboarding','confirm_paid':True})
+    assert response.status_code==200,response.text
+    with Session() as db:
+        work=db.get(Record,'back-work')
+        assert work.data['stage']=='storyboarding'
+        replacement=db.get(Task,work.data['supervisor'])
+        assert replacement.kind=='author_storyboard' and replacement.status=='queued'
+        assert db.get(Task,'video-1') is None
+        assert db.get(Task,node.id) is None
+        project=db.get(Record,'director')
+        assert not project.data.get('units') and not project.data.get('board')
+
+
 def test_a_worker_side_rerun_keeps_the_payer_the_browser_attached(creative):
     """The reported bug: 已配置 Key 却反复提示使用算力豆.
 

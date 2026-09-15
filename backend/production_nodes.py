@@ -254,7 +254,7 @@ def retry_node(db,work):
     return replacement
 
 
-def _delete_task_outputs(db,task):
+def delete_task_outputs(db,task):
     """Remove the media one task produced, so a redo does not leave orphaned clips behind."""
     result=task.result or {}
     clip=db.get(Record,result.get('clip_id','') or '')
@@ -310,7 +310,7 @@ def redo_node(db,work):
         discard.extend(task for task in _related(db,sid)
                        if task.id==mapping.get(name) and task not in discard)
     for task in discard:
-        _delete_task_outputs(db,task)
+        delete_task_outputs(db,task)
         db.delete(task)
     # What the node wrote into the run and the director project.
     data={key:value for key,value in run.data.items()
@@ -322,7 +322,10 @@ def redo_node(db,work):
         project.data={key:value for key,value in project.data.items()
                       if key not in ('board','review','board_diagnostics','board_chunk_diagnostics',
                                      'board_progress','board_repairs','board_recovery','board_history',
-                                     'prompts','preproduction_stamp')}
+                                     'prompts','preproduction_stamp',
+                                     # Each episode keeps its own board; a storyboard redo throws all
+                                     # of them away and plans them again from the same cut.
+                                     'units')}
         project.data={**project.data,'status':'awaiting_preproduction'}
         project.version+=1
     mapping={key:value for key,value in work.data.get('production_nodes',{}).items() if key not in (phase,*downstream)}

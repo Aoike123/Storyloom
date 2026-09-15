@@ -7,7 +7,7 @@ import './author.css';
 import StyleProgress from '../StyleProgress';
 import StyleOptions from './StyleOptions';
 import useProjectProgress from './useProjectProgress';
-import {canRetryCurrentNode,hasActiveProgress,mergeWorkspace,shouldPollProgress,viewedAuthorStage,authorDisplayStage} from './projectProgress';
+import {canRetryCurrentNode,hasActiveProgress,mergeWorkspace,shouldPollProgress,viewedAuthorStage,authorDisplayStage,authorStageIds} from './projectProgress';
 import ProductionProgress from './ProductionProgress';
 import ProductionActivity from './ProductionActivity';
 import GenerationPrompt from '../GenerationPrompt';
@@ -126,7 +126,12 @@ export default function Author(){
  const activeShot=shots[index],recommending=activeStatuses.includes(work?.recommend_task_status?.status),currentStage=workStages.find(s=>s.id===stage);
  const retryCurrentNode=!browsingEarlier&&canRetryCurrentNode(work,stage);
  // 重做在每个制作节点都可用：它不依赖是否报错，用来丢弃本轮记录重新开始。
- const canRedoNode=!browsingEarlier&&['storyboarding','rendering'].includes(stage||'');
+ // 每个已经做完的步骤都能重做：在这一步重做，就会连带丢弃它之后的所有成果，
+ // 所以在第一步点就是整枝重做，在最后一步点就是只重做本步。
+ const redoableStages=['segments_review','preparing','assets_review','storyboarding','rendering','film_review','published'];
+ const stagePosition=authorStageIds.indexOf(stage||''),actualPosition=authorStageIds.indexOf(actualStage||'');
+ const canRedoStage=stagePosition>=0&&actualPosition>=0&&redoableStages.includes(stage||'')&&stagePosition<=actualPosition;
+ const redoCascades=stagePosition<actualPosition;
  const reviewNotes=work?.storyboard_review;
  const reviewFlagged=!!reviewNotes&&(!reviewNotes.approved||(reviewNotes.issues||[]).length>0);
  const followEnabled=progressActive&&!browsingEarlier;
@@ -144,6 +149,19 @@ export default function Author(){
   {work&&<>
    <section className="studio-flow" aria-label="当前制作流程"><div className="studio-flow-heading"><div><span className="studio-eyebrow">PRODUCTION JOURNEY</span><h2>{work.title}</h2></div><span className={'studio-sync'+(syncError||!work.worker_online?' is-offline':'')}><i/>{syncError?'同步中断':work.worker_online?'后台制作服务在线':'后台制作服务离线'}<small>{updated&&'更新于 '+updated}</small></span></div><WorkProgress stage={actualStage} viewedStage={stage} onStepSelect={showStep} disabled={busy}/><p className="studio-note">已完成的步骤可点击返回查看和重新测试。</p></section>
    <NodeSkillsPanel/>
+   {canRedoStage&&<section className={'studio-redo'+(redoCascades?' is-cascading':'')} aria-label="重做这一步">
+     <div>
+       <strong>重做「{currentStage?.name||stage}」</strong>
+       <p>{redoCascades
+         ? '会删除这一步以及它之后所有步骤的成果，从这一步重新开始；原文、风格和更早的素材都会保留。'
+         : '会删除这一步的成果，从这一步重新开始；后面的步骤还没有做，不受影响。'}</p>
+     </div>
+     <button type="button" className="button is-danger" disabled={busy||!paid}
+       title={!paid?'请先勾选下方的模型调用许可':'删除这一步及其之后的成果，从这一步重新开始'}
+       onClick={()=>act(async()=>{await api('/projects/'+selected+'/redo',{stage,confirm_paid:true});followProduction();},'正在删除这一步的成果并重新开始…')}>
+       重做这一步{redoCascades?'（含之后）':''}
+     </button>
+   </section>}
    <div className="studio-layout">
     <aside className="studio-source"><div className="studio-source-heading"><span><BookOpen size={16}/>微小说原文</span><small>{source?.labels?.join(' · ')||'脑洞'}</small></div><h2>{work.title}</h2>{source?.author_name&&<p className="studio-author">原著 / {source.author_name}</p>}{source?.title&&source.title!==work.title&&<p className="studio-chapter">{source.title}</p>}<div className="studio-source-body">{source?.content||'该历史作品未保存可展示的原文。'}</div><p className="studio-source-note">来源：{source?.source||'本地已保存作品'}。保留本次导入的原文版本。{source?.completeness==='unknown'?'接口未声明全文完整性，以上为实际返回正文。':''}</p>{work.source_warning&&<p className="studio-source-note">本次使用已缓存的原文，接口最新请求未成功。</p>}</aside>
     <div className="studio-main">
@@ -160,7 +178,7 @@ export default function Author(){
       {stage==='assets_review'&&<p>分别检查角色身份三视图（含人类、类人及神话生物）、需要的独立服装和无人场景。确认后直接用这些参考图编写组合分镜。</p>}
       {stage==='assets_review'&&(creative?.bare_costumes?.length||0)>0&&<div className="studio-note studio-bare-costumes"><strong>空衣服模式 · {creative.bare_costumes.length} 个角色</strong><ul>{(creative.bare_costumes||[]).map((item:any)=><li key={item.costume_id}>{item.name} · {item.costume_id} · {item.character_ref} — {item.description}</li>)}</ul><p className="studio-note">这些角色天然体表、不着衣物：服装环节已按空衣服模式给出结论，因此不会为它们生成服装图，画面里也不会添加衣物。角色 → 服装 → 场景的顺序对所有角色都完整跑过。</p></div>}
       {!browsingEarlier&&<ImageRecovery images={work.retryable_images||[]} paid={paid} busy={busy||inFlight} drafts={promptDrafts} onDraftChange={(id,text)=>setPromptDrafts(previous=>({...previous,[id]:text}))} onRetry={(id,prompt)=>act(async()=>{await api('/projects/'+selected+'/images/'+id+'/retry',{confirm_paid:true,...(prompt?{prompt}:{})});setPromptDrafts(previous=>{const next={...previous};delete next[id];return next;});setConfirmed(false);},prompt?'正在用修改后的提示词重新生成这张图片…':'正在恢复这张失败图片，保留其他已完成素材…')} onRetryAll={()=>act(async()=>{await api('/projects/'+selected+'/images/retry',{confirm_paid:true});setConfirmed(false);},'正在一次恢复全部失败图片，保留其他已完成素材…')}/>}
-      {['preparing','storyboarding','rendering'].includes(stage||'')&&<><p>{browsingEarlier?'正在回看本步骤的任务、提示词和已有结果。':currentStage?.hint+'。可以离开页面，后台会继续执行并保存进度。'}</p>{canRedoNode&&<button className="is-danger" disabled={busy||!paid} title={!paid?'请先勾选下方的模型调用许可':'删除本节点及之后节点的记录，从当前节点重新开始'} onClick={()=>act(async()=>{await api('/projects/'+selected+'/redo-node',{confirm_paid:true});},'正在删除本节点的记录并从当前节点重新开始…')}>重做本节点</button>}{browsingEarlier&&!['storyboarding','rendering'].includes(stage||'')&&<button className="button primary" disabled={busy||inFlight||!paid} onClick={()=>act(async()=>{await restartPreparation();},'正在建立新的测试轮次，保留原有素材…')}>按当前风格重新测试制作</button>}{!browsingEarlier&&!work.retryable_images?.length&&['failed','needs_review'].includes(work.task?.status)&&<button className="button secondary" disabled={busy} onClick={()=>act(async()=>{await api('/projects/'+selected+'/resume',{});})}>{['storyboarding','rendering'].includes(stage||'')?'继续当前节点（复用已保存结果）':'问题处理后继续制作'}</button>}</>}
+      {['preparing','storyboarding','rendering'].includes(stage||'')&&<><p>{browsingEarlier?'正在回看本步骤的任务、提示词和已有结果。':currentStage?.hint+'。可以离开页面，后台会继续执行并保存进度。'}</p>{!browsingEarlier&&!work.retryable_images?.length&&['failed','needs_review'].includes(work.task?.status)&&<button className="button secondary" disabled={busy} onClick={()=>act(async()=>{await api('/projects/'+selected+'/resume',{});})}>{['storyboarding','rendering'].includes(stage||'')?'继续当前节点（复用已保存结果）':'问题处理后继续制作'}</button>}</>}
       {stage==='assets_review'&&work.asset_review_skill&&<details className="studio-note"><summary>{work.asset_review_skill.title}</summary><ul>{(work.asset_review_skill.checklist||[]).map((item:string)=><li key={item}>{item}</li>)}</ul></details>}
       {['storyboarding','rendering','film_review','published'].includes(stage||'')&&(work.board_repairs?.changes?.length||0)>0&&<details className="studio-note studio-repairs"><summary>分镜参考经过 {work.board_repairs.changes.length} 处代码校正（模型原稿已被自动修复）</summary><ul>{(work.board_repairs.changes||[]).slice(0,20).map((change:any,index:number)=><li key={index}>{change.shot_id?change.shot_id+' · ':''}{change.action}{change.asset_id?' · '+change.asset_id:''}{change.source_asset_ids?' · '+change.source_asset_ids.join('、'):''}</li>)}</ul><p className="studio-note">这些是代码按确定映射补上或修正的绑定，不是模型自己写对的结果；请在看片时留意对应镜头。</p></details>}
       {['storyboarding','rendering','film_review','published'].includes(stage||'')&&reviewFlagged&&<aside className="studio-review-handoff" role="status"><header><span><TriangleAlert size={18}/></span><div><small>REVIEW NOTES</small><h3>文字预审提出的复核提示</h3></div></header><p>这是文字预审的创作意见，不是错误：它不影响制作，也不会自动返工。请在审片时重点检查。</p>{reviewNotes.issues?.length?<ul>{reviewNotes.issues.map((issue:string,index:number)=><li key={index}>{issue}</li>)}</ul>:<p>预审没有给出具体问题，请完整检查镜头衔接与叙事节奏。</p>}<small>如果与你的判断不同，可在上方「重试本节点」带上结构错误重跑，或用「重做本节点」删除本轮记录重新开始。</small></aside>}
