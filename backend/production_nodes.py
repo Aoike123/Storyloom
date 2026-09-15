@@ -13,8 +13,8 @@ KINDS = ACTIVE_KINDS
 BUSY = ('queued','running','waiting')
 PROBLEM = ('failed','needs_review')
 PHASE_STATES = {
-    'storyboarding': ('assets_review','references_ready','storyboarding','storyboard_ready'),
-    'rendering': ('storyboard_ready','videos_review'),
+    'storyboarding': ('assets_review','references_ready','storyboarding','storyboard_ready','videos_review','episode_review'),
+    'rendering': ('storyboard_ready','videos_review','episode_review'),
 }
 
 
@@ -47,11 +47,17 @@ def saved_task_phase(task):
     return None
 
 
-def queue_node(db, work, phase, predecessor=None):
+def queue_node(db, work, phase, predecessor=None, segment_id=None, reopen=False):
+    """Queue a coordinator. ``segment_id`` names the episode it must produce.
+
+    A node is normally one per phase, but producing a film episode by episode means the same phase
+    runs again for the next episode; ``reopen`` lets that happen after the previous one completed,
+    and the completed node is retired with its results kept.
+    """
     if phase not in NODES:raise HTTPException(409,'未知的制作节点')
     mapping=dict(work.data.get('production_nodes',{}))
     prior=db.get(Task,mapping.get(phase,''))
-    if prior and prior.status in (*BUSY,'completed'):
+    if prior and prior.status in (*BUSY,'completed') and not (reopen and prior.status=='completed'):
         if prior.status!='completed':adopt_current_payer(prior)
         return prior
     run=db.get(Record,'creative_'+work.data.get('director_id',''))
@@ -68,6 +74,7 @@ def queue_node(db, work, phase, predecessor=None):
     task=Task(id=uid(phase),kind=NODES[phase]['kind'],status='queued',message=NODES[phase]['name']+'已排队',payload={
         'mode':'live','work_id':work.id,'run_id':work.data.get('run_id'),'phase':phase,
         'title':NODES[phase]['name'],'predecessor':predecessor,'revision_of':prior.id if prior else None,
+        **({'segment_id':segment_id} if segment_id else {}),
     })
     db.add(task);mapping[phase]=task.id
     work.data={**work.data,'workflow':'author-brainstorm-v7','stage':phase,'supervisor':task.id,'production_nodes':mapping}
@@ -354,7 +361,7 @@ def _dispatch(task_id,owner,payload,action):
         current.result={**current.result,'children':list(dict.fromkeys([*current.result.get('children',[]),*children]))}
 
 
-def _finish(task_id,owner,payload,next_phase=None):
+def _finish(task_id,owner,payload,next_phase=None,stage=None,reopen=False,segment_id=None):
     with Session.begin() as db:
         task,work=_check_owner(db,task_id,owner,payload)
         sid=work.data['director_id'];run=db.get(Record,'creative_'+sid);project=db.get(Record,sid)
@@ -365,7 +372,11 @@ def _finish(task_id,owner,payload,next_phase=None):
             outputs=[shot['video_task']['id'] for shot in workspace(sid)['shots']]
         task.status='completed';task.progress=100;task.message=NODES[phase]['name']+'已完成，结果已保存'
         task.result={**task.result,'director_id':sid,'output_ids':list(dict.fromkeys(outputs)),'finished_at':time.time()}
-        if next_phase:queue_node(db,work,next_phase,predecessor=task.id)
+        # ``reopen`` is what lets the same phase run again for the next episode: the previous
+        # coordinator already completed and would otherwise be returned as-is.
+        if next_phase:queue_node(db,work,next_phase,predecessor=task.id,reopen=reopen,
+                                 segment_id=segment_id or payload.get('segment_id'))
+        elif stage:work.data={**work.data,'stage':stage};work.version+=1
         else:work.data={**work.data,'stage':'film_review'};work.version+=1
     return True
 
@@ -387,18 +398,22 @@ def run_node(task_id,payload,owner):
         if failed:raise HTTPException(409,NODES[phase]['name']+'暂停：'+failure_summary(failed))
 
     if phase=='storyboarding':
+        target=payload.get('segment_id')
         if state=='assets_review':
             _dispatch(task_id,owner,payload,creative.prepare_reference_inputs)
             state='references_ready'
         if state=='references_ready':
-            pending=creative.next_storyboard_unit(sid)
+            pending=target or creative.next_storyboard_unit(sid)
             if pending is None:raise HTTPException(409,'这部作品没有可制作的情节，请重新查看切割结果。')
             _dispatch(task_id,owner,payload,lambda pid:creative.start_storyboard_stage(pid,pending))
             return False
         if state=='storyboarding':
-            pending=creative.next_storyboard_unit(sid)
-            if pending is None:
-                # Every episode has a board: lock the film and hand it to the rendering node.
+            order,done,_=creative.storyboard_units(sid)
+            pending=target or next((gid for gid in order if gid not in done),None)
+            if pending is None or pending in done:
+                # This episode has its board: lock the film and hand it to the rendering node, which
+                # produces this same episode before the next one is planned. With no target at all
+                # every episode is already planned, so the node simply finishes.
                 creative.finish_storyboard(sid)
                 return _finish(task_id,owner,payload,'rendering')
             with Session() as db:
@@ -406,15 +421,26 @@ def run_node(task_id,payload,owner):
                 # The episode that was in flight did not produce a board, so point at the reason it
                 # stopped: a structural error the model can act on, otherwise the task's own message.
                 detail='；'.join(blocking_feedback(db,work,problems=[watch] if watch else [])) or '分镜任务记录缺失'
-            raise HTTPException(409,f'分镜生成暂停（{pending}）：'+detail)
+            raise HTTPException(409,f'分镜生成暂停（{pending or "本情节"}）：'+detail)
     if state in ('storyboard_ready','videos_review'):
-        pending=creative.next_rendering_unit(sid)
+        pending=payload.get('segment_id') or creative.next_rendering_unit(sid)
         if pending is None:
             result=creative.production.workspace(sid)
             if not result['shots'] or any(not shot['video_task'] or shot['video_task']['status']!='completed' or not shot['clip'] for shot in result['shots']):
                 raise HTTPException(409,'漫剧生成尚未完成，已有片段保留，请处理未完成的镜头。')
-            return _finish(task_id,owner,payload)
-        # Episodes are rendered in order; the next one is submitted only once this one is finished.
+            # Nothing left to render: this is still an episode pause, so the author decides whether
+            # to publish what exists rather than being dropped straight into film review.
+            creative.pause_for_episode_review(sid,None)
+            return _finish(task_id,owner,payload,stage='episode_review')
+        finished=dict(creative.rendering_state(sid)).get(pending,{})
+        if finished.get('shots') and finished.get('finished')>=finished.get('shots'):
+            # This episode is fully rendered: stop and let the author publish or continue.
+            creative.pause_for_episode_review(sid,pending)
+            return _finish(task_id,owner,payload,stage='episode_review')
+        # Submit this episode's shots; the next episode is not planned until the author continues.
         _dispatch(task_id,owner,payload,lambda pid:creative.start_reference_videos(pid,pending))
         return False
+    if state=='episode_review':
+        # The node is only queued again through 继续; reaching here means the author has not chosen.
+        raise HTTPException(409,'本集已完成，请先选择发布或继续下一个情节。')
     raise HTTPException(409,NODES[phase]['name']+'与当前保存结果不匹配，未继续后续制作。')

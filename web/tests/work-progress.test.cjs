@@ -21,11 +21,11 @@ test('completed steps are real buttons and navigate to the selected earlier step
   assert.equal(first.type,'button');assert.equal(first.props.disabled,false);
   assert.equal(second.props.disabled,false);
   first.props.onClick();second.props.onClick();
-  assert.deepEqual(selected,['style','preparing']);
+  assert.deepEqual(selected,['style','segments_review']);
   assert.equal(steps[0].props['aria-current'],'step');
-  assert.equal(steps[3].props.children.props.disabled,true);
   assert.equal(steps[4].props.children.props.disabled,true);
   assert.equal(steps[5].props.children.props.disabled,true);
+  assert.equal(steps[6].props.children.props.disabled,true);
 });
 
 test('static displays remain static and navigation is disabled during a submission',()=>{
@@ -37,11 +37,12 @@ test('static displays remain static and navigation is disabled during a submissi
 test('production responsibilities are separate steps and later nodes stay locked',()=>{
   const tree=WorkProgress({stage:'storyboarding',onStepSelect:()=>{}});
   const steps=tree.props.children;
-  assert.equal(steps.length,7);
+  assert.equal(steps.length,8);
   const labels=context.exports.workStages.map(stage=>stage.name);
-  assert.deepEqual(Array.from(labels.slice(3,5)),['分镜生成','漫剧生成']);
-  assert.equal(steps[3].props.children.props.disabled,false);
-  assert.equal(steps[4].props.children.props.disabled,true);
+  // 确认情节发生在绘制任何参考图之前，所以它排在准备形象之前。
+  assert.deepEqual(Array.from(labels),['选择风格','确认情节','准备形象','确认图片','分镜生成','漫剧生成','审片验收','发布作品']);
+  assert.equal(steps[4].props.children.props.disabled,false);
   assert.equal(steps[5].props.children.props.disabled,true);
   assert.equal(steps[6].props.children.props.disabled,true);
+  assert.equal(steps[7].props.children.props.disabled,true);
 });

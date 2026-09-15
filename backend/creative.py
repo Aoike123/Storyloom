@@ -612,6 +612,49 @@ def next_rendering_unit(pid):
         if state['finished']<state['shots']:return gid
     return None
 
+
+def pause_for_episode_review(pid,segment_id):
+    """Stop after one finished episode so the author can publish it or ask for the next one."""
+    done=[gid for gid,state in rendering_state(pid) if state['shots'] and state['finished']>=state['shots']]
+    with Session.begin() as db:
+        run=get_run(db,pid);project=db.get(Record,pid)
+        order=[segment['id'] for segment in ((project.data.get('segments') or {}).get('segments') or [])]
+        remaining=[gid for gid in order if gid not in done]
+        run.data={**run.data,'stage':'episode_review','last_finished_unit':segment_id or (done[-1] if done else None),
+                  'finished_units':done,'remaining_units':remaining}
+        run.version+=1
+        work=next((row for row in db.scalars(select(Record).where(Record.kind=='author_project'))
+                   if row.data.get('director_id')==pid and not row.data.get('archived')),None)
+        if work:
+            work.data={**work.data,'stage':'episode_review','remaining_units':remaining,
+                       'finished_units':done,'last_finished_unit':segment_id}
+            work.version+=1
+    return {'segment_id':segment_id,'finished':done,'remaining':remaining}
+
+
+def episode_progress(pid):
+    """Per-episode state for the studio: which episodes have a board, clips, and are published."""
+    with Session() as db:
+        # The cut is reviewed before the design run exists, so this must not require one.
+        project=db.get(Record,pid)
+        units=dict(project.data.get('units') or {})
+        order=[segment for segment in ((project.data.get('segments') or {}).get('segments') or [])]
+        released=db.get(Record,f'release_{pid}')
+        published=list((released.data.get('published_units') if released else []) or [])
+    rendering=dict(rendering_state(pid))
+    result=[]
+    for segment in order:
+        gid=segment['id'];state=rendering.get(gid,{'shots':0,'finished':0})
+        result.append({'segment_id':gid,'title':segment.get('title'),'beat':segment.get('beat'),
+            'source_refs':list(segment.get('source_refs') or []),'shot_budget':segment.get('shot_budget'),
+            'characters':list(segment.get('characters') or []),'location':segment.get('location'),
+            'purpose':segment.get('purpose'),'continuity_out':segment.get('continuity_out'),
+            'source_text':segment.get('source_text'),
+            'storyboarded':gid in units,'shots':state['shots'],'clips':state['finished'],
+            'render_complete':bool(state['shots']) and state['finished']>=state['shots'],
+            'published':gid in published})
+    return result
+
 class Feedback(BaseModel):
     task_id:str
     text:str=Field(min_length=2,max_length=1500)

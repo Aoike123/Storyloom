@@ -25,7 +25,8 @@ class StorySegment(BaseModel):
     id:str=Field(pattern=SEGMENT_PATTERN,description='片段编号，从 G01 起按剧情顺序连续递增。')
     title:str=Field(min_length=1,max_length=80,description='片段标题，供创作者与后续节点识别。')
     source_refs:list[str]=Field(min_length=1,max_length=8,
-        description='本片段覆盖的原文 P 编号，必须从小到大连续排列，不与前后片段重叠或跳段。')
+        description='本片段覆盖的原文 P 编号。每个 P 编号只能属于一个片段：上一片段以 P007 结束时，本片段必须从 P008 开始，'
+                    '不要把 P007 再列一次，也不要跳过 P008。片段内 P 编号升序、不重复。')
     beat:Literal['setup','development','turn','climax','resolution']=Field(
         description='本片段在整篇里的剧情功能；一个片段只承担一个功能。')
     purpose:str=Field(min_length=5,max_length=400,description='本片段必须交代的信息，以及留给下一片段的悬念。')
@@ -74,8 +75,18 @@ def plan_issues(plan,passages,max_total_shots=None):
             issues.append(f'{segment.id} 的原文编号必须从小到大且不重复：'+ '、'.join(references_of(segment))+'。')
             numbers=sorted(set(numbers))
         if numbers and previous is not None and numbers[0]!=previous+1:
-            issues.append(f'{segment.id} 与上一片段之间必须连续：上一片段结束于 P{previous:03}，本片段从 P{numbers[0]:03} 开始。'
-                          '相邻片段不得跳段，也不得重复覆盖同一段原文。')
+            start=numbers[0]
+            if start<=previous:
+                # The message has to say which way is wrong: an earlier wording ("必须连续：上一片段
+                # 结束于 P006") was read by the model as "start again at P006", so every retry repeated
+                # the same boundary passage.
+                issues.append(f'{segment.id} 重复覆盖了上一片段已经用过的原文：{segment.id} 从 P{start:03} 开始，'
+                              f'但上一片段已经覆盖到 P{previous:03}。每个 P 编号只能属于一个片段，'
+                              f'{segment.id} 必须从 P{previous+1:03} 开始，并且不要列出 P{previous:03}。')
+            else:
+                missing='、'.join(f'P{number:03}' for number in range(previous+1,start))
+                issues.append(f'{segment.id} 漏掉了原文：上一片段结束于 P{previous:03}，{segment.id} 却从 P{start:03} 开始，'
+                              f'中间的 {missing} 没有归属。{segment.id} 必须从 P{previous+1:03} 开始。')
         if numbers:previous=numbers[-1]
         total+=segment.shot_budget
     if total>limit:

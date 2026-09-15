@@ -14,6 +14,7 @@ def own_key_client(monkeypatch,key):
     """A browser paying with its own key: one payer identity per session."""
     monkeypatch.setenv('MODEL_ACCESS_SECRET','test-secret-'+'a'*48)
     client=TestClient(app)
+    client.headers.update({'X-Storyloom-Model-Access': ''})
     response=client.post('/api/model-access/sessions',json={'mode':'own','keys':{'deepseek':key}})
     assert response.status_code==200,response.text
     client.headers.update({'X-Storyloom-Model-Access':response.json()['token']})
@@ -143,14 +144,13 @@ def test_author_flow_stops_only_for_assets_and_film(creative,monkeypatch,sample_
     a=TestClient(app)
     with Session.begin() as db:
         db.add(Record(id='work',kind='author_project',data={'director_id':'pid','stage':'preparing','art':'手绘漫画','tone':'温馨'}))
+        # 情节切割在导演阐述阶段完成；确认它之前，作者流程会停在情节确认，不会开始画图。
+        project=db.get(Record,'pid');project.data={**project.data,'segments':segment_plan()}
     assert authors.flow('unused',{'work_id':'work','phase':'preparing'})
     assert a.get('/api/author/projects/work').json()['stage']=='assets_review'
     assert a.post('/api/author/projects/work/generate',json={'confirm_paid':True}).status_code==422
     assert a.post('/api/author/projects/work/generate',json={'confirm':True,'confirm_paid':True}).status_code==200
     assert a.post('/api/author/projects/work/generate',json={'confirm':True,'confirm_paid':True}).status_code==409
-    # 情节切割在导演阐述阶段完成，这里直接装入真实流程会产出的结果。
-    with Session.begin() as db:
-        project=db.get(Record,'pid');project.data={**project.data,'segments':segment_plan()}
     # A single-character shot stays as three separate identity, costume, and scene references.
     worker.process_one('author-test')
     pre=pp.get('pid')['config'];b=board()
@@ -192,13 +192,43 @@ def test_author_flow_stops_only_for_assets_and_film(creative,monkeypatch,sample_
     with Session() as db:
         nodes=list(db.scalars(select(Task).where(Task.kind.in_(PRODUCTION_KINDS))))
         assert len(nodes)==2 and all(node.status=='completed' for node in nodes)
-    assert a.get('/api/author/projects/work').json()['stage']=='film_review'
+    work=a.get('/api/author/projects/work').json()
+    assert work['stage']=='episode_review'
+    assert work['episodes'][0]['render_complete'] is True and work['episodes'][0]['published'] is False
     assert a.get('/api/reader/stories').json()==[]
     assert a.post('/api/author/projects/work/publish',json={'confirm':False}).status_code==422
     result=a.post('/api/author/projects/work/publish',json={'confirm':True})
     assert result.status_code==200,result.text
     assert len(a.get('/api/reader/stories').json())==1
     assert a.post('/api/author/projects/work/publish',json={'confirm':True}).json()['id']==result.json()['id']
+
+def test_the_cut_is_reviewed_before_any_artwork_is_drawn(creative):
+    """切割先于人审：没有确认情节之前不生成任何人物或场景，确认后才开始第一幕。"""
+    from test_director import segment_plan
+    with Session.begin() as db:
+        db.add(Record(id='work',kind='author_project',data={'director_id':'pid','stage':'preparing',
+            'art':'手绘漫画','tone':'温馨'}))
+        project=db.get(Record,'pid')
+        project.data={**project.data,'segments':segment_plan((('P001',),('P002',)))}
+        # 设计任务尚未开始，流程应停在情节确认而不是直接画图。
+    client=TestClient(app)
+    assert authors.flow('unused',{'work_id':'work','phase':'preparing'})
+    stopped=client.get('/api/author/projects/work').json()
+    assert stopped['stage']=='segments_review'
+    assert [episode['segment_id'] for episode in stopped['episodes']]==['G01','G02']
+    assert all(episode['storyboarded'] is False for episode in stopped['episodes'])
+    assert [episode['characters'] for episode in stopped['episodes']]==[['女主'],['女主']]
+    assert client.post('/api/author/projects/work/segments/approve',json={}).status_code==422
+    approved=client.post('/api/author/projects/work/segments/approve',json={'confirm':True})
+    assert approved.status_code==200,approved.text
+    assert approved.json()['episodes']==['G01','G02']
+    assert client.post('/api/author/projects/work/segments/approve',json={'confirm':True}).status_code==409
+    with Session() as db:
+        assert db.get(Record,'work').data['stage']=='preparing'
+        audit=[row for row in db.query(Record).filter(Record.kind=='audit').all()
+               if row.data.get('action')=='segments_approved']
+        assert audit and audit[0].data['episodes']==['G01','G02']
+
 
 def test_draft_does_not_schedule_paid_tasks(story_api):
     a=TestClient(app)

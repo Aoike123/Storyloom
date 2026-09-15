@@ -20,10 +20,11 @@ export const taskNames: Record<string, string> = {author_styles: '推荐创作�
 export const statusNames: Record<string, string> = {queued: '排队中', running: '处理中', waiting: '等待结果', completed: '已完成', failed: '处理失败', needs_review: '需要处理', cancelled: '已停止', superseded: '已有新版本'};
 export const workStages = [
   {id: 'style', name: '选择风格', hint: '阅读微小说，确定画风与剧情气质'},
-  {id: 'preparing', name: '准备形象', hint: '理解原文，生成人物与场景参考图'},
+  {id: 'segments_review', name: '确认情节', hint: '把原文切成有序情节，逐段核对后开始制作'},
+  {id: 'preparing', name: '准备形象', hint: '只为情节里出场的人物与场景生成参考图'},
   {id: 'assets_review', name: '确认图片', hint: '查看形象，提出修改或确认继续'},
-  {id: 'storyboarding', name: '分镜生成', hint: '先把微小说切成有序片段，再逐片段生成并合并分镜与提示词'},
-  {id: 'rendering', name: '漫剧生成', hint: '用已审核的项目参考图直接生成视频片段'},
+  {id: 'storyboarding', name: '分镜生成', hint: '按情节逐个规划镜头、编写提示词并完成文本预审'},
+  {id: 'rendering', name: '漫剧生成', hint: '用已审核的项目参考图逐个情节生成视频'},
   {id: 'film_review', name: '审片验收', hint: '观看全部片段，确认最终效果'},
   {id: 'published', name: '发布作品', hint: '进入读者空间，供读者观看'},
 ];
@@ -71,7 +72,9 @@ export function InteractionFeedback({busy, text, title = '创作助手', error =
 export function WorkProgress({stage, viewedStage, onStepSelect, disabled = false, compact = false}: {stage?: string; viewedStage?: string; onStepSelect?: (stage:string)=>void; disabled?:boolean; compact?: boolean}) {
   const current = workStages.findIndex(s => s.id === stage);
   const viewed = workStages.findIndex(s => s.id === (viewedStage || stage));
-  return <ol className={'work-progress' + (compact ? ' is-compact' : '')} aria-label="作品制作阶段">
+  // The column count follows the step list, so adding a step never wraps the rail onto a second row.
+  return <ol className={'work-progress' + (compact ? ' is-compact' : '')} aria-label="作品制作阶段"
+             style={{'--stage-count': workStages.length} as React.CSSProperties}>
     {workStages.map((s, index) => {
       const content=<><span className="stage-dot">{index < current || stage === 'published' ? <Check size={16} /> : String(index + 1).padStart(2, '0')}</span><div><strong>{s.name}</strong>{!compact && <small>{s.hint}</small>}</div></>;
       return <li key={s.id} className={index === viewed ? 'is-current' : index < current || stage === 'published' ? 'is-done' : ''} aria-current={index === viewed ? 'step' : undefined}>

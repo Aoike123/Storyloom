@@ -65,7 +65,7 @@ export function progressStructure(work: any) {
     .filter(Boolean).map(task => [task.id, activeStatuses.includes(task.status) ? 'active' : task.status])]);
 }
 
-export const authorStageIds=['style','preparing','assets_review','storyboarding','rendering','film_review','published'];
+export const authorStageIds=['style','segments_review','preparing','assets_review','storyboarding','rendering','film_review','published'];
 export function authorDisplayStage(work:any) {
   return work?.display_stage || work?.stage;
 }

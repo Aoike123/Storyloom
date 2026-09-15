@@ -131,6 +131,8 @@ def workspace(pid: str):
         data['outputs'] = completed_outputs(tasks,sid,director_version)
         current=db.get(Record,sid) if sid else None
         data['segments']=current.data.get('segments') if current else None
+        # Per-episode progress drives the cut review panel and the publish/continue pause.
+        data['episodes']=creative.episode_progress(sid) if sid else []
         repairs=current.data.get('board_repairs') if current else None
         data['board_repairs']=repairs if repairs else None
         # The text pre-review's findings are opinions for the author, not errors: showing them here
@@ -521,6 +523,35 @@ class Confirm(BaseModel):
     confirm: bool = False
     confirm_paid: bool = False
 
+
+class SegmentReview(BaseModel):
+    confirm: bool = False
+    """The author read the cut and accepts it as the episode list for this film."""
+
+
+@router.post('/projects/{pid}/segments/approve')
+def approve_segments(pid: str, body: SegmentReview):
+    """Accept the cut, then let the flow continue into artwork.
+
+    The cut decides both the episodes and which characters and places are worth drawing, so it is
+    reviewed before any picture is generated instead of after.
+    """
+    if not body.confirm: raise HTTPException(422, '请确认已查看全部情节')
+    with attempt_lock, Session.begin() as db:
+        row = get_work(db, pid)
+        if row.data.get('stage') != 'segments_review': raise HTTPException(409, '当前不在情节确认阶段。')
+        sid = row.data.get('director_id')
+        project = db.get(Record, sid) if sid else None
+        segments = ((project.data.get('segments') or {}).get('segments') or []) if project else []
+        if not segments: raise HTTPException(409, '还没有可确认的情节切割结果。')
+        db.add(Record(id=uid('audit'), kind='audit', data={'target': pid, 'action': 'segments_approved',
+            'episodes': [segment['id'] for segment in segments]}))
+        row.data = {**row.data, 'segments_approved_at': time.time(), 'stage': 'preparing'}
+        row.version += 1
+        schedule(db, row, 'preparing')
+    return {'queued': True, 'episodes': [segment['id'] for segment in segments]}
+
+
 @router.post('/projects/{pid}/generate')
 def generate(pid: str, body: Confirm):
     creative.paid(body,'llm')
@@ -534,7 +565,9 @@ def generate(pid: str, body: Confirm):
         row.data = {**row.data, 'assets_confirmed_at': time.time()}
         from .skill_runtime import public,snapshot
         db.add(Record(id=uid('audit'),kind='audit',data={'target':row.id,'action':'author_asset_review','node_skill':public(snapshot('asset_review'))}))
-        queue_node(db, row, 'storyboarding')
+        # The first episode is produced first: the rest follow one at a time from 继续.
+        first=creative.next_storyboard_unit(row.data['director_id'])
+        queue_node(db, row, 'storyboarding', segment_id=first)
     return {'queued': True}
 
 @router.post('/projects/{pid}/feedback')
@@ -568,7 +601,8 @@ def publish(pid: str, request: Request, body: creative.Publish):
         }
     with Session() as db:
         row = get_work(db, pid)
-        if row.data['stage'] not in ('film_review','published'): raise HTTPException(409, '成片尚未完成')
+        # A finished episode can go out before the rest of the film exists.
+        if row.data['stage'] not in ('film_review','published','episode_review'): raise HTTPException(409, '成片尚未完成')
         sid = row.data['director_id']
     result = creative.publish(sid, body)
     annotated = None
@@ -584,6 +618,33 @@ def publish(pid: str, request: Request, body: creative.Publish):
         from .video_storage import export_manifest
         export_manifest(annotated)
     return result
+
+
+class EpisodeContinue(BaseModel):
+    confirm_paid: bool = False
+
+
+@router.post('/projects/{pid}/episodes/continue')
+def continue_episodes(pid: str, body: EpisodeContinue):
+    """Produce the next episode after the author has seen the finished one."""
+    creative.paid(body, 'llm', 'video')
+    with attempt_lock, Session.begin() as db:
+        row = get_work(db, pid)
+        if row.data.get('stage') not in ('episode_review', 'film_review'):
+            raise HTTPException(409, '当前不在情节确认阶段。')
+        sid = row.data['director_id']
+        order, done, run = creative.storyboard_units(sid)
+        pending = next((gid for gid in order if gid not in done), None)
+        if pending is None:
+            pending = creative.next_rendering_unit(sid)
+        if pending is None:
+            raise HTTPException(409, '全部情节都已生成，可以直接发布。')
+        run.data = {**run.data, 'stage': 'references_ready', 'episode_review_pending': None}
+        run.version += 1
+        db.add(Record(id=uid('audit'), kind='audit', data={'target': pid, 'action': 'episode_continued',
+            'segment_id': pending}))
+        queue_node(db, row, 'storyboarding', segment_id=pending, reopen=True)
+    return {'queued': True, 'segment_id': pending}
 
 def flow(task_id, payload):
     """One persisted scheduling transition per worker invocation; no browser polling dependency."""
@@ -609,6 +670,12 @@ def flow(task_id, payload):
         if any(t.status in creative.BUSY for t in tasks): return False
     if not run:
         if origin.status!='completed': raise HTTPException(409,'原文分析未完成，请在后台处理任务后继续')
+        # The cut is reviewed before any artwork is drawn: the author confirms which episodes exist,
+        # and the design stage then only draws the characters and places those episodes need.
+        if (project.data.get('segments') or {}).get('segments') and not data.get('segments_approved_at'):
+            with Session.begin() as db:
+                row=db.get(Record,payload['work_id']);row.data={**row.data,'stage':'segments_review'}
+            return True
         creative.design(sid,creative.Style(art=data['art'],tone=data['tone'],confirm_paid=True));return False
     status=run.data['stage']
     if status=='designing':

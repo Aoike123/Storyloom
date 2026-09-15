@@ -3,16 +3,18 @@ import {canWatch} from './reader-types';
 
 const productionStages: Record<string, number> = {
   style: 1,
-  preparing: 2,
-  assets_review: 3,
-  storyboarding: 4,
-  rendering: 5,
-  film_review: 6,
-  published: 7,
+  segments_review: 2,
+  preparing: 3,
+  assets_review: 4,
+  storyboarding: 5,
+  rendering: 6,
+  film_review: 7,
+  published: 8,
+  episode_review: 8,
 };
 
 export function productionRank(item: CatalogItem) {
-  if (canWatch(item)) return 8;
+  if (canWatch(item)) return 9;
   return productionStages[item.stage || ''] || (item.project_id ? .5 : 0);
 }
 

@@ -48,9 +48,14 @@ def test_segment_plan_requires_contiguous_original_text():
     plan=segments.SegmentPlan.model_validate(segment_plan((('P001','P002'),('P003',))))
     assert segments.plan_issues(plan,passages)==[]
     gap=segments.SegmentPlan.model_validate(segment_plan((('P001',),('P003',))))
-    assert any('必须连续' in issue for issue in segments.plan_issues(gap,passages))
+    # 漏段与重复覆盖分别给出可执行的修正指令，而不是笼统的"必须连续"。
+    gap_issues=segments.plan_issues(gap,passages)
+    assert len(gap_issues)==1 and '漏掉了原文' in gap_issues[0],gap_issues
+    assert 'P002 没有归属' in gap_issues[0] and '必须从 P002 开始' in gap_issues[0]
     overlap=segments.SegmentPlan.model_validate(segment_plan((('P001','P002'),('P002','P003'))))
-    assert any('必须连续' in issue for issue in segments.plan_issues(overlap,passages))
+    overlap_issues=segments.plan_issues(overlap,passages)
+    assert len(overlap_issues)==1 and '重复覆盖' in overlap_issues[0]
+    assert '必须从 P003 开始' in overlap_issues[0] and '不要列出 P002' in overlap_issues[0]
     unknown=segments.SegmentPlan.model_validate(segment_plan((('P001','P099'),)))
     assert any('不存在的原文编号 P099' in issue for issue in segments.plan_issues(unknown,passages))
     crowded=segments.SegmentPlan.model_validate(segment_plan(tuple((f'P{index:03}',) for index in range(1,6)),shot_budget=6))
@@ -71,12 +76,12 @@ def test_cutting_node_retries_until_every_passage_is_covered(monkeypatch):
     _,cut,origin=d.segment_stage({'source':{'content':text},'brief':'测试'},passages,'cut-task',
         lambda key,value,progress:saved.update({key:value}),treatment())
     assert origin=='generated'
-    assert '必须连续' in systems[1]
+    assert '漏掉了原文' in systems[1] and '必须从 P003 开始' in systems[1]
     assert [segment['source_refs'] for segment in cut['segments']]==[['P001','P002'],['P003','P004']]
     assert cut['shot_total']==6
     assert cut['segments'][0]['source_text'].startswith('夜色压在')
     assert cut['fingerprint'] and len(cut['fingerprint'])==32
-    assert '必须连续' in saved['segment_diagnostics']['attempts'][0]['error']
+    assert '漏掉了原文' in saved['segment_diagnostics']['attempts'][0]['error']
 
 
 def review_answer():

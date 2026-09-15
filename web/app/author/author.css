@@ -124,3 +124,13 @@
 .activity-children{display:grid;gap:10px;padding-left:13px;border-left:2px solid #e6ecdc}
 .activity-node .activity-children{border-left-color:#dde7d1}
 .studio-error button.is-danger{color:#a2553c;text-decoration:underline}.studio-action .button.is-danger{background:#fdf5f1;border-color:#e5c4b5;color:#a2553c}.studio-action .button.is-danger:hover{border-color:#c98f76}; 
+.segment-review-list{display:grid;gap:11px;margin:16px 0;padding:0;list-style:none;max-height:52vh;overflow-y:auto;scrollbar-width:thin}
+.segment-review-list>li{position:relative;padding:13px 15px;border:1px solid #e0e8d6;border-radius:9px;background:#fcfdf9}
+.segment-review-list header{display:flex;justify-content:space-between;align-items:baseline;gap:14px;flex-wrap:wrap}
+.segment-review-list header strong{font-size:13px;font-weight:600;color:#3c5540}
+.segment-review-list header span{font-size:10px;color:#8c9a7c}
+.segment-review-list p{margin:7px 0 5px;font-size:12px;color:#5d6f56;line-height:1.85}
+.segment-review-list small{font-size:10px;color:#8b997c;line-height:1.7}
+.segment-review-list blockquote{margin:9px 0 0;padding:9px 12px;border-left:2px solid #cddabf;background:#f4f7ee;border-radius:0 6px 6px 0;font-size:11px;line-height:1.9;color:#71805f;white-space:pre-wrap;max-height:9em;overflow-y:auto}
+.segment-state{position:absolute;top:11px;right:13px;font-style:normal;font-size:9px;letter-spacing:.5px;color:#93a084}
+.segment-state.is-board{color:#6f8c5c}.segment-state.is-ready{color:#4f7546;font-weight:600}.segment-state.is-published{color:#3f6b3a;font-weight:600}
