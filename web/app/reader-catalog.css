@@ -5,3 +5,20 @@
 .reader-cinema{position:relative}.reader-video-preload{position:absolute!important;width:1px!important;height:1px!important;opacity:0;pointer-events:none;right:0;bottom:0}.reader-branch-status{margin-top:16px;padding:13px 15px;border:1px solid #6f875a66;background:#26382b80;border-radius:8px;color:#bdccaF}.reader-branch-status>span{display:flex;align-items:center;gap:8px;font-size:12px}.reader-branch-status strong{font-weight:600;color:#dceacb}.reader-branch-status p{font-size:12px;line-height:1.7;margin:7px 0 0}.reader-branch-status small{display:block;color:#8fa187;font-size:10px;margin-top:5px}.reader-branch-status.is-failed,.reader-branch-status.is-rejected{border-color:#a4675c75;background:#4b272445}.reader-seek-notice{font-size:11px;line-height:1.7;color:#d3c58e;background:#71642b24;border-left:2px solid #aa9652;padding:8px 11px;margin:11px 0 0}.reader-model-link{display:inline-flex;align-items:center;gap:7px;color:#d4e8ae!important;font-size:12px;margin:0 0 10px;text-decoration:none}.reader-segments button.branch{background:linear-gradient(#a7d17f,#a7d17f) center/100% 5px no-repeat}.reader-segments button.pending{background:linear-gradient(90deg,#4a574d 35%,#718264 50%,#4a574d 65%) center/200% 5px no-repeat;animation:reader-branch-pending 1.3s linear infinite}.reader-segments button:disabled{cursor:not-allowed;opacity:.45}.reader-segments button.active:disabled{opacity:1}@keyframes reader-branch-pending{to{background-position:-100% center}}
 
 .reader-story-card{display:flex;flex-direction:column}.catalog-poster{flex-shrink:0}.catalog-story-info{display:flex;flex-direction:column;flex:1}.catalog-card-actions{margin-top:auto}.catalog-story-info>p{margin-bottom:19px}.reader-story-card:hover{transform:none}
+
+/* A story several people have made: one card, with the other productions stacked behind it. */
+.reader-story-card.has-stack{margin-top:14px;position:relative}
+.catalog-stack{position:absolute;left:0;right:0;top:-14px;bottom:0;pointer-events:none;z-index:0}
+.catalog-stack i{position:absolute;left:50%;transform:translateX(-50%);display:block;border:1px solid #ffffff12;border-radius:12px;background:#141d1a}
+.catalog-stack i:first-child{top:14px;width:calc(100% - 30px);height:100%}
+.catalog-stack i:last-child{top:7px;width:calc(100% - 15px);height:100%}
+.reader-story-card.has-stack>.catalog-poster,.reader-story-card.has-stack>.catalog-story-info{position:relative;z-index:1}
+.reader-story-card.has-stack{background:#17211e}
+.catalog-stack-count{position:absolute;z-index:2;right:16px;top:16px;padding:6px 10px;border-radius:4px;background:#0f1a14d9;color:#d9e8c4;font-size:10px;letter-spacing:.5px}
+.catalog-versions{margin:16px 0 0;padding:12px 13px;border:1px solid #ffffff12;border-radius:8px;background:#ffffff05}
+.catalog-versions>small{display:block;font-size:10px;color:#9dab93;line-height:1.7;margin-bottom:9px}
+.catalog-version-list{display:flex;flex-wrap:wrap;gap:7px}
+.catalog-version-list button{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:6px 10px;border:1px solid #ffffff17;border-radius:6px;background:#0f1814;color:#a9b8a0;font:inherit;font-size:11px;cursor:pointer}
+.catalog-version-list button.selected{border-color:#a0bc7d;background:#22301f;color:#dcecc4}
+.catalog-version-list button>span{max-width:13em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.catalog-version-list button>em{font-style:normal;font-size:9px;padding:1px 5px;border-radius:3px;background:#52654129;color:#a9c395}

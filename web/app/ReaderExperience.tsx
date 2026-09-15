@@ -7,7 +7,7 @@ import {InteractionFeedback, workStages} from './ProgressFeedback';
 import ReaderArtwork from './ReaderArtwork';
 import ReaderHero from './ReaderHero';
 import ReaderStoryGrid from './ReaderStoryGrid';
-import {canWatch, productionLink} from './reader-types';
+import {canWatch, groupProductionsByStory, productionLink} from './reader-types';
 import {modelAccessHeaders} from './model-access';
 import AccountDock from './AccountDock';
 import {rankByProduction} from './reader-carousel';
@@ -22,7 +22,7 @@ const browseKey = 'storyloom.reader.browse.v1';
 export default function ReaderExperience() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [query, setQuery] = useState(''), [searchInput, setSearchInput] = useState('');
-  const [filter, setFilter] = useState('all'), [refresh, setRefresh] = useState(0);
+  const [filter, setFilter] = useState('ready'), [refresh, setRefresh] = useState(0);
   const [loading, setLoading] = useState(true), [carouselIds, setCarouselIds] = useState<string[]>([]);
   const [activeId, setActiveId] = useState('');
   const [story, setStory] = useState<Release | null>(null), [index, setIndex] = useState(0);
@@ -33,6 +33,8 @@ export default function ReaderExperience() {
   const [reply, setReply] = useState(''), [replyError, setReplyError] = useState(false);
   const [message, setMessage] = useState(''), [busy, setBusy] = useState(false);
   const [seekNotice, setSeekNotice] = useState('');
+  // Which production of a story is on top of its stack. Keyed by story, defaulting to the newest.
+  const [versionChoice, setVersionChoice] = useState<Record<string, number>>({});
   const video = useRef<HTMLVideoElement>(null), input = useRef<HTMLTextAreaElement>(null);
   const continuePlay = useRef(false), openedLink = useRef(false), composing = useRef(false);
   const catalogRef = useRef<Catalog | null>(null), currentStory = useRef<string | null>(null);
@@ -112,10 +114,16 @@ export default function ReaderExperience() {
   function openItem(item: CatalogItem, focusKey: string) {
     remember(focusKey, focusKey.startsWith('hero:') ? item.id : undefined);
     if (!canWatch(item)) return;
+    openRelease(item, item.release!, focusKey);
+  }
+
+  /** Open one specific production, so a story made by several people can be watched one at a time. */
+  function openRelease(item: CatalogItem, release: Release, focusKey: string) {
+    if (!release.entries.length) return;
     const url = new URL(window.location.href);
-    url.searchParams.set('story', item.release!.id); url.hash = '';
+    url.searchParams.set('story', release.id); url.hash = '';
     window.history.pushState({...window.history.state, readerWatch: true}, '', url);
-    showStory(item.release!);
+    showStory(release);
   }
 
   useEffect(() => {
@@ -416,6 +424,9 @@ export default function ReaderExperience() {
     (filter === 'ready' ? canWatch(item) : filter === 'pending' ? !canWatch(item) : true) &&
     ((item.title || '') + ' ' + (item.description || '')).toLowerCase().includes(query.toLowerCase()));
   const carouselItems = carouselIds.map(id => catalog?.items.find(item => item.id === id)).filter((item): item is CatalogItem => !!item);
+  // One card per story, with a story's other productions stacked behind the front one.
+  const shelfGroups = groupProductionsByStory(visible, catalog?.releases || []).map((group, order) => ({...group, order}));
+  const productionTotal = (catalog?.releases || []).length;
   const clearFilters = () => {setFilter('all'); setQuery(''); setSearchInput('');};
 
   return <div className="reader-world">
@@ -431,10 +442,10 @@ export default function ReaderExperience() {
       <section id="reader-shelf" className="reader-shelf">
         <div className="reader-section-title">
           <div><span className="reader-kicker">THE STORY COLLECTION</span><h2>脑洞微小说 · 故事目录</h2></div>
-          <span>{catalog ? catalog.brainstorm_count + ' 篇脑洞微小说 · ' + catalog.ready_count + ' 部已有漫剧' : '正在读取目录'}</span>
+          <span>{catalog ? catalog.brainstorm_count + ' 篇脑洞微小说 · ' + productionTotal + ' 部他人制作的漫剧' : '正在读取目录'}</span>
         </div>
         <div className="catalog-toolbar">
-          <div className="catalog-filters" aria-label="筛选漫剧状态">{[['all', '全部故事'], ['ready', '已有漫剧'], ['pending', '待生成漫剧']].map(([value, label]) =>
+          <div className="catalog-filters" aria-label="筛选漫剧状态">{[['ready', '可读故事'], ['pending', '待生成漫剧'], ['all', '全部故事']].map(([value, label]) =>
             <button key={value} aria-pressed={filter === value} className={filter === value ? 'selected' : ''} onClick={() => setFilter(value)}>{label}</button>)}</div>
           <label className="catalog-search"><Search size={16}/><input aria-label="搜索微小说" placeholder="搜索标题或简介" value={searchInput}
             onCompositionStart={() => {composing.current = true;}}
@@ -449,28 +460,44 @@ export default function ReaderExperience() {
         {loading && !catalog ? <div className="reader-story-grid catalog-skeleton-grid" role="status" aria-label="正在打开脑洞故事库"><span className="feedback-sr-only">正在打开脑洞故事库</span>{[0, 1, 2].map(id =>
           <div className="reader-story-card catalog-skeleton" key={id} aria-hidden="true"><div className="catalog-poster"/><div className="catalog-story-info"><i/><i/><i/></div></div>)}</div>
           : !visible.length ? <div className="reader-empty" role="status">
-            <span>{query ? '没有找到匹配的微小说。' : filter === 'ready' ? '第一部漫剧，等你来制作。' : '暂时没有可展示的故事。'}</span>
-            <p>{filter === 'ready' && !query ? '切换到全部故事，选一篇微小说，体验从原文到视频的制作流程。' : '可以刷新目录或调整筛选条件。'}</p>
+            <span>{query ? '没有找到匹配的微小说。' : filter === 'ready' ? '还没有人发布过漫剧。' : '暂时没有可展示的故事。'}</span>
+            <p>{filter === 'ready' && !query ? '在「待生成漫剧」里挑一篇，做完了就会出现在这里供他人观看。' : '可以刷新目录或调整筛选条件。'}</p>
             {(filter !== 'all' || query) && <button onClick={clearFilters}>查看全部故事 →</button>}
-          </div> : <ReaderStoryGrid ids={visible.map(item => item.id)}>{visible.map((item, order) => {
-            const playable = canWatch(item), release = item.release, cover = item.artwork || item.tab_artwork;
+          </div> : <ReaderStoryGrid ids={shelfGroups.map(group => group.item.id)}>{shelfGroups.map(({item, productions, stacked, order}) => {
+            const active = Math.min(versionChoice[item.id] ?? 0, Math.max(0, productions.length - 1));
+            const release = productions[active] || item.release;
+            const playable = !!release && release.entries.length > 0;
+            const cover = item.artwork || item.tab_artwork;
             const stage = workStages.find(candidate => candidate.id === item.stage);
             const posterKey = 'shelf:poster:' + item.id, sourceKey = 'shelf:source:' + item.id, watchKey = 'shelf:watch:' + item.id;
-            return <article className={'reader-story-card ' + (playable ? 'is-ready' : 'is-pending')} key={item.id} data-story-id={item.id}>
+            return <article className={'reader-story-card ' + (playable ? 'is-ready' : 'is-pending') + (stacked ? ' has-stack' : '')}
+                            key={item.id} data-story-id={item.id} data-productions={productions.length}>
+              {stacked && <span className="catalog-stack" aria-hidden="true"><i/><i/></span>}
               <div className="catalog-poster">
-                {playable ? <button aria-label={'观看《' + item.title + '》'} data-reader-focus={posterKey} onClick={() => openItem(item, posterKey)}>
+                {playable ? <button aria-label={'观看《' + item.title + '》'} data-reader-focus={posterKey} onClick={() => openRelease(item, release!, posterKey)}>
                   {cover ? <ReaderArtwork src={cover} order={order}/> : <video src={release!.entries[0].media} preload="none" muted/>}
                   <span className="catalog-play"><Clapperboard size={22}/> 观看漫剧</span>
                 </button> : <Link href={productionLink(item)} prefetch={false} aria-label={'查看《' + item.title + '》并生成漫剧'} data-reader-focus={posterKey} onClick={() => remember(posterKey)}>
                   <ReaderArtwork src={cover} order={order}/><span className="catalog-not-made">这段故事，尚未有画面</span>
                 </Link>}
-                <span className="catalog-status">{playable ? '已有漫剧' : stage && item.stage !== 'published' ? '制作进度 · ' + stage.name : '待生成漫剧'}</span>
+                <span className="catalog-status">{playable ? '可读故事' : stage && item.stage !== 'published' ? '制作进度 · ' + stage.name : '待生成漫剧'}</span>
+                {stacked && <span className="catalog-stack-count">{productions.length} 个版本</span>}
               </div>
               <div className="catalog-story-info">
                 <div className="catalog-tags">{item.labels.slice(0, 3).map(label => <span key={label}>{label}</span>)}</div>
                 <h3>{item.title || '未提供标题'}</h3><p>{item.description || '打开微小说详情，阅读原文并选择制作风格。'}</p>
+                {stacked && <div className="catalog-versions" role="group" aria-label={'《' + (item.title || '') + '》的 ' + productions.length + ' 个版本'}>
+                  <small>同一篇故事，{productions.length} 个人做成了不同的漫剧</small>
+                  <div className="catalog-version-list">{productions.map((production, index) =>
+                    <button key={production.id} aria-pressed={index === active} className={index === active ? 'selected' : ''}
+                            title={production.description || production.title || ''}
+                            onClick={() => setVersionChoice(current => ({...current, [item.id]: index}))}>
+                      <span>{production.title || '版本 ' + (index + 1)}</span>
+                      {index === 0 && <em>最新</em>}
+                    </button>)}</div>
+                </div>}
                 <div className="catalog-card-actions">{playable ? <>
-                  <button onClick={() => openItem(item, watchKey)} data-reader-focus={watchKey}>立即观看 <ArrowRight size={15}/></button>
+                  <button onClick={() => openRelease(item, release!, watchKey)} data-reader-focus={watchKey}>立即观看 <ArrowRight size={15}/></button>
                   {(item.work_id || item.project_id) && <Link href={productionLink(item)} prefetch={false} data-reader-focus={sourceKey} onClick={() => remember(sourceKey)}>原文与制作</Link>}
                 </> : <Link href={productionLink(item)} prefetch={false} data-reader-focus={sourceKey} onClick={() => remember(sourceKey)}>
                   <Sparkles size={14}/>{item.project_id ? '查看原文并继续制作' : '查看微小说，生成漫剧'} <ArrowRight size={15}/>
@@ -478,7 +505,7 @@ export default function ReaderExperience() {
               </div>
             </article>;
           })}</ReaderStoryGrid>}
-        {catalog?.catalog_available && <p className="catalog-footnote">目录展示故事服务返回的全部脑洞类微小说，已有漫剧优先排列。未生成的卡片仍可进入原文与制作页面。</p>}
+        {catalog?.catalog_available && <p className="catalog-footnote">前台展示他人已经制作并发布的漫剧。同一篇故事被几个人做过时，卡片会把它们堆在一起，可以逐个切换观看；尚未有漫剧的故事在「待生成漫剧」中，仍可进入原文与制作页面。</p>}
       </section>
     </div> : <section className="reader-screen">
       <button className="reader-back" onClick={back}>← 返回故事</button>

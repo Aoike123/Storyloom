@@ -86,3 +86,23 @@ export const productionLink = (item: {work_id?: string | null; source_work_id?: 
 
 export const canWatch = (item: CatalogItem) => !!item.release?.entries.length;
 export const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/**
+ * Group the catalogue by story.
+ *
+ * The catalogue carries every published production, so one story appears more than once when
+ * several people have made it. Cards are stacked per story instead of repeating the same story as
+ * unrelated cards. Productions keep the catalogue order, which is newest first.
+ */
+export function groupProductionsByStory(items: CatalogItem[], releases: Release[]) {
+  const byStory: Record<string, Release[]> = {};
+  for (const release of releases) {
+    if (!release.source_work_id) continue;
+    (byStory[release.source_work_id] ||= []).push(release);
+  }
+  return items.map(item => {
+    const found = item.work_id ? byStory[item.work_id] || [] : [];
+    const productions = found.length ? found : item.release ? [item.release] : [];
+    return {item, productions, stacked: productions.length > 1};
+  });
+}
