@@ -268,6 +268,28 @@ not-yet-expired BYOK sessions. Store backups privately and never place
 automated because it overwrites live data; rehearse a restore runbook before
 accepting irreplaceable content.
 
+## Clean production reset
+
+When a test deployment must return to a genuinely empty state, use the dedicated reset script on
+the server after pulling the reviewed revision:
+
+```bash
+git pull --ff-only
+bash scripts/reset-production.sh --yes
+```
+
+This is a full application reset: it removes every login session, account wallet, work, task,
+public release, database-backed cache and generated media file. It also discards the old web/API
+containers and rebuilds them without the Docker build cache, so stale frontend or backend bundles
+cannot survive the reset. Users sign in again as new accounts after it completes.
+
+Before deleting anything, the script stops public traffic and workers and writes a PostgreSQL dump
+plus the complete application data volume to `backups/pre-reset-<timestamp>/`. It preserves
+`.env.production`, the provider settings/secret files in the data volume, and both Caddy volumes,
+so OAuth configuration and HTTPS certificates are not erased. Do not replace this command with
+`docker compose down -v`; that also destroys the certificate and configuration volumes and skips
+the automatic backup.
+
 ## Container releases
 
 `.github/workflows/containers.yml` builds both images for pull requests. When a
