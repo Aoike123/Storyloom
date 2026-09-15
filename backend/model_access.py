@@ -31,6 +31,7 @@ from sqlalchemy import text
 
 ACCESS_HEADER = "X-Storyloom-Model-Access"
 SESSION_KIND = "model_access_session"
+ACCOUNT_TOKEN_PREFIX = "zhihu:"
 POOL_KIND = "public_pool_day"
 BALANCE_KIND = "public_pool_balance"
 FILM_KIND = "public_pool_film"
@@ -102,6 +103,35 @@ def _record_id(token: str) -> str:
     return "model_access_" + hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def access_id_for_account(session_id: str) -> str:
+    """The access record a signed-in Zhihu browser spends from.
+
+    Keyed by the login session so a task can inherit it exactly like any other access session, which
+    keeps the existing worker plumbing unchanged.
+    """
+    return _record_id(ACCOUNT_TOKEN_PREFIX + str(session_id))
+
+
+def create_account_session(session_id: str, uid: str, hours: int | None = None) -> dict:
+    """Create or refresh the bean-backed access session for a signed-in account."""
+    from . import beans
+    access_id = access_id_for_account(session_id)
+    ttl = max(1, min(int(hours or os.getenv("MODEL_ACCESS_SESSION_HOURS", "24")), 24))
+    expires_at = time.time() + ttl * 3600
+    from .db import Record, Session
+
+    with Session.begin() as db:
+        beans.ensure_wallet(db, uid)
+        row = db.get(Record, access_id)
+        data = {"mode": "account", "uid": str(uid), "expires_at": expires_at}
+        if row:
+            row.data = data
+            row.version += 1
+        else:
+            db.add(Record(id=access_id, kind=SESSION_KIND, data=data))
+    return {"access_id": access_id, "uid": str(uid), "expires_at": expires_at}
+
+
 def resolve_access_token(token: str) -> str:
     if not isinstance(token, str) or not 32 <= len(token) <= 160 or not re.fullmatch(r"[A-Za-z0-9_-]+", token):
         raise ModelAccessError("模型使用会话无效，请重新选择使用方式。")
@@ -128,6 +158,15 @@ def _access_record(access_id: str | None = None) -> dict | None:
 def current_access_mode() -> str | None:
     record = _access_record()
     return str(record.get("mode")) if record else None
+
+
+def current_account_uid() -> str | None:
+    """The signed-in account behind the active access session, when there is one."""
+    record = _access_record()
+    if not record or record.get("mode") != "account":
+        return None
+    uid = str(record.get("uid") or "")
+    return uid or None
 
 
 def _secret_material() -> str:
@@ -245,7 +284,7 @@ def effective_model_config(base: dict[str, str]) -> dict[str, str]:
         # visitor did not supply, so every key the session did not bring is cleared.
         configured.update({key: "" for key in _KEY_FIELDS})
         configured.update(visitor)
-    elif record.get("mode") != "public":
+    elif record.get("mode") not in ("public", "account"):
         configured.update({key: "" for key in _KEY_FIELDS})
         configured["ALLOW_PAID_CALLS"] = "false"
         return configured
@@ -554,7 +593,7 @@ def release_public_call(kind: str, amount, day: str | None = None) -> bool:
     return True
 
 
-def authorize_call(kind: str, duration_seconds=None) -> dict:
+def authorize_call(kind: str, duration_seconds=None, task_id: str | None = None) -> dict:
     record = _access_record()
     if not record:
         if not public_demo_mode():
@@ -563,9 +602,24 @@ def authorize_call(kind: str, duration_seconds=None) -> dict:
     mode = record.get("mode")
     if mode == "own":
         return {"mode": "own"}
+    if mode == "account":
+        return _reserve_account_call(record, kind, duration_seconds, task_id)
     if mode == "public":
         return _reserve_public_call(kind, duration_seconds)
     raise ModelAccessError("模型使用会话无效，请重新配置。")
+
+
+def _reserve_account_call(record: dict, kind: str, duration_seconds=None, task_id=None) -> dict:
+    """A signed-in account pays from its own bean wallet instead of the anonymous pool."""
+    from . import beans
+    uid = str(record.get("uid") or "")
+    if not uid:
+        raise ModelAccessError("登录账号信息不完整，请重新登录。")
+    try:
+        charged = beans.debit(uid, kind, task_id, duration_seconds)
+    except beans.BeansExhausted as exc:
+        raise ModelAccessError(str(exc)) from None
+    return {"mode": "account", "uid": uid, "kind": kind, **charged}
 
 
 def affordable_shot_budget() -> tuple[int, str] | None:
@@ -666,6 +720,11 @@ def access_paid_states() -> dict[str, bool] | None:
         return {"all": False, **{kind: False for kind in _BUDGETS}} if public_demo_mode() else None
     if record.get("mode") == "own":
         return {"all": True, **{kind: True for kind in _BUDGETS}}
+    if record.get("mode") == "account":
+        from . import beans
+        uid = str(record.get("uid") or "")
+        by_kind = {kind: bool(uid) and beans.affordable(uid, kind) for kind in _BUDGETS}
+        return {"all": any(by_kind.values()), **by_kind}
     if record.get("mode") == "public":
         status = public_pool_status(refresh=False)
         by_kind = {item["kind"]: bool(item["available"]) for item in status["providers"]}

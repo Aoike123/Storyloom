@@ -27,7 +27,13 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 
 from .db import Record, Session
-from .model_access import ModelAccessError, open_secret, public_demo_mode, seal_secret
+from .model_access import (
+    ModelAccessError,
+    create_account_session,
+    open_secret,
+    public_demo_mode,
+    seal_secret,
+)
 
 router = APIRouter(prefix='/api/zhihu', tags=['zhihu-login'])
 
@@ -182,10 +188,13 @@ def _token_from(payload: dict) -> tuple[str, int | None]:
 @router.get('/status')
 def status(request: Request):
     account = current_account(request)
+    from . import beans
+    wallet = beans.summary(account['uid']) if account else None
     return {
         'configured': configured(),
         'authorized': account is not None,
         'account': public_account(account) if account else None,
+        'wallet': wallet,
     }
 
 
@@ -286,6 +295,9 @@ def callback(request: Request, authorization_code: str = '', code: str = '', sta
             'target': 'zhihu_oauth', 'action': 'zhihu_login_succeeded',
             'uid': account['uid'], 'at': now,
         }))
+    # The account spends its bean wallet through an access session keyed to this login, so tasks
+    # inherit the right payer the same way anonymous ones already do.
+    create_account_session(session_id, account['uid'], expires_in)
     return RedirectResponse('/?zhihu=ok', status_code=302)
 
 
@@ -310,3 +322,20 @@ def account_token(request: Request) -> str | None:
     if not account or not account.get('token'):
         return None
     return open_secret(account['token'])
+
+
+def signed_in_access_id(request: Request) -> str | None:
+    """The bean-backed access record for this browser, when it is signed in and not expired."""
+    session_id = _session_id(request)
+    if not session_id:
+        return None
+    with Session() as db:
+        row = db.get(Record, _session_record_id(session_id))
+        if not row or row.kind != SESSION_KIND:
+            return None
+        data = dict(row.data)
+    if float(data.get('expires_at', 0)) <= time.time():
+        return None
+    from .model_access import access_id_for_account
+
+    return access_id_for_account(session_id)

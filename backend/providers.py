@@ -35,14 +35,25 @@ def settings():
             'image_adapter':'硅基流动文生图',
             'video_adapter':('MiniMax H3 V2' if cfg.get('VIDEO_PROVIDER','ark')=='minimax' else '火山方舟 Tasks（待真实验证）')}
     if not public_demo_mode():result['editable']={k:v for k,v in cfg.items() if not k.endswith('_API_KEY')}
+    if access_paid_states() is not None and (state := _account_bean_balance()) is not None:
+        result['account_beans']=state
     return result
+
+
+def _account_bean_balance():
+    """Balance for the signed-in account, so the interface can show and gate on it."""
+    from .model_access import current_account_uid
+    uid=current_account_uid()
+    if not uid:return None
+    from . import beans
+    return f'{beans.balance(uid):.2f}'
 
 def reserve_call(kind, task_id, model=None, duration_seconds=None):
     cfg=settings()
     if not cfg.get(f'{kind}_paid_enabled',cfg['paid_enabled']):
         raise ProviderError(payment_message(kind,cfg=cfg) or '该模型的付费调用未开启或共享额度不足，请在模型连接页检查后再尝试。')
     if not cfg[f'{kind}_configured']: raise ProviderError('尚未配置该模型的完整 API 信息。')
-    try:access=authorize_call(kind,duration_seconds)
+    try:access=authorize_call(kind,duration_seconds,task_id)
     except ModelAccessError as exc:raise ProviderError(str(exc)) from None
     from .provider_usage import begin
     return begin(kind,model or cfg.get(kind+'_model',''),task_id,access)

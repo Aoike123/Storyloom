@@ -49,7 +49,7 @@ def test_login_reports_configuration_state(client, monkeypatch):
     monkeypatch.delenv('ZHIHU_OAUTH_APP_KEY', raising=False)
     monkeypatch.delenv('ZHIHU_OAUTH_REDIRECT_URI', raising=False)
     body = client.get('/api/zhihu/status').json()
-    assert body == {'configured': False, 'authorized': False, 'account': None}
+    assert body == {'configured': False, 'authorized': False, 'account': None, 'wallet': None}
     assert client.get('/api/zhihu/login', follow_redirects=False).status_code == 409
 
 

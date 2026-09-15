@@ -37,6 +37,7 @@ def finish(entry, usage=None, status="completed"):
     if not entry:
         return
     refund = None
+    beans_refund = None
     with Session.begin() as db:
         row = db.get(Record, entry)
         if row:
@@ -46,6 +47,9 @@ def finish(entry, usage=None, status="completed"):
                 data["released_at"] = time.time()
                 if data.get("mode") == "public":
                     refund = (data.get("pool_kind"), data.get("reserved_cny"), data.get("pool_day"))
+                elif data.get("mode") == "account":
+                    beans_refund = (data.get("uid"), data.get("kind"), data.get("task"),
+                                    data.get("beans_cost"))
             row.data = data
     if refund:
         from .model_access import release_public_call
@@ -53,6 +57,12 @@ def finish(entry, usage=None, status="completed"):
         kind, amount, day = refund
         if kind and amount:
             release_public_call(kind, amount, day)
+    if beans_refund:
+        uid, kind, task, amount = beans_refund
+        if uid and kind and amount:
+            from . import beans
+
+            beans.refund(uid, kind, task, amount)
 
 
 def finish_video(task, usage):

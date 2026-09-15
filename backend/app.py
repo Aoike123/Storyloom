@@ -92,6 +92,12 @@ async def local_only(request: Request, call_next):
         access_id = resolve_access_token(request.headers[ACCESS_HEADER]) if ACCESS_HEADER in request.headers else ""
     except ModelAccessError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=401, headers={"Cache-Control": "no-store"})
+    if not access_id:
+        # A signed-in Zhihu account pays from its bean wallet. An explicit access header still wins,
+        # so an account whose beans ran out can switch to its own keys and keep working.
+        from .zhihu_oauth import signed_in_access_id
+
+        access_id = signed_in_access_id(request) or ""
     with access_scope(access_id):
         if request.method not in ["GET", "HEAD", "OPTIONS"]:
             origin = request.headers.get("origin")
