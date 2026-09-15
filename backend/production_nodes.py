@@ -6,7 +6,7 @@ from .db import Record, Task, Session, uid, task_dict
 
 NODES = {
     'storyboarding': {'kind':'author_storyboard','name':'分镜生成','hint':'直接编写参考图组合分镜、镜头提示词并完成文本预审'},
-    'rendering': {'kind':'author_render','name':'漫剧生成','hint':'生成镜头参考图与视频，保存可观看的片段'},
+    'rendering': {'kind':'author_render','name':'漫剧生成','hint':'用已审核的项目参考图直接生成视频，保存可观看的片段'},
 }
 ACTIVE_KINDS = {node['kind'] for node in NODES.values()}
 KINDS = ACTIVE_KINDS | {'author_composite'}
@@ -26,7 +26,7 @@ def saved_task_phase(task):
     if task.payload.get('production_phase'):return task.payload['production_phase']
     if task.kind=='image':
         if task.payload.get('asset_kind')=='dressed_character' or task.payload.get('preproduction_id'):return 'compositing'
-        if task.payload.get('director_id'):return 'rendering'
+        return None  # Removed shot-reference images are history, never current work.
     if task.kind=='video':return 'rendering'
     if task.kind=='creative_watch' or (task.kind=='director' and task.payload.get('stage')=='board'):return 'storyboarding'
     return None
@@ -53,7 +53,7 @@ def queue_node(db, work, phase, predecessor=None):
         'title':NODES[phase]['name'],'predecessor':predecessor,'revision_of':prior.id if prior else None,
     })
     db.add(task);mapping[phase]=task.id
-    work.data={**work.data,'workflow':'author-brainstorm-v6','stage':phase,'supervisor':task.id,'production_nodes':mapping}
+    work.data={**work.data,'workflow':'author-brainstorm-v7','stage':phase,'supervisor':task.id,'production_nodes':mapping}
     work.version+=1
     run.data={**run.data,'production_split':True,'direct_reference_inputs':True}
     # Assign existing saved work to its actual responsibility when adopting a legacy run.
@@ -107,6 +107,10 @@ def retry_current_node(db,work):
     if phase=='storyboarding':
         project=db.get(Record,sid)
         raw=(project.data.get('board_diagnostics') or {}).get('raw') if project else None
+        chunk=(project.data.get('board_chunk_diagnostics') or {}) if project else {}
+        if chunk.get('errors'):
+            detail='；'.join(str(error.get('field'))+'：'+str(error.get('reason')) for error in chunk['errors'][:5])
+            feedback_items.append(f"{chunk.get('segment_id') or '片段'} 上一次分镜输出问题：{detail}")
         source_task=next((task for task in problems if task.kind=='director' and task.payload.get('source',{}).get('content')),None)
         if raw is not None and source_task:
             from . import director
@@ -119,10 +123,14 @@ def retry_current_node(db,work):
             except ValidationError:
                 pass
         feedback='；'.join(feedback_items)[:1200]
+        # A failure that happened inside one segment must not throw away the segments that
+        # already passed validation; only a whole-board failure regenerates everything.
+        reuse_valid_chunks=bool(chunk.get('errors')) and not raw
         for task in problems:
             task.status='superseded';task.message='已由重新运行的分镜节点接替；原错误与输出保留。'
         data={key:value for key,value in run.data.items() if key!='watch'}
-        run.data={**data,'stage':'references_ready','storyboard_retry_feedback':feedback}
+        run.data={**data,'stage':'references_ready','storyboard_retry_feedback':feedback,
+                  'storyboard_reuse_chunks':reuse_valid_chunks}
         run.version+=1
         replacement=queue_node(db,work,phase)
         replacement.message='分镜生成已重新排队，将参考上次错误重新生成'
@@ -227,8 +235,10 @@ def run_node(task_id,payload,owner):
                 run=db.get(Record,'creative_'+sid);watch=db.get(Task,run.data.get('watch',''))
             raise HTTPException(409,'分镜生成暂停：'+(watch.message if watch else '分镜任务记录缺失'))
         return _finish(task_id,owner,payload,'rendering')
-    if state=='storyboard_ready':_dispatch(task_id,owner,payload,creative.start_reference_frames);return False
-    if state in ('samples_review','frames_review'):_dispatch(task_id,owner,payload,advance(state));return False
+    if state in ('storyboard_ready','samples_review','frames_review'):
+        # Legacy rounds stop at the removed shot-reference-image step; the reviewed project
+        # references go straight to the video model from here on.
+        _dispatch(task_id,owner,payload,creative.start_reference_videos);return False
     result=creative.production.workspace(sid)
     if not result['shots'] or any(not shot['video_task'] or shot['video_task']['status']!='completed' or not shot['clip'] for shot in result['shots']):
         raise HTTPException(409,'漫剧生成尚未完成，已有片段保留，请处理未完成的镜头。')

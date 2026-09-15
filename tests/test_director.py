@@ -31,6 +31,15 @@ def recoverable_board():
     raw['shots'][1]['assets']=['actor','costume','costume']
     return raw
 
+
+def segment_plan(groups=(('P001',),),shot_budget=4):
+    """A saved微小说切割 result so storyboard tests exercise chunked generation."""
+    return {'title':'原文片段切割','overall_arc':'按原文顺序串联全部片段',
+            'segments':[{'id':f'G{index+1:02}','title':f'片段 {index+1}','source_refs':list(refs),
+                         'beat':'setup' if index==0 else 'development','purpose':'交代本片段信息，并把悬念留给下一片段',
+                         'characters':['女主'],'location':'公司洗手间','shot_budget':shot_budget,
+                         'continuity_out':'人物留在原地，异常尚未解释'} for index,refs in enumerate(groups)]}
+
 @pytest.fixture
 def setup_source(client,monkeypatch):
     with Session.begin() as db:db.add(Record(id='source_test',kind='story_source',data={'title':'脑洞','labels':['脑洞'],'content':TEXT,'content_hash':'testhash','completeness':'unknown'}))
@@ -69,17 +78,19 @@ def test_director_three_stages_persist_and_approval_gates_images(setup_source,mo
     b=board()
     for shot in b['shots']:shot['assets']=['actor','set']
     answers=iter([b,{'shots':[{k:s[k] for k in ('id','first_frame','motion_prompt')} for s in b['shots']]},review])
+    with Session.begin() as db:
+        row=db.get(Record,pid);row.data={**row.data,'segments':segment_plan()}
     assert client.post('/api/director/projects/'+pid+'/storyboard',json={'version':p['version'],'confirm_paid':True}).status_code==200
     assert worker.process_one('board_worker')
     p=client.get('/api/director/source_test').json()[0]
     assert len(calls)==4 and p['status']=='pending_review'
     assert calls[1][1]['preproduction']['assets']['set']['notes']==config['assets']['set']['notes']
     path='/api/director/projects/'+pid
-    assert client.post(path+'/shots/S01/image',json={'version':p['version'],'confirm_paid':True}).status_code==409
+    # 镜头参考图步骤已移除：分镜不再接受单镜图片生成请求。
+    assert client.post(path+'/shots/S01/image',json={'version':p['version'],'confirm_paid':True}).status_code==404
     r=client.post(path+'/approve',json={'version':p['version'],'confirm':True,'note':'已核对所有镜头的连续性'})
     assert r.status_code==200
-    image=client.post(path+'/shots/S01/image',json={'version':r.json()['version'],'confirm_paid':True})
-    assert image.status_code==409  # Visual references must be approved separately.
+    assert client.post(path+'/shots/S01/image',json={'version':r.json()['version'],'confirm_paid':True}).status_code==404
     edited=client.post(path+'/edit',json={'version':r.json()['version'],'board':b})
     assert edited.status_code==200 and edited.json()['status']=='pending_review'
     assert edited.json()['review']['approved'] is False
@@ -150,29 +161,31 @@ def test_invalid_board_preserves_diagnostics(setup_source,monkeypatch):
     treatment.update(rules=[{'rule':'规则','quote':TEXT,'consequence':'后果'}],boundaries=['未知'])
     raw=board();raw['shots'][0]['size']='INVALID'
     saved=[]
-    monkeypatch.setattr(d,'chat_json',lambda _system,payload,*a:((treatment if payload['schema']['title']=='Treatment' else raw),{}))
+    plan=segment_plan()
+    monkeypatch.setattr(d,'chat_json',lambda _system,payload,*a:((
+        treatment if payload['schema']['title']=='Treatment' else plan if payload['schema']['title']=='SegmentPlan' else raw),{}))
     with pytest.raises(d.ProviderError,match='shots.0.size'):
         d.run_director({'source':{'content':TEXT},'brief':'测试'},'test',lambda *a:saved.append(a))
-    diagnostic=[x[1] for x in saved if x[0]=='board_diagnostics'][-1]
+    diagnostic=[x[1] for x in saved if x[0] in ('board_diagnostics','board_chunk_diagnostics')][-1]
+    assert diagnostic['segment_id']=='G01'
     assert diagnostic['raw']==raw
     assert diagnostic['errors'][0]['field']=='shots.0.size'
     assert 'input' not in diagnostic['errors'][0]
     assert len(diagnostic['attempts'])==4
 
 
-def test_storyboard_schema_and_retry_feedback_enforce_three_reference_limit(setup_source,monkeypatch):
+def test_storyboard_schema_and_retry_feedback_enforce_reference_capacity(setup_source,monkeypatch):
     assert d.Shot.model_json_schema()['properties']['assets']['maxItems']==12
     treatment={k:'设计依据' for k in ['premise','dramatic_question','protagonist_goal','excerpt_scope','visual_strategy','information_strategy']}
     treatment.update(rules=[{'rule':'规则','quote':TEXT,'consequence':'后果'}],boundaries=['未知'])
-    prep=reference_prep();prep['assets'].update({
-        'other':{'role':'character','name':'跟踪者','identity_asset_id':'other','requires_costume':False},
-        'third':{'role':'character','name':'同事甲','identity_asset_id':'third','requires_costume':False},
-        'fourth':{'role':'character','name':'同事乙','identity_asset_id':'fourth','requires_costume':False},
-    })
+    prep=reference_prep();prep['assets']['actor']['requires_costume']=False;prep['assets'].pop('costume')
+    crowd={f'extra{i}':{'role':'character','name':f'同事{i}','identity_asset_id':f'extra{i}',
+        'requires_costume':False} for i in range(1,9)}
+    prep['assets'].update(crowd)
     invalid=board();valid=board()
-    for shot in invalid['shots']:shot['assets']=['actor','costume','restroom']
-    invalid['shots'][0]['assets']=['actor','costume','other','third','restroom']
-    for shot in valid['shots']:shot['assets']=['actor','costume','restroom']
+    for shot in invalid['shots']:shot['assets']=['actor','restroom']
+    invalid['shots'][0]['assets']=['actor',*crowd,'restroom']
+    for shot in valid['shots']:shot['assets']=['actor','restroom']
     systems=[];board_payloads=[];answers=iter([invalid,valid,{
         'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'}])
     def chat(system,payload,*args,**kwargs):
@@ -181,12 +194,13 @@ def test_storyboard_schema_and_retry_feedback_enforce_three_reference_limit(setu
         return next(answers),{}
     monkeypatch.setattr(d,'chat_json',chat)
     result=d.run_director({'stage':'board','source':{'content':TEXT},'brief':'测试','treatment':treatment,
-                           'preproduction':prep,'retry_feedback':'上一次节点的具体错误'},'retry-board',lambda *args:None)
+                           'preproduction':prep,'segments':segment_plan(),'retry_feedback':'上一次节点的具体错误'},'retry-board',lambda *args:None)
     assert result['approved'] is True and len(board_payloads)==2
     assert board_payloads[0]['preproduction']['asset_binding_contract']['character_reference_sets']
     assert board_payloads[0]['preproduction']['previous_node_error']=='上一次节点的具体错误'
-    assert 'S01 的 assets 完整绑定为 5 张' in systems[1]
-    assert '多人内容必须拆成单人反打或空场景镜头' in systems[1]
+    assert 'S01 的 assets 完整绑定为 10 张' in systems[1]
+    assert '视频模型每镜最多接收 9 张参考图' in systems[1]
+    assert '多人内容必须拆成单人反打、近景或空场景镜头' in systems[1]
 
 
 def test_saved_board_skips_storyboard_model_and_repairs_unique_scene_binding(monkeypatch):
@@ -214,24 +228,39 @@ def test_saved_board_skips_storyboard_model_and_repairs_unique_scene_binding(mon
         'bind_explicit_setup_reference','remove_duplicate_assets','bind_unique_named_scene'}
 
 
-def test_frame_remake_points_to_the_previous_current_frame(client,monkeypatch):
-    from backend import consistency
-    monkeypatch.setattr(d,'settings',lambda:{'paid_enabled':True,'image_configured':True})
-    context={'consistency_stamp':'visual-v1','reference_media':['/media/ref.png'],
-        'reference_assets':[{'id':'ref','version':1}],'image_model':'test-model',
-        'visual_style':'固定漫画画风','continuity_state':'人物位置保持一致'}
-    monkeypatch.setattr(consistency,'image_context',lambda *args:context)
-    shot={'id':'S01','reference_prompt':'静态镜头构图提示词','motion_prompt':'人物缓慢向前移动',
-        'generation_seconds':5,'edit_seconds':3}
+def test_shot_reference_image_endpoint_is_removed(client):
     with Session.begin() as db:
         db.add(Record(id='frame-project',kind='director',version=2,data={
-            'status':'approved','board':{'title':'当前分镜','shots':[shot]}}))
-        db.add(Task(id='old-frame',kind='image',status='completed',payload={
-            'director_id':'frame-project','director_version':2,'shot_id':'S01','consistency_stamp':'visual-v1'},
-            result={'media':'/media/old.png','asset_id':'old-frame-asset'}))
+            'status':'approved','board':{'title':'当前分镜','shots':[{'id':'S01'}]}}))
     response=client.post('/api/director/projects/frame-project/shots/S01/image',json={
         'version':2,'remake':True,'confirm_paid':True})
-    assert response.status_code==200,response.text
-    with Session() as db:
-        replacement=db.get(Task,response.json()['id'])
-        assert replacement.id!='old-frame' and replacement.payload['revision_of']=='old-frame'
+    assert response.status_code==404
+
+
+def test_invented_source_quote_is_rejected_and_precise_citation_is_kept():
+    """Replacing the quote before validation is what used to make this check unable to fire."""
+    passages=d.source_passages(TEXT)
+    shot={'id':'S01','scene':'a','purpose':'hook','source_quote':'编剧自己编的一句台词',
+        'dramatic_action':'a','size':'MS','camera':'a','composition':'a','blocking':'a',
+        'continuity_in':'a','continuity_out':'a','viewer_knows':'a','character_knows':'a',
+        'withhold':'a','setup_ids':[],'edit_seconds':3,'generation_seconds':5,'dialogue':'',
+        'sound':'a','transition':'a','reference_prompt':'abcde','motion_prompt':'abcde',
+        'assets':['a'],'generation_risk':'a','source_ref':'P001'}
+    board=d.Board.model_validate({'title':'t','scope_note':'s','shots':[shot]})
+    with pytest.raises(d.ProviderError,match='在原文中找不到'):
+        d.bind_sources(board.shots,passages,'source_quote',TEXT)
+
+    # A quote that really exists in the story, but under a different P number, is rebound and
+    # reported instead of being passed off as a faithful citation.
+    longer='甲'*260+'女主看不清鬼怪。'
+    long_passages=d.source_passages(longer)
+    assert len(long_passages)>1
+    faithful=d.Board.model_validate({'title':'t','scope_note':'s','shots':[{
+        **{k:v for k,v in shot.items()},'source_quote':'女主看不清鬼怪','source_ref':'P001'}]})
+    changes=d.bind_sources(faithful.shots,long_passages,'source_quote',longer)
+    assert faithful.shots[0].source_quote==long_passages['P001']
+    assert [change['action'] for change in changes]==['source_quote_rebound']
+
+    exact=d.Board.model_validate({'title':'t','scope_note':'s','shots':[{
+        **{k:v for k,v in shot.items()},'source_quote':'女主看不清鬼怪','source_ref':'P001'}]})
+    assert d.bind_sources(exact.shots,passages,'source_quote',TEXT)==[]

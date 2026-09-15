@@ -73,28 +73,34 @@ def snapshot_asset(db, asset, version=None):
     return immutable(db, rid, 'asset_revision', data)
 
 
-def generation_snapshot(db, payload, director=None, shot=None, frame_asset=None,*,reference_mode=False):
+def generation_snapshot(db, payload, director=None, shot=None, frame_asset=None,*,reference_mode=False,references=None):
     """Freeze actual input assets before the task is dispatched, not after generation."""
     bindings = []
     if frame_asset:
         frame = snapshot_asset(db, frame_asset, payload.get('asset_version'))
         bindings.append({'role': 'shot_reference' if reference_mode else 'first_frame', 'asset_revision_id': frame.id, **frame.data})
     refs = []
-    if director and shot:
+    if references is not None:
+        for asset in references:
+            frozen = snapshot_asset(db, asset, asset.version)
+            if not any(binding['asset_id']==asset.id for binding in bindings):
+                bindings.append({'role': 'reference', 'asset_revision_id': frozen.id, **frozen.data})
+    elif director and shot:
         from .consistency import config
         cfg = config(db, director.id)
         if cfg:
             refs = [{'id': aid, 'version': cfg.data.get('asset_versions', {}).get(aid)}
                     for aid in cfg.data.get('bindings', {}).get(shot['id'], [])]
-    if not refs and frame_asset:
+    if not refs and frame_asset and references is None:
         refs = frame_asset.data.get('reference_assets') or []
-    for ref in refs:
-        asset = db.get(Record, ref['id'])
-        if not asset or asset.kind != 'asset':
-            raise StorageError('分镜绑定的参考素材不存在。')
-        frozen = snapshot_asset(db, asset, ref.get('version'))
-        if not any(binding['asset_id']==asset.id for binding in bindings):
-            bindings.append({'role': 'reference', 'asset_revision_id': frozen.id, **frozen.data})
+    if references is None:
+        for ref in refs:
+            asset = db.get(Record, ref['id'])
+            if not asset or asset.kind != 'asset':
+                raise StorageError('分镜绑定的参考素材不存在。')
+            frozen = snapshot_asset(db, asset, ref.get('version'))
+            if not any(binding['asset_id']==asset.id for binding in bindings):
+                bindings.append({'role': 'reference', 'asset_revision_id': frozen.id, **frozen.data})
     shot_ref = None
     if director and shot:
         data = {'schema_version': 1, 'story_id': director.data.get('source_id'),

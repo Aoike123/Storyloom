@@ -2,7 +2,7 @@ import hashlib
 
 import pytest
 
-from backend import model_access
+from backend import model_access, provider_usage
 from backend.db import Record, Session, Task, uid
 from backend.environment import model_config
 
@@ -98,6 +98,60 @@ def test_public_pool_reservations_are_independent_by_key(client, monkeypatch):
         assert {(row.data["kind"], row.data["reserved_cny"]) for row in rows} == {
             ("llm", "0.30"), ("image", "0.50"),
         }
+
+
+def test_video_reservation_scales_with_seconds_and_rejected_calls_are_refunded(client, monkeypatch):
+    """A short clip must not cost a whole flat reservation, and a refused call must be returned."""
+    monkeypatch.setenv("PUBLIC_POOL_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_POOL_LLM_DAILY_BUDGET_CNY", "1.00")
+    monkeypatch.setenv("PUBLIC_POOL_IMAGE_DAILY_BUDGET_CNY", "1.00")
+    monkeypatch.setenv("PUBLIC_POOL_VIDEO_DAILY_BUDGET_CNY", "30.00")
+    monkeypatch.setenv("PUBLIC_POOL_VIDEO_RESERVE_CNY", "6.00")
+    monkeypatch.setenv("PUBLIC_POOL_VIDEO_RESERVE_PER_SECOND_CNY", "0.60")
+    for name in ("LLM_API_KEY", "IMAGE_API_KEY", "VIDEO_API_KEY"):
+        monkeypatch.setenv(name, "operator-test-key")
+    monkeypatch.setattr(model_access, "_deepseek_balance", lambda *_args, **_kwargs: {"state": "verified", "available": True})
+
+    created = client.post("/api/model-access/sessions", json={"mode": "public"}).json()
+    access_id = model_access.resolve_access_token(created["token"])
+    with model_access.access_scope(access_id):
+        assert model_access.authorize_call("video", 5)["reserved_cny"] == "3.00"
+        assert model_access.authorize_call("video", 15)["reserved_cny"] == "6.00"
+        video = next(item for item in model_access.public_pool_status(refresh=False)["providers"] if item["kind"] == "video")
+        assert video["used_cny"] == "9.00"
+        # 30.00 - 9.00 used = 21.00 remaining, at the typical 8-second clip reserve of 4.80.
+        assert video["reserve_cny"] == "4.80" and video["calls_affordable"] == 4
+        assert model_access.release_public_call("video", "3.00")
+    with Session() as db:
+        row = db.get(Record, model_access._pool_record_id(model_access._pool_day(), "video"))
+        assert row.data["reserved_cny"] == "6.00"
+    # Releasing more than was reserved must not create a negative budget.
+    model_access.release_public_call("video", "99.00")
+    with Session() as db:
+        row = db.get(Record, model_access._pool_record_id(model_access._pool_day(), "video"))
+        assert row.data["reserved_cny"] == "0.00"
+
+
+def test_rejected_provider_call_refunds_the_public_reservation(client, monkeypatch):
+    monkeypatch.setenv("PUBLIC_POOL_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_POOL_LLM_DAILY_BUDGET_CNY", "1.00")
+    monkeypatch.setenv("PUBLIC_POOL_IMAGE_DAILY_BUDGET_CNY", "1.00")
+    monkeypatch.setenv("PUBLIC_POOL_VIDEO_DAILY_BUDGET_CNY", "30.00")
+    for name in ("LLM_API_KEY", "IMAGE_API_KEY", "VIDEO_API_KEY"):
+        monkeypatch.setenv(name, "operator-test-key")
+    monkeypatch.setattr(model_access, "_deepseek_balance", lambda *_args, **_kwargs: {"state": "verified", "available": True})
+
+    created = client.post("/api/model-access/sessions", json={"mode": "public"}).json()
+    access_id = model_access.resolve_access_token(created["token"])
+    with model_access.access_scope(access_id):
+        access = model_access.authorize_call("image")
+        assert access["reserved_cny"] == "0.50"
+        entry = provider_usage.begin("image", "test-model", "task-1", access)
+        provider_usage.finish(entry, status="rejected")
+        assert model_access.public_pool_status(refresh=False)["providers"][1]["used_cny"] == "0.00"
+        # A repeated rejection record must not refund twice.
+        provider_usage.finish(entry, status="rejected")
+        assert model_access.public_pool_status(refresh=False)["providers"][1]["used_cny"] == "0.00"
 
 
 def test_provider_failure_only_blocks_its_own_shared_key(client, monkeypatch):

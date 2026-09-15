@@ -12,6 +12,8 @@ from .providers import ProviderError,ModelOutputError
 
 ROOT=Path(__file__).with_name('node_skills')
 MODEL_OUTPUT_RETRIES=3
+# One task can be resumed many times; keep the newest calls of each node trace only.
+TRACE_LIMIT=40
 
 
 def _read(path):
@@ -76,8 +78,11 @@ def _start(task_id,node,attempt=0):
         task.payload={**task.payload,'node_skill_pins':{**pins,node:binding}}
         key='skill_trace_'+task_id;record=db.get(Record,key)
         calls=list(record.data['calls']) if record else []
-        index=len(calls);calls.append({**public(binding),'status':'running','started_at':time.time(),
+        calls.append({**public(binding),'status':'running','started_at':time.time(),
             'output_attempt':attempt+1,'retry_number':attempt})
+        calls=calls[-TRACE_LIMIT:]
+        # Trimming keeps the index of the entry this call just appended.
+        index=len(calls)-1
         if record:record.data={'calls':calls}
         else:db.add(Record(id=key,kind='node_skill_trace',data={'calls':calls}))
         return binding,index

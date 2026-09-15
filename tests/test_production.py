@@ -13,29 +13,36 @@ def setup(db):
 
 
 def test_video_requires_review_and_repeated_click_reuses_task(client,monkeypatch):
-    with Session.begin() as db:setup(db)
+    with Session.begin() as db:
+        setup(db)
+        db.add(Record(id='ref',kind='asset',data={'name':'人物参考','status':'pending','media':'/media/test.png'}))
+        db.add(Record(id='visual_director_prod',kind='visual_config',data={'approved':True,'director_version':3,
+            'bindings':{'S01':['ref']},'asset_versions':{'ref':1}}))
     monkeypatch.setattr(p,'settings',lambda:{'paid_enabled':True,'video_configured':True,'editable':{'VIDEO_PROVIDER':'minimax'}})
-    monkeypatch.setattr(p,'local_frame_data',lambda media:'validated')
-    monkeypatch.setattr(p,'ready',lambda *a,**k:(None,None,True))
     body={'version':3,'confirm_paid':True}
     path='/api/production/director_prod/shots/S01/video'
-    assert client.post(path,json=body).status_code==422
-    with Session.begin() as db:db.get(Record,'image_asset').data={'status':'approved','media':'/media/test.png'}
+    assert client.post(path,json=body).status_code==409
+    with Session.begin() as db:db.get(Record,'ref').data={'name':'人物参考','status':'approved','media':'/media/test.png'}
     first=client.post(path,json=body);assert first.status_code==200
     assert client.post(path,json=body).json()['id']==first.json()['id']
     assert client.post(path,json={**body,'version':2}).status_code==409
 
 
-def test_new_frame_revision_replaces_the_previous_shot_video(client,monkeypatch):
+def test_reference_change_replaces_the_previous_shot_video(client,monkeypatch):
     with Session.begin() as db:
         setup(db)
-        asset=db.get(Record,'image_asset');asset.data={**asset.data,'status':'approved'}
+        db.add(Record(id='ref',kind='asset',data={'name':'人物参考','status':'approved','media':'/media/test.png'}))
+        db.add(Record(id='visual_director_prod',kind='visual_config',data={'approved':True,'director_version':3,
+            'bindings':{'S01':['ref']},'asset_versions':{'ref':2}}))
         db.add(Task(id='old-video',kind='video',status='completed',created=1,payload={
             'input_mode':'reference_images','director_id':'director_prod','director_version':3,
-            'shot_id':'S01','asset_id':'image_asset','asset_version':0},result={'media':'/media/old.mp4'}))
+            'shot_id':'S01','reference_assets':{'ref':1}},result={'media':'/media/old.mp4'}))
     monkeypatch.setattr(p,'settings',lambda:{'paid_enabled':True,'video_configured':True,'editable':{'VIDEO_PROVIDER':'minimax'}})
-    monkeypatch.setattr(p,'local_frame_data',lambda media:'validated')
-    monkeypatch.setattr(p,'ready',lambda *a,**k:(None,None,True))
+    from backend.consistency import config as visual_config,stamp as visual_stamp
+    with Session.begin() as db:
+        db.get(Record,'ref').version=2
+        token=visual_stamp(db,visual_config(db,'director_prod'))
+        db.get(Task,'old-video').payload={**db.get(Task,'old-video').payload,'consistency_stamp':token}
     response=client.post('/api/production/director_prod/shots/S01/video',json={'version':3,'confirm_paid':True})
     assert response.status_code==200,response.text
     with Session() as db:assert db.get(Task,response.json()['id']).payload['revision_of']=='old-video'
@@ -46,7 +53,7 @@ def test_review_publish_reader_and_pause_intent(client,monkeypatch,sample_video)
     shutil.copyfile(sample_video,DATA/'media'/'prod.mp4')
     monkeypatch.setattr(p,'ready',lambda *a,**k:(None,'test',True))
     monkeypatch.setattr(p,'matching',lambda t,pid,v,sid=None,token=None:t.payload.get('director_id')==pid and t.payload.get('director_version')==v)
-    monkeypatch.setattr(p,'validate_frame',lambda *a:None)
+    monkeypatch.setattr(p,'validate_references',lambda *a:None)
     with Session.begin() as db:
         setup(db)
         db.add(Record(id='prod_clip',kind='clip',data={'duration':5,'media':'/media/prod.mp4','status':'pending'}))
@@ -72,4 +79,4 @@ def test_old_version_outputs_do_not_enter_new_workspace(client):
         setup(db)
         db.get(Record,'director_prod').version=4
     shot=client.get('/api/production/director_prod').json()['shots'][0]
-    assert shot['asset'] is None and shot['image_task'] is None
+    assert shot['video_task'] is None and shot['clip'] is None

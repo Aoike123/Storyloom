@@ -84,3 +84,29 @@ WORKFLOWS['author-brainstorm-v6']={
         {'id':'rendering','name':'漫剧生成','executor':'author_render','depends_on':['storyboarding'],'modules':['frames','video'],'output':'已保存的镜头参考图与视频片段'},
     ],
 }
+
+def _cut_modules(modules):
+    """Insert the micro-fiction cutting node before the per-segment storyboard node."""
+    # The shot-reference-image module is gone, so the video module depends on the reviewed
+    # storyboard instead of a step that no longer exists.
+    ordered=[{**module, **({'depends_on':['board_review']} if module['id']=='video' else {})}
+             for module in modules if module['id']!='frames']
+    position=next(index for index,module in enumerate(ordered) if module['id']=='board')
+    return [*ordered[:position],
+            {'id':'segments','name':'微小说片段切割','executor':'director','skill_node':'story_segments','depends_on':['author_assets']},
+            {'id':'board','name':'按片段分块规划镜头','executor':'director','skill_node':'storyboard','depends_on':['segments']},
+            *[module for module in ordered[position+1:] if module['id']!='board']]
+
+
+WORKFLOWS['author-brainstorm-v7']={
+    **WORKFLOWS['author-brainstorm-v6'],
+    'name':'脑洞 · 微小说切割后分块分镜','node_skill_version':'1.8.0','video_input_mode':'reference_images',
+    'segmentation_node':'story_segments',
+    'limits':['先按原文把微小说切成连续片段，再逐片段规划镜头；全部片段合计不超过 24 镜',
+              '独立配音和混音尚未实现','视觉一致性尚无自动视觉模型验收','读者分支只复用当前场景、人物与着装，真实视觉命中仍需样片验收'],
+    'modules':_cut_modules(WORKFLOWS['author-brainstorm-v6']['modules']),
+    'production_coordinators':[
+        {'id':'storyboarding','name':'分镜生成','executor':'author_storyboard','modules':['segments','board','shot_prompts','board_review'],'output':'先切割微小说，再逐片段分块生成并合并的分镜、镜头提示词与文本预审'},
+        {'id':'rendering','name':'漫剧生成','executor':'author_render','depends_on':['storyboarding'],'modules':['video'],'output':'以已审核参考图直接生成的视频片段'},
+    ],
+}

@@ -41,7 +41,12 @@ def _write_stitched_reference(left,right,destination):
 
 
 def stitch_character_costume_reference(db,identity_asset,costume_asset,name):
-    """Create/reuse one deterministic, non-AI reference file for a reviewed identity+costume pair."""
+    """Create/reuse one deterministic reference file for a reviewed identity+costume pair.
+
+    The board is produced by the local image tool (both reviewed pictures pasted side by side on
+    a neutral board) and recorded with ``derived_without_model``. No image generation or editing
+    API is called, and the source pictures are never modified.
+    """
     for asset in (identity_asset,costume_asset):
         if not asset or asset.kind!='asset' or asset.data.get('status')!='approved':
             raise HTTPException(409,'人物与服装图片尚未审核，不能制作拼接参考板。')
@@ -149,4 +154,4 @@ def validate_shot_identities(ids,assets):
     for character in characters:
         selected=[costume for costume in costumes if assets[costume].get('identity_asset_id')==character]
         if assets[character].get('requires_costume') and len(selected)!=1:
-            raise HTTPException(422,'每位入镜人物必须绑定自己的一张独立服装图；不要为三图上限省略服装，调用方会仅在超限时条件拼接，拼接后仍超限才拆镜。')
+            raise HTTPException(422,f'每位入镜人物必须绑定自己的一张独立服装图；不要为数量上限省略服装。调用方只在完整绑定超过每镜上限时，用本地图像工具拼接该角色的身份与服装参考板，不调用生图或改图接口；拼接后仍超限才拆镜。')

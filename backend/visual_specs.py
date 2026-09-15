@@ -4,14 +4,21 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
 
+# Words that turn a physical attribute into narration, mood, causality or a guess. The validator
+# names the offending word so the next model attempt can fix it instead of guessing at synonyms.
+_NARRATIVE_WORDS=re.compile(
+    r'^[我你他她它]|[。！？!?\r\n“”「」]|因为|所以|为了|于是|然后|随后|从而|仿佛|好像|似乎|大概|可能|建议|不详|未知|未提供|未明确|或|体现|象征|暗示|寓意|剧情|故事|观众|弹幕|直播|台词|分镜|蒙太奇|主观视角|失焦|信息差|击飞|挥手|拥抱|打斗|攻击|斥责|护住|逃跑|走进|站在|荒诞|温馨|惊悚|恐怖|性感|气质|氛围|主角|角色|风格|一样|看起来|略显|普通')
+_NARRATIVE_WORDS_EN=re.compile(r'\b(maybe|perhaps|story|narrative|viewer|audience|dialogue|storyboard|symbolize|attacking)\b',re.I)
+
+
 def static_phrase(value):
     value=value.strip()
     if not value:
         raise ValueError('静态物理属性不能为空')
-    if re.search(r'^[我你他她它]|[。！？!?\r\n“”「」]|因为|所以|为了|于是|然后|随后|从而|仿佛|好像|似乎|大概|可能|建议|不详|未知|未提供|未明确|或|体现|象征|暗示|寓意|剧情|故事|观众|弹幕|直播|台词|分镜|蒙太奇|主观视角|失焦|信息差|击飞|挥手|拥抱|打斗|攻击|斥责|护住|逃跑|走进|站在|荒诞|温馨|惊悚|恐怖|性感|气质|氛围|主角|角色|风格|一样|看起来|略显|普通',value):
-        raise ValueError('只允许明确的静态物理属性，不能包含剧情、情绪、因果或不确定表达')
-    if re.search(r'\b(maybe|perhaps|story|narrative|viewer|audience|dialogue|storyboard|symbolize|attacking)\b',value,re.I):
-        raise ValueError('只允许明确的静态物理属性')
+    match=_NARRATIVE_WORDS.search(value) or _NARRATIVE_WORDS_EN.search(value)
+    if match:
+        raise ValueError(f'静态物理属性里出现了「{match.group(0)}」，它属于剧情、情绪、因果或不确定表达；'
+                         f'请把「{value}」改为能直接画出的静态形状、颜色、材质或尺寸。')
     return value
 
 

@@ -1,5 +1,5 @@
 {
-  "version": "1.7.0",
+  "version": "1.8.0",
   "nodes": {
     "style_options": {
       "title": "电影视觉风格提案",
@@ -237,6 +237,38 @@
       ],
       "adapter": "adapters/asset-prompts/SKILL.md"
     },
+    "story_segments": {
+      "title": "微小说片段切割",
+      "mode": "llm",
+      "schema": "SegmentPlan",
+      "inputs": [
+        "source",
+        "source_passages",
+        "brief",
+        "treatment",
+        "shot_limit",
+        "schema"
+      ],
+      "sources": [
+        {
+          "bundle": "film",
+          "skill": "shape-story-blueprint",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        },
+        {
+          "bundle": "film",
+          "skill": "structure-screenplay",
+          "sections": [
+            "Workflow",
+            "Boundaries"
+          ]
+        }
+      ],
+      "adapter": "adapters/story-segments/SKILL.md"
+    },
     "storyboard": {
       "title": "专业镜头规划",
       "mode": "llm",
@@ -247,6 +279,10 @@
         "treatment",
         "brief",
         "preproduction",
+        "segment",
+        "segment_outline",
+        "previous_segment",
+        "next_segment",
         "schema"
       ],
       "sources": [
@@ -523,31 +559,6 @@
         }
       ],
       "adapter": "adapters/scene-trial/SKILL.md"
-    },
-    "frame_render": {
-      "title": "镜头参考图生成请求编排",
-      "mode": "template",
-      "inputs": null,
-      "schema": null,
-      "sources": [
-        {
-          "bundle": "film",
-          "skill": "compile-generation-prompts",
-          "sections": [
-            "Workflow",
-            "Boundaries"
-          ]
-        },
-        {
-          "bundle": "replicate",
-          "skill": "prompt-images",
-          "sections": [
-            "Character consistency",
-            "Image editing"
-          ]
-        }
-      ],
-      "adapter": "adapters/frame-render/SKILL.md"
     },
     "video_render": {
       "title": "图片参考视频请求编排",

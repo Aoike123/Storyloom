@@ -3,7 +3,7 @@ from backend.app import app
 from backend.db import Session,Record,Task,DATA
 from backend import authors,creative as c,worker,director as d,preproduction as pp
 from test_creative import creative,drain
-from test_director import board
+from test_director import board,segment_plan
 from test_catalog import story_api
 from backend.production_nodes import KINDS as PRODUCTION_KINDS
 
@@ -50,7 +50,7 @@ def test_author_flow_stops_only_for_assets_and_film(creative,monkeypatch,sample_
     packed=[aid for aid,spec in pre['assets'].items() if spec['role']=='character' and spec.get('costume_asset_id')]
     assert packed==[]
     for shot in b['shots']:shot['assets']=[identity,costume,scene]
-    answers=iter([b,{'shots':[{k:s[k] for k in ('id','first_frame','motion_prompt')} for s in b['shots']]},{'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'}])
+    answers=iter([segment_plan(),b,{'shots':[{k:s[k] for k in ('id','first_frame','motion_prompt')} for s in b['shots']]},{'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'}])
     monkeypatch.setattr(d,'chat_json',lambda *args:(next(answers),{}))
     # Advance supervisor leases without sleeping or calling any paid provider.
     from sqlalchemy import select

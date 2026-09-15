@@ -9,5 +9,5 @@ def completed_message(payload):
     if kind=='scene_sheet':return '场景参考图已保存，确认后用于空间、布局与光照参考。'
     if kind=='dressed_character':return '定装参考图已保存，确认后用于试拍、分镜与视频参考。'
     if payload.get('preproduction_id'):return '组合试拍参考图已保存，请检查人物、服装和场景的一致性。'
-    if payload.get('director_id'):return '镜头参考图已保存，确认后作为视频的画面参考。'
+    if payload.get('director_id'):return '历史镜头参考图已保存，仅作记录保留。'
     return '参考图片已保存，请审核后用于后续制作。'

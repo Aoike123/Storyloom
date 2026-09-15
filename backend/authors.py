@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from .db import Session, Record, Task, uid, record_dict, task_dict, generation_debug
+from .db import HISTORY_LIMIT, Session, Record, Task, uid, record_dict, task_dict, generation_debug
 from . import creative, director
 from . import zhihu_stories
 from .catalog import labels
@@ -46,7 +46,7 @@ def open_story(work_id: str):
             with Session.begin() as db:
                 db.add(Record(id=pid, kind='author_project', data={
                     'title': selected.get('title') or source['title'], 'source_id': source['id'],
-                    'zhihu_work_id': work_id, 'stage': 'style', 'workflow': 'author-brainstorm-v4',
+                    'zhihu_work_id': work_id, 'stage': 'style', 'workflow': 'author-brainstorm-v7',
                     'source_warning': imported.get('warning') if imported.get('stale') else None,
                 }))
     return workspace(pid)
@@ -76,6 +76,10 @@ def workspace(pid: str):
         data['retryable_images'] = retryable_images(db,row)
         director_version=db.get(Record,sid).version if sid and db.get(Record,sid) else None
         data['outputs'] = completed_outputs(tasks,sid,director_version)
+        current=db.get(Record,sid) if sid else None
+        data['segments']=current.data.get('segments') if current else None
+        repairs=current.data.get('board_repairs') if current else None
+        data['board_repairs']=repairs if repairs else None
     data['creative'] = creative.workspace(sid) if sid else None
     data['display_stage']=data['stage']
     if data['stage'] in ('producing','compositing') and data['creative']:
@@ -160,7 +164,7 @@ class ImageRetry(BaseModel):
 @router.post('/projects/{pid}/images/{tid}/retry')
 def retry_image(pid:str,tid:str,body:ImageRetry):
     """Retry one rejected base image, keeping the approved design and other images."""
-    creative.paid(body)
+    creative.paid(body,'image')
     with attempt_lock,Session.begin() as db:
         row=get_work(db,pid)
         if tid not in {item['task_id'] for item in retryable_images(db,row)}:
@@ -191,7 +195,7 @@ def redesign(pid:str,body:Start):
         row=get_work(db,pid)
         if row.data['stage']!='assets_review':raise HTTPException(409,'当前不在人物与场景确认阶段。')
         creative.redesign(db,row.data['director_id'],body)
-        row.data={**row.data,'art':body.art,'tone':body.tone,'workflow':'author-brainstorm-v4'}
+        row.data={**row.data,'art':body.art,'tone':body.tone,'workflow':'author-brainstorm-v7'}
         schedule(db,row,'preparing')
     return {'queued':True}
 
@@ -203,7 +207,7 @@ def recommend(pid: str, body: creative.Publish):
         old=db.get(Task,row.data.get('recommend_task',''))
         if old and old.status in creative.BUSY: return task_dict(old)
         source=db.get(Record,row.data['source_id'])
-        creative.paid(creative.Style(art='推荐画风',tone='依据原著',confirm_paid=True))
+        creative.paid(creative.Style(art='推荐画风',tone='依据原著',confirm_paid=True),'llm')
         task=Task(id=uid('styles'),kind='author_styles',message='已加入队列，等待模型开始构思',payload={'mode':'live','source':source.data['content'],'work_id':pid})
         db.add(task);row.data={**row.data,'recommend_task':task.id};db.flush();return task_dict(task)
 
@@ -325,7 +329,11 @@ class NodeRetry(BaseModel):
 
 @router.post('/projects/{pid}/retry-node')
 def retry_node(pid:str,body:NodeRetry):
-    creative.paid(body)
+    with Session() as db:
+        row=get_work(db,pid)
+    # A retry re-runs the node that failed, so only that node's providers are required.
+    phase=row.data.get('stage')
+    creative.paid(body,*(('video',) if phase=='rendering' else ('llm',)))
     with attempt_lock,Session.begin() as db:
         row=get_work(db,pid)
         task=retry_current_node(db,row)
@@ -340,7 +348,11 @@ def schedule(db, row, phase):
 
 @router.post('/projects/{pid}/start')
 def start(pid: str, body: Start):
-    creative.paid(body)
+    creative.paid(body,'llm','image')
+    # Shared-pool visitors get a bounded number of films per day so later visitors still have budget.
+    from .model_access import claim_public_film
+    refusal=claim_public_film()
+    if refusal:raise HTTPException(429,refusal)
     with attempt_lock,Session.begin() as db:
         row = get_work(db, pid)
         if row.data['stage'] != 'style' and not body.restart: raise HTTPException(409, '制作已开始')
@@ -352,6 +364,7 @@ def start(pid: str, body: Start):
         previous_id=row.data.get('director_id')
         if row.data.get('director_id') or row.data.get('supervisor'):
             history.append({k:row.data.get(k) for k in ('run_id','stage','art','tone','director_id','supervisor','release_id','production_nodes') }|{'saved_at':time.time(),'invalidated_from':body.restart_from,'superseded_by_run':run_id})
+            history=history[-HISTORY_LIMIT:]
         if previous_id:
             previous=db.get(Record,previous_id)
             if previous:
@@ -361,7 +374,7 @@ def start(pid: str, body: Start):
                 if release.data.get('director_id')==previous_id or release.id==row.data.get('release_id'):
                     release.data={**release.data,'status':'superseded','superseded_by_run':run_id};release.version+=1
         data={k:v for k,v in row.data.items() if k not in ('director_id','supervisor','release_id','assets_confirmed_at','production_nodes')}
-        row.data = {**data,'attempt_history':history,'run_id':run_id, 'art': body.art, 'tone': body.tone, 'workflow':'author-brainstorm-v6'}
+        row.data = {**data,'attempt_history':history,'run_id':run_id, 'art': body.art, 'tone': body.tone, 'workflow':'author-brainstorm-v7'}
         schedule(db, row, 'preparing')
     return {'queued': True}
 
@@ -371,7 +384,7 @@ class Confirm(BaseModel):
 
 @router.post('/projects/{pid}/generate')
 def generate(pid: str, body: Confirm):
-    creative.paid(body)
+    creative.paid(body,'llm')
     if not body.confirm: raise HTTPException(422, '请确认人物和场景图片满意')
     with attempt_lock,Session.begin() as db:
         row = get_work(db, pid)

@@ -5,7 +5,7 @@ from fastapi import APIRouter,HTTPException
 from pydantic import BaseModel,Field,ValidationError
 from sqlalchemy import select
 from .db import Session,Record,Task,uid,record_dict,task_dict
-from .providers import chat_json,settings,ProviderError,ModelOutputError
+from .providers import chat_json,payment_message,settings,ProviderError,ModelOutputError
 from . import preproduction as prep, director as director, consistency as visual, production
 from . import asset_sheets
 from .skill_runtime import call_node
@@ -30,12 +30,19 @@ class Style(BaseModel):
     tone:str=Field(min_length=2,max_length=300)
     confirm_paid:bool=False
 
-def paid(body):
-    if not body.confirm_paid or not settings()['paid_enabled']:raise HTTPException(422,'请确认本次制作调用模型产生的费用。')
+def paid(body,*kinds):
+    """Gate a step on the providers it actually needs.
+
+    Gating on all three providers meant a spent video budget blocked text-only steps with a
+    message about confirming fees, even though the visitor had confirmed them.
+    """
+    if not body.confirm_paid:raise HTTPException(422,'请确认本次制作调用模型产生的费用。')
+    message=payment_message(*(kinds or ('llm','image','video')),cfg=settings())
+    if message:raise HTTPException(422,message)
 
 @router.post('/{pid}/design')
 def design(pid:str,body:Style):
-    paid(body)
+    paid(body,'llm','image')
     with Session.begin() as db:
         p=get_project(db,pid);no_active(db,pid)
         if not p.data.get('treatment'):raise HTTPException(409,'请先完成导演阐述。')
@@ -49,7 +56,7 @@ def design(pid:str,body:Style):
 
 def redesign(db,pid,body):
     """Replace the initial asset plan while preserving previous images and prompts."""
-    paid(body);p=get_project(db,pid);no_active(db,pid);run=get_run(db,pid)
+    paid(body,'llm','image');p=get_project(db,pid);no_active(db,pid);run=get_run(db,pid)
     if run.data['stage']!='assets_review':raise HTTPException(409,'仅可在初次人物与场景确认阶段重做设定图。')
     original=db.get(Task,p.data['task_id'])
     task=Task(id=uid('art'),kind='art_design',payload={'mode':'live','creative_id':pid,
@@ -176,6 +183,8 @@ def resume_saved_storyboard(db,pid):
         repaired,changes=director.repair_board_causality(board)
         content=child.payload.get('source',{}).get('content','')
         if not content:raise HTTPException(409,'已保存的分镜任务缺少对应原文，不能安全复用，请重新运行当前节点。')
+        # The saved board carries quotes that were already replaced by real passages, so the
+        # strict invention check applies only to freshly generated boards.
         director.bind_sources(repaired.shots,director.source_passages(content),'source_quote')
         structural_issues=director.check_board(repaired,content)
         if structural_issues:
@@ -435,9 +444,20 @@ class Continue(BaseModel):
     confirm_review:bool=False
     confirm_paid:bool=False
 
+
+# Which providers one continuation actually spends, so a spent budget elsewhere cannot block it.
+ADVANCE_KINDS={
+    'assets_review':('llm','image'),
+    'fittings_review':('image',),
+    'trials_review':('llm','image'),
+    'samples_review':('video',),
+    'frames_review':('video',),
+}
+
+
 @router.post('/{pid}/continue')
 def advance(pid:str,body:Continue,automatic:bool=False):
-    paid(body)
+    paid(body,*ADVANCE_KINDS.get(body.stage,('llm','image','video')))
     if not body.confirm_review:raise HTTPException(422,'请先查看本页全部图片，确认满意后继续。')
     with Session() as db:
         p=get_project(db,pid);r=get_run(db,pid);stage=r.data['stage'];data=dict(r.data)
@@ -482,20 +502,9 @@ def advance(pid:str,body:Continue,automatic:bool=False):
         finish_composites(pid,automatic)
         start_storyboard_stage(pid)
     elif stage in ('samples_review','frames_review'):
-        run=production.workspace(pid);shots=run['shots'];v=visual.get_config(pid);sample_ids=v['config']['samples']
-        target=[s for s in shots if stage=='frames_review' or s['shot']['id'] in sample_ids]
-        with Session.begin() as db:
-            ids=[image_asset(db,s['image_task']['id']).id for s in target if s['image_task']]
-            if len(ids)!=len(target):raise HTTPException(409,'还有画面未生成。')
-            approve_images(db,ids,automatic)
-        if stage=='samples_review':
-            visual.approve_samples(pid,visual.Gate(stamp=v['stamp'],confirm=True,note='自动工作流通过参考资产版本检查；不代表人工视觉检查' if automatic else '管理员看过三镜画面，确认人物与场景连续性满意'))
-            for s in shots:
-                if not s['image_task']:director.frame(pid,s['shot']['id'],director.Frame(version=run['version'],confirm_paid=True))
-            save_run(pid,stage='frames_review')
-        else:
-            for s in shots:production.generate_video(pid,s['shot']['id'],production.Command(version=run['version'],confirm_paid=True))
-            save_run(pid,stage='videos_review')
+        # Legacy rounds stopped at the removed shot-reference-image step; continue with the
+        # reviewed base references instead of rendering any intermediate picture.
+        start_reference_videos(pid)
     else:raise HTTPException(409,'当前阶段不能继续。')
     return {'stage':get_status(pid)}
 
@@ -543,12 +552,15 @@ def prepare_reference_inputs(pid):
 def start_storyboard_stage(pid):
     with Session() as db:
         version=db.get(Record,pid).version
-        retry_feedback=get_run(db,pid).data.get('storyboard_retry_feedback')
+        saved=get_run(db,pid).data
+        retry_feedback=saved.get('storyboard_retry_feedback')
+        reuse_chunks=bool(saved.get('storyboard_reuse_chunks'))
     child=director.start_storyboard(pid,director.BoardStart(
-        version=version,confirm_paid=True,retry_feedback=retry_feedback))
+        version=version,confirm_paid=True,retry_feedback=retry_feedback,reuse_saved_chunks=reuse_chunks))
     with Session.begin() as db:
         w=Task(id=uid('watch'),kind='creative_watch',payload={'mode':'live','creative_id':pid,'child':child['task']['id'],'step':'board'})
-        db.add(w);r=get_run(db,pid);data={key:value for key,value in r.data.items() if key!='storyboard_retry_feedback'}
+        db.add(w);r=get_run(db,pid)
+        data={key:value for key,value in r.data.items() if key not in ('storyboard_retry_feedback','storyboard_reuse_chunks')}
         r.data={**data,'stage':'storyboarding','watch':w.id}
 
 def get_status(pid):
@@ -567,17 +579,18 @@ def run_watch(task_id,payload):
     approved=director.approve(pid,director.Approve(version=version,confirm=True,note='系统分镜结构与模型文本预审通过；后续图片仍须管理员审核'))
     pre=prep.get(pid)['config']
     old=visual.get_config(pid)['config']
-    visual.save(pid,visual.Visual(expected_version=old['version'] if old else 0,director_version=approved['version'],style=pre['style'],bindings={s.id:s.assets for s in board.shots},states={s.id:s.continuity_in+' → '+s.continuity_out for s in board.shots},samples=[s.id for s in board.shots[:3]],approved=True))
+    visual.save(pid,visual.Visual(expected_version=old['version'] if old else 0,director_version=approved['version'],style=pre['style'],bindings={s.id:s.assets for s in board.shots},states={s.id:s.continuity_in+' → '+s.continuity_out for s in board.shots},approved=True))
     with Session() as db:split=get_run(db,pid).data.get('production_split',False)
     save_run(pid,stage='storyboard_ready')
-    if not split:start_reference_frames(pid)
+    if not split:start_reference_videos(pid)
     return True
 
-def start_reference_frames(pid):
+def start_reference_videos(pid):
+    """Generate every shot video directly from the reviewed project reference images."""
     run=production.workspace(pid)
-    for shot in run['shots'][:3]:
-        if not shot['image_task']:director.frame(pid,shot['shot']['id'],director.Frame(version=run['version'],confirm_paid=True))
-    save_run(pid,stage='samples_review')
+    for shot in run['shots']:
+        if not shot['video_task']:production.generate_video(pid,shot['shot']['id'],production.Command(version=run['version'],confirm_paid=True))
+    save_run(pid,stage='videos_review')
 
 class Feedback(BaseModel):
     task_id:str
@@ -585,7 +598,9 @@ class Feedback(BaseModel):
     confirm_paid:bool=False
 @router.post('/{pid}/feedback')
 def feedback(pid:str,body:Feedback):
-    paid(body)
+    # Revising a prompt calls the text model; the regenerated picture or clip is gated separately
+    # when its own task is submitted.
+    paid(body,'llm')
     with Session.begin() as db:
         get_project(db,pid);r=get_run(db,pid);no_active(db,pid)
         if r.data['stage']=='published':raise HTTPException(409,'已发布作品请归档并新建版本修改。')
@@ -655,7 +670,7 @@ def run_revision(task_id,p):
         items=[{**i,**changes,'task_id':t.id} if i['task_id']==p['target'] else i for i in r.data['items']]
         stage=r.data['stage']
         if kind=='image' and old_payload.get('director_id'):
-            c=visual.config(db,p['creative_id']);stage='samples_review' if old_payload['shot_id'] in c.data['samples'] else 'frames_review'
+            raise ProviderError('当前流程直接从已审核参考图生成视频，不再修改镜头参考图；请修改基础参考图或重新生成视频。')
         r.data={**r.data,'items':items,'stage':stage};r.version+=1
         current.result={**current.result,'task_id':t.id}
 

@@ -11,17 +11,20 @@ from backend.providers import ProviderError,ModelOutputError
 from backend.asset_sheets import StylePlan
 from backend.workflows import WORKFLOWS
 from test_creative import creative
-from test_director import board,TEXT
+from test_director import board,TEXT,segment_plan
 from asset_spec_fixtures import style,design_response
 
 
 def test_every_production_node_has_a_real_versioned_skill_binding(client):
     nodes={n['node']:n for n in client.get('/api/node-skills').json()['nodes']}
-    for module in WORKFLOWS['author-brainstorm-v3']['modules']:
+    for module in WORKFLOWS['author-brainstorm-v7']['modules']:
+        if not module.get('skill_node'):continue
         binding=nodes[module['skill_node']]
         assert binding['sources'] and len(binding['sha256'])==64
         assert all(len(source['commit'])==40 for source in binding['sources'])
         assert client.get('/api/node-skills/'+binding['node']).json()['effective_instructions']
+    assert 'frames' not in {module['id'] for module in WORKFLOWS['author-brainstorm-v7']['modules']}
+    assert 'frame_render' not in nodes
     assert nodes['film_review']['mode']=='human' and nodes['asset_review']['checklist']
     assert client.get('/api/node-skills/unknown').status_code==404
 
@@ -201,9 +204,11 @@ def test_shot_prompt_compiler_cannot_change_story_or_asset_bindings(monkeypatch)
         if kind=='ShotPromptBatch':return {'shots':[{'id':s['id'],'reference_prompt':'专业静态镜头参考图提示词','motion_prompt':'专业单镜运动提示词'} for s in original['shots']]},{}
         return {'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'},{}
     monkeypatch.setattr(d,'chat_json',chat)
-    result=d.run_director({'source':{'content':TEXT},'brief':'短场景','stage':'board','treatment':treatment,'professional_prompts':True},'direct-node',lambda key,value,progress:saved.update({key:value}))
+    result=d.run_director({'source':{'content':TEXT},'brief':'短场景','stage':'board','treatment':treatment,'professional_prompts':True,
+                           'segments':segment_plan()},'direct-node',lambda key,value,progress:saved.update({key:value}))
     assert seen==['Board','ShotPromptBatch','Review'] and result['approved']
+    unchanged=('reference_prompt','motion_prompt','segment_id')
     for before,after in zip(d.Board.model_validate(original).model_dump()['shots'],saved['board']['shots']):
-        assert {k:v for k,v in before.items() if k not in ('reference_prompt','motion_prompt')}=={k:v for k,v in after.items() if k not in ('reference_prompt','motion_prompt')}
+        assert {k:v for k,v in before.items() if k not in unchanged}=={k:v for k,v in after.items() if k not in unchanged}
         assert after['reference_prompt']=='专业静态镜头参考图提示词'
     assert saved['board_plan']

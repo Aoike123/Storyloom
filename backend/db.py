@@ -110,6 +110,17 @@ def enforce_public_task_capacity(db, _flush_context, _instances):
 def uid(prefix):
     return f'{prefix}_{uuid.uuid4().hex[:16]}'
 
+
+# Append-only histories are capped so a long-running demo cannot grow one record without bound.
+HISTORY_LIMIT = 40
+EVENT_LIMIT = 200
+
+
+def bounded(items, item, limit):
+    """Keep the newest ``limit`` entries of a growing list."""
+    return [*list(items or []), item][-limit:]
+
+
 def record_dict(row):
     return {'id': row.id, 'version': row.version, **row.data}
 
@@ -156,7 +167,8 @@ def task_dict(row):
             'result': row.result, 'created': row.created, 'attempts': row.attempts,
             'mode': row.payload.get('mode', 'demo'), 'label': row.payload.get('title') or row.payload.get('shot_id'),
             'generation':generation_debug(row),'provider_error':task_error(row),'skill_calls':trace.data['calls'] if trace else [],
-            'activity': activity_data(row),'preview':preview,'revision_of':row.payload.get('revision_of')}
+            'activity': activity_data(row),'preview':preview,'revision_of':row.payload.get('revision_of'),
+            'failure_code':row.result.get('failure_code') if isinstance(row.result,dict) else None}
 
 def init_db():
     Base.metadata.create_all(engine)

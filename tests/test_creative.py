@@ -3,7 +3,7 @@ from PIL import Image
 from sqlalchemy import select
 from backend.db import Session,Record,Task,DATA
 from backend import creative as c,director as d,preproduction as pp,production as prod,worker
-from test_director import board,TEXT
+from test_director import board,TEXT,segment_plan
 from asset_spec_fixtures import design_response,character
 
 @pytest.fixture
@@ -19,6 +19,7 @@ def creative(client,monkeypatch):
     monkeypatch.setattr(c,'chat_json',design_response)
     monkeypatch.setattr(worker,'generate_image',lambda *a,**k:'https://example.test/image')
     monkeypatch.setattr(worker,'generate_from_references',lambda *a,**k:'https://example.test/image')
+    monkeypatch.setattr(worker,'submit_video',lambda *a,**k:'provider-video-task')
     def save(url,tid):
         Image.new('RGB',(256,256)).save(DATA/'media'/f'{tid}.png')
         return f'/media/{tid}.png'
@@ -43,17 +44,18 @@ def test_result_driven_production_keeps_image_gates(creative,monkeypatch):
     drain();assert client.get('/api/creative/pid').json()['stage']=='trials_review'
     prep=pp.get('pid')['config'];b=board()
     for shot in b['shots']:shot['assets']=list(prep['assets'])
-    answers=iter([b,{'shots':[{k:s[k] for k in ('id','first_frame','motion_prompt')} for s in b['shots']]},{'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'}])
+    answers=iter([segment_plan(),b,{'shots':[{k:s[k] for k in ('id','first_frame','motion_prompt')} for s in b['shots']]},{'approved':True,'issues':[],'continuity':'通过','dramatic_logic':'通过','editability':'通过','production_feasibility':'通过'}])
     monkeypatch.setattr(d,'chat_json',lambda *a:(next(answers),{}))
     assert advance(client,'trials_review').status_code==200
-    drain();data=client.get('/api/creative/pid').json()
-    assert data['stage']=='samples_review'
     with Session() as db:assert not list(db.scalars(select(Task).where(Task.kind=='video')))
-    assert advance(client,'samples_review').status_code==200
-    drain();assert advance(client,'frames_review').status_code==200
-    data=client.get('/api/creative/pid').json()
-    assert data['stage']=='videos_review'
+    drain();data=client.get('/api/creative/pid').json()
+    # 参考图直接生视频：分镜完成后立即创建视频任务，不再生成镜头参考图。
+    with Session() as db:
+        failures=[(t.kind,t.status,t.message) for t in db.scalars(select(Task)) if t.status in ('failed','needs_review')]
+    assert data['stage']=='videos_review',failures
     assert len([s for s in data['production']['shots'] if s['video_task']])==4
+    with Session() as db:
+        assert not [t for t in db.scalars(select(Task).where(Task.kind=='image')) if t.payload.get('director_id')]
 
 def test_natural_language_revision_retains_old_image(creative,monkeypatch):
     client=creative

@@ -391,6 +391,8 @@ def run_plan(task_id, payload):
         for item in references:
             verify_file(item['file'])
         release = _release(db, branch.data['release_id'])
+        visual=db.get(Record,'visual_'+release.data.get('director_id',''))
+        branch_style=visual.data.get('style') if visual else None
         tasks = []
         for index, shot in enumerate(plan.shots):
             shot_references = copy.deepcopy(references)
@@ -411,7 +413,12 @@ def run_plan(task_id, payload):
                 + f'必须清楚呈现的因果结果：{shot.causal_result}。结束状态：{shot.continuity_out}。'
                   '全程只使用参考图内已有的场景、人物和服装；不得换装、转场、增加人物或创造新视觉元素。'
             )
-            rendered = render_node('video_render', {'motion': motion, 'references': reference_description})
+            continuity = ' '.join(part for part in (
+                f'入口连续性：{shot.continuity_in}' if shot.continuity_in else '',
+                f'结束状态：{shot.continuity_out}' if shot.continuity_out else '') if part)
+            rendered = render_node('video_render', {'composition': continuity, 'motion': motion,
+                                                    'references': reference_description,
+                                                    'style': f'统一视觉：{branch_style}' if branch_style else '统一视觉：沿用所附参考图的既有画风。'})
             task = Task(id=uid('branchvideo'), kind='video', created=time.time() + index * 0.001, payload={
                 'mode': 'live', 'input_mode': 'reference_images', 'title': '读者分支 ' + shot.id,
                 'reader_branch_id': branch.id, 'reader_branch_version': branch.data['branch_version'],

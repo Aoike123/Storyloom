@@ -65,11 +65,22 @@ or model ids.
 Set `PUBLIC_POOL_LLM_DAILY_BUDGET_CNY`,
 `PUBLIC_POOL_IMAGE_DAILY_BUDGET_CNY`, and
 `PUBLIC_POOL_VIDEO_DAILY_BUDGET_CNY` to the maximum amounts Storyloom may
-reserve from the corresponding operator key each Shanghai calendar day. The
-three `PUBLIC_POOL_*_RESERVE_CNY` values are conservative per-submission
-estimates, not provider invoices. Every attempted provider submission keeps its
-reservation, even if the provider later rejects it, so each local cap fails
-closed rather than overspending from that key.
+reserve from the corresponding operator key each Shanghai calendar day.
+
+The video daily budget must cover **every shot of one film**, or the demo stops
+halfway through a story. A clip reserves
+`PUBLIC_POOL_VIDEO_RESERVE_PER_SECOND_CNY × VIDEO_DURATION`, floored by
+`PUBLIC_POOL_VIDEO_RESERVE_FLOOR_CNY` and capped by `PUBLIC_POOL_VIDEO_RESERVE_CNY`.
+With the defaults (0.60/s, floor 1.00, cap 6.00, 8 s clips) one clip reserves
+4.80, so a 6-shot film needs about 28.80 of video budget before retries. Start
+from `shot count × per-clip reserve × 1.3` and round up.
+
+`PUBLIC_POOL_LLM_RESERVE_CNY` and `PUBLIC_POOL_IMAGE_RESERVE_CNY` stay flat per
+submission. These are conservative estimates, not provider invoices. A provider
+that rejects the request (HTTP 4xx) refunds its reservation; a timeout or 5xx
+keeps it, because that call may still be billed. In shared-pool mode the cutting
+step caps a film's total shot count to what the remaining daily budget can pay
+for, and refuses to start a film when fewer than four shots are affordable.
 
 DeepSeek exposes an official balance endpoint, so the pool verifies that account
 before it can be selected. SiliconFlow retired its `/user/info` balance endpoint
@@ -88,12 +99,27 @@ or waiting generation tasks globally. `/api/health` is exempt. Adjust
 `PUBLIC_MAX_ACTIVE_TASKS` in `.env.production` only after observing real usage.
 The request limiter is deliberately local to the single API container; use a
 CDN/WAF or shared rate-limit service before scaling to multiple API replicas.
+Only the reverse-proxy network may set `X-Forwarded-For`
+(`STORYLOOM_TRUSTED_PROXY`, default `172.28.0.0/16`, matching
+`STORYLOOM_NETWORK_SUBNET`). Trusting every peer would let a visitor forge a new
+client address and reset its own per-IP limit. If you change the Compose subnet,
+change both values together.
 
 The Compose file also caps memory, CPU, and process counts per container so one
 runaway service is less likely to take down the host. These defaults are tuned
 for the documented small server. Generated media still consumes the system disk
 and outbound bandwidth, so monitor both and move media to object storage/CDN
 before inviting sustained traffic.
+
+## Diagnosing a failed run
+
+A failed task shows a short code such as `E-1A2B3C` in its progress message. On
+the server (local mode) `GET /api/diagnostics/E-1A2B3C` returns the full
+traceback, stage and non-secret context; in public demo mode that endpoint
+returns 404 so visitors never receive stack traces or provider bodies. Failed
+production nodes retry themselves once, reusing already-validated results, and
+then wait for a person. See [制作流程的安全不变量](pipeline-safety.md) for the
+full list of invariants.
 
 If Docker Hub is unreachable from a mainland China server, set
 `DOCKER_HUB_PREFIX=m.daocloud.io/docker.io/library/` in `.env.production`.

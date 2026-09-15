@@ -5,7 +5,6 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .db import Session,Record,Task,uid,task_dict,record_dict
 from .providers import settings
-from .image_provider import local_frame_data
 from .consistency import config,stamp,ready
 from .video_storage import (generation_snapshot, create_use, use_entry, export_manifest, storage_view)
 
@@ -20,11 +19,52 @@ def matching(task,pid,version,shot_id=None,token=None):
     p=task.payload
     return p.get('consistency_stamp')==token and p.get('director_id')==pid and p.get('director_version')==version and (shot_id is None or p.get('shot_id')==shot_id)
 
-def validate_frame(db,task):
-    a=db.get(Record,task.payload.get('asset_id',''))
-    latest=next((t for t in db.scalars(select(Task).where(Task.kind=='image').order_by(Task.created.desc())) if matching(t,task.payload['director_id'],task.payload['director_version'],task.payload['shot_id'],task.payload.get('consistency_stamp'))),None)
-    if not a or a.data.get('status')!='approved' or a.version!=task.payload.get('asset_version') or not latest or latest.result.get('asset_id')!=a.id:
+REFERENCE_ROLE_USAGE={
+    'character':'人物身份：保留物种、头面结构、脸型、发型、体表与体型；最终衣着以该角色的独立服装参考为准',
+    'costume':'独立服装：该人物在整段中的最终衣着以此为准',
+    'scene':'场景：空间结构、固定布局、材质与光线以此为准',
+    'prop':'道具：形状、材质与位置以此为准',
+}
+
+def validate_references(db,task):
+    """A finished video stays bound to the exact reviewed reference images it was made from."""
+    frozen=task.payload.get('reference_assets') or {}
+    pid=task.payload.get('director_id','')
+    project_row=db.get(Record,pid);c=config(db,pid)
+    if not frozen or not project_row or not c or project_row.version!=task.payload.get('director_version'):
         raise HTTPException(409,'视频对应的镜头参考图已变更，请使用最新审核版本重新制作。')
+    from .consistency import shot_reference_ids
+    if set(shot_reference_ids(db,c,task.payload['shot_id']))!=set(frozen):
+        raise HTTPException(409,'该镜绑定的参考图已变更，请使用最新审核版本重新制作。')
+    for aid,version in frozen.items():
+        a=db.get(Record,aid)
+        if not a or a.data.get('status')!='approved' or a.version!=version:
+            raise HTTPException(409,'视频对应的镜头参考图已变更，请使用最新审核版本重新制作。')
+
+def reviewed_references(db,c,sid):
+    """Ordered, version-checked project references for one shot, including any stitched board."""
+    from .consistency import shot_reference_ids
+    from .preproduction import MAX_REFERENCE_IMAGES
+    rows=[]
+    for asset_id in shot_reference_ids(db,c,sid):
+        a=db.get(Record,asset_id)
+        if not a or a.kind!='asset' or a.data.get('status')!='approved':
+            raise HTTPException(409,'镜头参考图尚未审核或已经失效，请重新确认基础参考图。')
+        if c.data.get('asset_versions',{}).get(asset_id)!=a.version:
+            raise HTTPException(409,'镜头参考图已变更，请重新保存并审核视觉设定。')
+        rows.append(a)
+    if not 1<=len(rows)<=MAX_REFERENCE_IMAGES:
+        raise HTTPException(422,f'视频需绑定 1–{MAX_REFERENCE_IMAGES} 张已审核参考图片；超过上限请拆镜。')
+    return rows
+
+def reference_usage(db,pid,asset):
+    """Describe a reviewed reference by its project role, never by layout or merge instructions."""
+    if asset.data.get('asset_kind')=='character_costume_reference':
+        return '人物与该角色的独立服装：输出为同一人物穿着这套服装'
+    prep=db.get(Record,'prep_'+pid)
+    spec=prep.data.get('assets',{}).get(asset.id,{}) if prep else {}
+    role=spec.get('role') or asset.data.get('type')
+    return REFERENCE_ROLE_USAGE.get(role,'人物、服装或场景外观参考')
 
 @router.get('/{pid}')
 def workspace(pid:str):
@@ -35,12 +75,10 @@ def workspace(pid:str):
         shots=[]
         for shot in p.data.get('board',{}).get('shots',[]):
             jobs=[t for t in tasks if matching(t,pid,p.version,shot['id'],token)]
-            image=next((t for t in jobs if t.kind=='image'),None)
-            video=next((t for t in jobs if t.kind=='video' and image and t.payload.get('asset_id')==image.result.get('asset_id')),None)
-            asset=db.get(Record,image.result.get('asset_id','')) if image else None
+            video=next((t for t in jobs if t.kind=='video'),None)
             clip=db.get(Record,video.result.get('clip_id','')) if video else None
-            shots.append({'shot':shot,'image_task':task_dict(image) if image else None,'video_task':task_dict(video) if video else None,
-                'asset':record_dict(asset) if asset else None,'clip':record_dict(clip) if clip else None,
+            shots.append({'shot':shot,'video_task':task_dict(video) if video else None,
+                'clip':record_dict(clip) if clip else None,
                 'storage':storage_view(db,clip) if clip else None})
         return {'project_id':pid,'version':p.version,'approved':p.data.get('status')=='approved','shots':shots}
 
@@ -58,27 +96,29 @@ def generate_video(pid:str,sid:str,body:Command):
         if p.version!=body.version or p.data.get('status')!='approved':raise HTTPException(409,'请审核当前版本分镜。')
         shot=next((s for s in p.data['board']['shots'] if s['id']==sid),None)
         if not shot:raise HTTPException(404,'镜头不存在。')
-        _,token,_=ready(db,pid,batch=True)
+        c,token,_=ready(db,pid,batch=True)
+        rows=reviewed_references(db,c,sid)
+        frozen={row.id:row.version for row in rows}
         jobs=[t for t in db.scalars(select(Task).order_by(Task.created.desc())) if matching(t,pid,p.version,sid,token)]
-        image=next((t for t in jobs if t.kind=='image'),None)
-        asset=db.get(Record,image.result.get('asset_id','')) if image else None
-        if not asset or asset.data.get('status')!='approved':raise HTTPException(422,'先生成并审核该镜参考图。')
-        existing=next((t for t in jobs if t.kind=='video' and t.payload.get('input_mode')=='reference_images' and t.payload.get('asset_id')==asset.id and t.payload.get('asset_version')==asset.version and t.status in ('queued','running','waiting','completed')),None)
+        existing=next((t for t in jobs if t.kind=='video' and t.payload.get('input_mode')=='reference_images' and t.payload.get('reference_assets')==frozen and t.status in ('queued','running','waiting','completed')),None)
         if existing:return task_dict(existing)
         prior=next((t for t in jobs if t.kind=='video'),None)
-        try:local_frame_data(asset.data.get('media'))
-        except Exception:raise HTTPException(422,'镜头参考图文件无效，请检查素材。') from None
         from .skill_runtime import render_node
         payload={'mode':'live','input_mode':'reference_images','title':p.data['board']['title']+' '+sid,
-            'consistency_stamp':token,'asset_id':asset.id,'asset_version':asset.version,'director_id':pid,'director_version':p.version,
+            'consistency_stamp':token,'reference_assets':frozen,'director_id':pid,'director_version':p.version,
             'shot_id':sid,'generation_seconds':shot['generation_seconds'],'edit_seconds':shot['edit_seconds'],
             **({'revision_of':prior.id} if prior else {})}
-        snapshot=generation_snapshot(db,payload,p,shot,asset,reference_mode=True)
+        snapshot=generation_snapshot(db,payload,p,shot,reference_mode=True,references=rows)
         bindings=snapshot['asset_bindings']
-        if not 1<=len(bindings)<=9 or any(not binding.get('file') for binding in bindings):
-            raise HTTPException(422,'视频需绑定 1–9 张有效参考图片。')
-        references='\n'.join(f"参考图 {index+1}：{binding.get('name') or '镜头参考'}；用途：{'镜头构图与画风参考' if binding['role']=='shot_reference' else '人物身份、独立服装或场景外观参考'}" for index,binding in enumerate(bindings))
-        payload.update(render_node('video_render',{'motion':shot['motion_prompt'],'references':references}))
+        from .preproduction import MAX_REFERENCE_IMAGES
+        if not 1<=len(bindings)<=MAX_REFERENCE_IMAGES or any(not binding.get('file') for binding in bindings):
+            raise HTTPException(422,f'视频需绑定 1–{MAX_REFERENCE_IMAGES} 张有效参考图片。')
+        references='\n'.join(f"参考图 {index+1}：{binding.get('name') or '项目参考图'}；用途：{reference_usage(db,pid,rows[index])}" for index,binding in enumerate(bindings))
+        style=c.data.get('style')
+        payload.update(render_node('video_render',{
+            'style':f'统一视觉：{style}' if style else '统一视觉：沿用所附参考图的既有画风。',
+            'composition':shot.get('reference_prompt') or shot.get('first_frame') or '',
+            'motion':shot['motion_prompt'],'references':references}))
         payload['input_snapshot']={**snapshot,'prompt':payload['prompt']}
         payload['reference_media']=[binding['file']['media'] for binding in bindings]
         task=Task(id=uid('video'),kind='video',payload=payload)
@@ -99,7 +139,7 @@ def approve_clip(pid:str,sid:str,body:Trim):
         _,token,_=ready(db,pid,batch=True)
         jobs=[t for t in db.scalars(select(Task).order_by(Task.created.desc())) if t.kind=='video' and matching(t,pid,p.version,sid,token)]
         task=next(iter(jobs),None)
-        if task:validate_frame(db,task)
+        if task:validate_references(db,task)
         clip=db.get(Record,task.result.get('clip_id','')) if task else None
         if not clip or not body.start<body.end<=clip.data['duration']:raise HTTPException(422,'视频不存在或选取区间超出素材。')
         if clip.data.get('locked'):raise HTTPException(409,'此片段已发布，请制作新的版本。')
@@ -130,7 +170,7 @@ def publish(pid:str,body:Publish):
         entries=[]
         for shot in p.data['board']['shots']:
             task=next((t for t in jobs if t.kind=='video' and matching(t,pid,p.version,shot['id'],token)),None)
-            if task:validate_frame(db,task)
+            if task:validate_references(db,task)
             clip=db.get(Record,task.result.get('clip_id','')) if task else None
             if not clip or clip.data.get('status')!='approved' or not clip.data.get('visual_reviewed') or not clip.data.get('reader_trim'):
                 raise HTTPException(422,f'{shot["id"]} 尚未完成视频审核与剪辑区间选择。')

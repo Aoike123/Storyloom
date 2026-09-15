@@ -32,3 +32,14 @@
 @media(max-width:950px){.asset-redesign-heading{align-items:flex-start;flex-direction:column;gap:14px}.asset-redesign-action{max-width:none}.asset-redesign-action .button{min-height:44px}}
 
 .studio-asset-grid{align-items:start}
+
+.studio-segments{margin-top:22px;padding:16px 18px;background:#f8faf4;border:1px solid #e1e8d8;border-radius:10px}
+.studio-segments>summary{cursor:pointer;font-size:12px;color:#5d7450}
+.studio-segments ol{list-style:none;margin:16px 0 0;padding:0;display:grid;gap:12px}
+.studio-segments li{padding:13px 15px;background:#fff;border:1px solid #e6ecdd;border-radius:8px}
+.studio-segments header{display:flex;justify-content:space-between;gap:12px;font-size:11px;flex-wrap:wrap}
+.studio-segments header strong{font-weight:500;color:#3c5540}
+.studio-segments header span{color:#93a184}
+.studio-segments p{font-size:11px;color:#6f8266;margin:9px 0}
+.studio-segments small{font-size:10px;color:#93a184;line-height:1.8;display:block}
+.studio-segments blockquote{margin:10px 0 0;padding:9px 12px;border-left:2px solid #b9cba9;background:#f6f9f0;color:#74856a;font-size:10px;line-height:1.9;max-height:120px;overflow:auto}

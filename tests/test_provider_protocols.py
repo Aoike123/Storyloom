@@ -6,7 +6,7 @@ from backend import providers as p
 @pytest.fixture
 def config(monkeypatch):
     monkeypatch.setattr(p,'settings',lambda: {})
-    monkeypatch.setattr(p,'reserve_call',lambda *args: None)
+    monkeypatch.setattr(p,'reserve_call',lambda *args,**kwargs: None)
     monkeypatch.setenv('VIDEO_PROVIDER','minimax')
     monkeypatch.setenv('VIDEO_MODEL','MiniMax-H3-Max')
     monkeypatch.setenv('VIDEO_ENDPOINT','https://api.minimax.io/v2/video_generation')

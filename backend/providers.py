@@ -37,14 +37,57 @@ def settings():
     if not public_demo_mode():result['editable']={k:v for k,v in cfg.items() if not k.endswith('_API_KEY')}
     return result
 
-def reserve_call(kind, task_id, model=None):
+def reserve_call(kind, task_id, model=None, duration_seconds=None):
     cfg=settings()
-    if not cfg.get(f'{kind}_paid_enabled',cfg['paid_enabled']): raise ProviderError('该模型的付费调用未开启或共享额度不足，请在模型连接页检查后再尝试。')
+    if not cfg.get(f'{kind}_paid_enabled',cfg['paid_enabled']):
+        raise ProviderError(payment_message(kind,cfg=cfg) or '该模型的付费调用未开启或共享额度不足，请在模型连接页检查后再尝试。')
     if not cfg[f'{kind}_configured']: raise ProviderError('尚未配置该模型的完整 API 信息。')
-    try:access=authorize_call(kind)
+    try:access=authorize_call(kind,duration_seconds)
     except ModelAccessError as exc:raise ProviderError(str(exc)) from None
     from .provider_usage import begin
     return begin(kind,model or cfg.get(kind+'_model',''),task_id,access)
+
+
+PROVIDER_LABELS={'llm':'DeepSeek 文本','image':'硅基流动 生图','video':'MiniMax 视频'}
+
+
+def unpaid_kinds(*kinds, cfg=None):
+    """Which of the required providers cannot be paid for right now."""
+    resolved=cfg if cfg is not None else settings()
+    return [kind for kind in kinds if not resolved.get(f'{kind}_paid_enabled',resolved['paid_enabled'])]
+
+
+SESSION_EXPIRED_HINT='模型使用方式已失效或过期。请回到模型使用方式页面重新选择；已完成的素材和进度都会保留。'
+
+
+def session_prerequisite_message() -> str | None:
+    """Explain a stalled task whose model session expired or was never usable.
+
+    Tasks store only an opaque session id, so a session that expires or is invalidated while a task
+    waits in the queue used to fail with no actionable explanation.
+    """
+    from .model_access import current_access_mode, public_demo_mode
+    if current_access_mode() is not None:
+        return None
+    return SESSION_EXPIRED_HINT if public_demo_mode() else None
+
+
+def payment_message(*kinds, cfg=None):
+    """Explain exactly which provider blocks this step, instead of an all-or-nothing prompt."""
+    missing=unpaid_kinds(*kinds,cfg=cfg)
+    if not missing:return None
+    from .model_access import current_access_mode, public_demo_mode, public_pool_status
+    if not public_demo_mode():
+        return '这一步需要的模型调用未开启或额度不足：'+'、'.join(PROVIDER_LABELS.get(kind,kind) for kind in missing)+'。'
+    if current_access_mode() is None:
+        return SESSION_EXPIRED_HINT
+    if current_access_mode()=='public':
+        status=public_pool_status(refresh=False)
+        reasons=[f'{PROVIDER_LABELS.get(item["kind"],item["kind"])}：{item["reason"]}'
+                 for item in status['providers'] if item['kind'] in missing]
+        detail='；'.join(reasons) or '、'.join(PROVIDER_LABELS.get(kind,kind) for kind in missing)
+        return '共享体验池暂时无法完成这一步：'+detail+'。可以改用自己的 Key，或稍后再试。'
+    return '这一步需要的模型调用未开启：'+'、'.join(PROVIDER_LABELS.get(kind,kind) for kind in missing)+'。'
 
 
 def endpoint(kind,config=None):
@@ -135,6 +178,7 @@ def submit_video(prompt,task_id,image_url=None,*,local_frame=False,reference_ima
             raise ProviderError('参考图需为 HTTPS 地址，或使用已审核的本地参考图片。')
         content.append({'type':'image_url','image_url':{'url':image},'role':'reference_image'})
     body={'model':cfg.get('VIDEO_MODEL'),'content':content}
+    requested_seconds=duration_seconds
     if minimax:
         model=body['model']
         if model not in ('MiniMax-H3','MiniMax-H3-Max'):
@@ -146,10 +190,11 @@ def submit_video(prompt,task_id,image_url=None,*,local_frame=False,reference_ima
         if duration not in range(5 if model=='MiniMax-H3-Max' else 4,16) or resolution not in resolutions:
             raise ProviderError('视频时长或分辨率不受所选 MiniMax 模型支持。')
         body.update(duration=duration,resolution=resolution,ratio='16:9')
+        requested_seconds=duration
     if len(json.dumps(body,ensure_ascii=False).encode('utf-8'))>64*1024*1024:
         raise ProviderError('参考图片请求超过服务商 64MB 限制，请压缩参考图。')
     target=endpoint('video',cfg)
-    entry=reserve_call('video',task_id)
+    entry=reserve_call('video',task_id,duration_seconds=requested_seconds)
     from .provider_usage import finish
     try:
         from .db import save_generation_request

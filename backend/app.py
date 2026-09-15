@@ -125,6 +125,20 @@ def health():
         }
 
 
+@app.get("/api/diagnostics/{code}")
+def failure_detail(code: str):
+    """Full server-side failure detail. Visitors only ever see the short code, not the stack."""
+    from .diagnostics import failure_report
+    from .model_access import public_demo_mode
+
+    if public_demo_mode():
+        raise HTTPException(404, "公开演示模式不提供错误详情，请在本地工作台查看。")
+    report = failure_report(code)
+    if not report:
+        raise HTTPException(404, "没有这条错误记录。")
+    return report
+
+
 @app.get("/api/node-skills")
 def node_skills():
     from .skill_runtime import catalog

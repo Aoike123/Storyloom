@@ -1,4 +1,11 @@
-"""Record actual provider submissions and reported usage for audit/recovery."""
+"""Record actual provider submissions and reported usage for audit/recovery.
+
+Budget reservations are only refunded here when the provider rejected the request, which is the
+one case where nothing could have been charged. Uncertain outcomes (timeouts, 5xx) keep the
+reservation because the call may still be billed.
+"""
+
+import time
 
 from sqlalchemy import select
 
@@ -29,10 +36,23 @@ def begin(kind, model, task, access=None):
 def finish(entry, usage=None, status="completed"):
     if not entry:
         return
+    refund = None
     with Session.begin() as db:
         row = db.get(Record, entry)
         if row:
-            row.data = {**row.data, "usage": usage or {}, "status": status}
+            data = {**row.data, "usage": usage or {}, "status": status}
+            if status == "rejected" and not row.data.get("released_at"):
+                # The provider refused the request, so this reservation never became a charge.
+                data["released_at"] = time.time()
+                if data.get("mode") == "public":
+                    refund = (data.get("pool_kind"), data.get("reserved_cny"), data.get("pool_day"))
+            row.data = data
+    if refund:
+        from .model_access import release_public_call
+
+        kind, amount, day = refund
+        if kind and amount:
+            release_public_call(kind, amount, day)
 
 
 def finish_video(task, usage):

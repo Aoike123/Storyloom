@@ -22,8 +22,8 @@ export const workStages = [
   {id: 'style', name: '选择风格', hint: '阅读微小说，确定画风与剧情气质'},
   {id: 'preparing', name: '准备形象', hint: '理解原文，生成人物与场景参考图'},
   {id: 'assets_review', name: '确认图片', hint: '查看形象，提出修改或确认继续'},
-  {id: 'storyboarding', name: '分镜生成', hint: '直接编写参考图组合分镜与提示词'},
-  {id: 'rendering', name: '漫剧生成', hint: '生成镜头参考图与视频片段'},
+  {id: 'storyboarding', name: '分镜生成', hint: '先把微小说切成有序片段，再逐片段生成并合并分镜与提示词'},
+  {id: 'rendering', name: '漫剧生成', hint: '用已审核的项目参考图直接生成视频片段'},
   {id: 'film_review', name: '审片验收', hint: '观看全部片段，确认最终效果'},
   {id: 'published', name: '发布作品', hint: '进入读者空间，供读者观看'},
 ];

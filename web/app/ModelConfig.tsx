@@ -15,6 +15,7 @@ type PoolProvider = {
 };
 type Pool = {
   available: boolean;
+  selectable: boolean;
   reason: string;
   next_reset_at: number;
   providers: PoolProvider[];
@@ -52,8 +53,8 @@ export default function ModelConfig({onSaved}: {onSaved?: () => Promise<void>}) 
     const data = await response.json();
     if (!response.ok) throw Error(typeof data.detail === 'string' ? data.detail : '无法读取共享池状态。');
     setStatus(data);
-    if (data.session?.mode === 'own' || (data.session?.mode === 'public' && data.pool.available)) setMode(data.session.mode);
-    else if (!data.pool.available) setMode('own');
+    if (data.session?.mode === 'own' || (data.session?.mode === 'public' && data.pool.selectable)) setMode(data.session.mode);
+    else if (!data.pool.selectable) setMode('own');
   }
 
   useEffect(() => {load().catch(reason => {setMessage(reason.message); setError(true);});}, []);
@@ -66,7 +67,7 @@ export default function ModelConfig({onSaved}: {onSaved?: () => Promise<void>}) 
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (mode === 'public' && !status?.pool.available) return;
+    if (mode === 'public' && !status?.pool.selectable) return;
     setBusy(true); setMessage(''); setError(false);
     try {
       const response = await fetch('/api/model-access/sessions', {
@@ -88,8 +89,9 @@ export default function ModelConfig({onSaved}: {onSaved?: () => Promise<void>}) 
   }
 
   const current = status?.session?.mode;
-  const currentUsable = current === 'own' || (current === 'public' && !!status?.pool.available);
+  const currentUsable = current === 'own' || (current === 'public' && !!status?.pool.selectable);
   const ownReady = Object.values(keys).every(value => value.trim().length >= 8);
+  const ownReadyAny = Object.values(keys).some(value => value.trim().length >= 8);
   return <div className="model-access-shell">
     <header className="model-access-brand"><a href="/">叙间<span>STORYLOOM</span></a><small>模型使用方式</small></header>
     <main className="model-access-page">
@@ -102,10 +104,10 @@ export default function ModelConfig({onSaved}: {onSaved?: () => Promise<void>}) 
         {current && <div className="model-access-current"><span>当前方式</span><strong>{current === 'public' ? '共享体验池' : '使用自己的 Key'}</strong>{currentUsable ? <button type="button" onClick={continueWithCurrent}>继续当前创作 →</button> : <small>额度已用完，请切换</small>}</div>}
         <div className="model-access-section-title"><div><small>01</small><h2>选择使用方式</h2></div><button type="button" className="model-access-refresh" onClick={() => load().catch(reason => {setMessage(reason.message); setError(true);})}>刷新额度</button></div>
         <div className="model-access-options">
-          <button type="button" className={'model-access-option ' + (mode === 'public' ? 'is-selected' : '')} disabled={!status?.pool.available} onClick={() => setMode('public')} aria-pressed={mode === 'public'}>
-            <span>共享体验池<em>{status?.pool.available ? '可用' : '不可用'}</em></span>
+          <button type="button" className={'model-access-option ' + (mode === 'public' ? 'is-selected' : '')} disabled={!status?.pool.selectable} onClick={() => setMode('public')} aria-pressed={mode === 'public'}>
+            <span>共享体验池<em>{status?.pool.available ? '全部可用' : status?.pool.selectable ? '部分可用' : '不可用'}</em></span>
             <strong>{status ? '共享额度' : '读取中…'}</strong>
-            <p>{status?.pool.reason || '正在核对今日额度与供应商状态'}</p>
+            <p>{status ? (status.pool.selectable ? '共享额度和自带 Key 都能继续；具体哪一步缺额度会在制作页说明。' : status.pool.reason) : '正在核对今日额度与供应商状态'}</p>
             {status && <div className="model-access-pool-quotas">{status.pool.providers.map(provider => <span key={provider.kind}>
               <b>{provider.provider}<em>{provider.available ? '可用' : provider.reason}</em></b>
               <small>剩余 ¥{provider.remaining_cny} / ¥{provider.daily_limit_cny}</small>
@@ -114,7 +116,7 @@ export default function ModelConfig({onSaved}: {onSaved?: () => Promise<void>}) 
           <button type="button" className={'model-access-option ' + (mode === 'own' ? 'is-selected' : '')} onClick={() => setMode('own')} aria-pressed={mode === 'own'}>
             <span>使用自己的 Key<em>稳定</em></span>
             <strong>BYOK</strong>
-            <p>额度完全来自你的三个供应商账户，不占共享池。</p>
+            <p>额度完全来自你自己的供应商账户，不占共享池。只填这一步需要的 Key 也可以。</p>
             <small>Key 加密、限时保存；页面不会回显</small>
           </button>
         </div>
@@ -128,10 +130,10 @@ export default function ModelConfig({onSaved}: {onSaved?: () => Promise<void>}) 
           <div className="model-access-key-field"><div><label htmlFor="deepseek-key">DeepSeek API Key</label><a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer">前往获取 ↗</a></div><input id="deepseek-key" type="password" autoComplete="off" value={keys.deepseek} onChange={event => setKeys({...keys, deepseek: event.target.value})} placeholder="用于文本理解与创作"/></div>
           <div className="model-access-key-field"><div><label htmlFor="siliconflow-key">硅基流动 API Key</label><a href="https://cloud.siliconflow.cn/account/ak" target="_blank" rel="noopener noreferrer">前往获取 ↗</a></div><input id="siliconflow-key" type="password" autoComplete="off" value={keys.siliconflow} onChange={event => setKeys({...keys, siliconflow: event.target.value})} placeholder="用于人物与场景生图"/></div>
           <div className="model-access-key-field"><div><label htmlFor="minimax-key">MiniMax API Key</label><a href="https://platform.minimax.cn/console/access?tab=api-keys" target="_blank" rel="noopener noreferrer">前往获取 ↗</a></div><input id="minimax-key" type="password" autoComplete="off" value={keys.minimax} onChange={event => setKeys({...keys, minimax: event.target.value})} placeholder="用于镜头视频生成"/></div>
-          <p>Key 只发送给叙间后端，并以部署密钥加密保存；后台任务完成前请勿撤销供应商 Key。临时会话最长保留 24 小时。</p>
+          <p>可以只填需要的 Key，缺哪一个就在需要它的那一步提示。Key 只发送给叙间后端，并以部署密钥加密保存；后台任务完成前请勿撤销供应商 Key。临时会话最长保留 24 小时。</p>
         </div>}
 
-        <button className="model-access-submit" disabled={busy || !status || (mode === 'public' ? !status.pool.available : !ownReady)}>
+        <button className="model-access-submit" disabled={busy || !status || (mode === 'public' ? !status.pool.selectable : !ownReadyAny)}>
           {busy ? '正在建立安全会话…' : mode === 'public' ? '使用共享额度，进入创作' : '使用自己的 Key，进入创作'}
         </button>
         <p className={'model-access-message ' + (error ? 'is-error' : '')} role="status">{message}</p>

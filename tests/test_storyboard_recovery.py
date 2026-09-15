@@ -38,7 +38,7 @@ def test_author_resume_requeues_saved_storyboard_without_resubmitting_it(client,
         assert any(change['action']=='bind_explicit_setup_reference' for change in changes)
 
 
-def test_author_resume_conditionally_stitches_saved_over_limit_board_without_ai_call(client):
+def test_author_resume_keeps_reviewed_references_without_generating_boards(client):
     from test_director import board
     media=DATA/'media'/'recovery-reference.png';Image.new('RGB',(256,256),(80,90,100)).save(media)
     asset_rows=[
@@ -96,12 +96,12 @@ def test_author_resume_conditionally_stitches_saved_over_limit_board_without_ai_
         project=db.get(Record,'packed-project');child=db.get(Task,'packed-child')
         current=prep.ready(db,'packed-project')
         packed=[(asset_id,spec) for asset_id,spec in current['assets'].items() if spec.get('costume_asset_id')]
-        assert len(packed)==2 and all(db.get(Record,asset_id).data['derived_without_model'] for asset_id,_ in packed)
+        # 参考图直接生视频：不再创建任何人物服装拼接参考板。
+        assert packed==[]
         assert child.status=='queued' and child.payload['preproduction']['stamp']==current['stamp']
         assert project.data['preproduction_stamp']==current['stamp']
-        assert project.data['board_recovery']['conditional_stitching_added'] is True
-        assert [change['action'] for change in project.data['board_recovery']['changes']]==[
-            'pack_identity_costume_reference','pack_identity_costume_reference']
+        assert project.data['board_recovery']['conditional_stitching_added'] is False
+        assert child.payload['saved_board']['shots'][0]['assets']==['actor','costume','other','other-costume','scene']
         assert all(db.get(Record,asset_id) is not None for asset_id,_,_ in asset_rows)
         from sqlalchemy import select
         assert len(list(db.scalars(select(Task).where(Task.kind=='image'))))==5

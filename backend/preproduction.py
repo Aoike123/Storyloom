@@ -4,12 +4,16 @@ from fastapi import APIRouter,HTTPException
 from pydantic import BaseModel,Field
 from typing import Literal
 from sqlalchemy import select
-from .db import Session,Record,Task,uid,record_dict,task_dict
+from .db import HISTORY_LIMIT, Session, Record, Task, bounded, record_dict, task_dict, uid
 from .image_provider import local_frame_data
 from .providers import settings
 from .reference_image_model import REFERENCE_IMAGE_MODEL, REFERENCE_IMAGE_STEPS
 from .skill_runtime import render_node
 router=APIRouter(prefix='/api/preproduction',tags=['preproduction'])
+
+# The reference-video provider accepts up to nine reference images per request; shots are
+# planned against this limit because no intermediate shot picture is generated any more.
+MAX_REFERENCE_IMAGES=9
 
 def project(db,pid):
     p=db.get(Record,pid)
@@ -37,8 +41,8 @@ def current_base_asset_versions(db,pid):
 def _invalidate_record(row,reason,replacement_task_id,at):
     if not row:return False
     snapshot={k:v for k,v in row.data.items() if k!='history'}
-    history=[*row.data.get('history',[]),{'version':row.version,'data':snapshot,
-        'invalidated_at':at,'reason':reason,'replacement_task_id':replacement_task_id}]
+    history=bounded(row.data.get('history'),{'version':row.version,'data':snapshot,
+        'invalidated_at':at,'reason':reason,'replacement_task_id':replacement_task_id},HISTORY_LIMIT)
     row.data={**row.data,'history':history,'invalidated_at':at,'invalidated_reason':reason,
         'replacement_task_id':replacement_task_id}
     if 'approved' in row.data:row.data={**row.data,'approved':False}
@@ -55,8 +59,8 @@ def invalidate_downstream_references(db,pid,reason,replacement_task_id):
     board_keys=('board','review','board_diagnostics','preproduction_stamp','board_recovery')
     if any(key in current.data for key in board_keys):
         saved={key:current.data.get(key) for key in board_keys if key in current.data}
-        history=[*current.data.get('board_history',[]),{**saved,'version':current.version,
-            'invalidated_at':at,'reason':reason,'replacement_task_id':replacement_task_id}]
+        history=bounded(current.data.get('board_history'),{**saved,'version':current.version,
+            'invalidated_at':at,'reason':reason,'replacement_task_id':replacement_task_id},HISTORY_LIMIT)
         data={key:value for key,value in current.data.items() if key not in board_keys}
         current.data={**data,'board_history':history,'requires_preproduction':True,
             'status':'awaiting_preproduction','downstream_invalidated_at':at,
@@ -102,7 +106,7 @@ def storyboard_asset_contract(prep):
         choices=costumes if character.get('requires_costume') else [(None,None),*costumes]
         for costume_id,costume in choices:
             ids=[character_id,*([costume_id] if costume_id else [])]
-            if len(ids)<3:
+            if len(ids)<MAX_REFERENCE_IMAGES:
                 character_sets.append({'character':character.get('name') or character_id,
                     'costume':costume.get('name') if costume else None,'asset_ids':ids})
     scenes=[{'name':spec.get('name') or asset_id,'asset_id':asset_id}
@@ -111,16 +115,16 @@ def storyboard_asset_contract(prep):
            for asset_id,spec in assets.items() if spec.get('role')=='prop']
     return {
         'max_semantic_assets_per_shot':12,
-        'max_reference_files_after_packing':3,
+        'max_reference_images_per_shot':MAX_REFERENCE_IMAGES,
         'scene_required':True,
         'scene_count_per_shot':1,
         'character_reference_sets':character_sets,
         'scene_references':scenes,
         'prop_references':props,
         'selection_rule':('assets 必须使用真实 ID。每个入镜角色完整复制一组 character_reference_sets.asset_ids，'
-                          '再追加一张 scene_references.asset_id；不要为了三图上限省略身份或服装。'
-                          '调用方仅在完整列表超过三张时，才会把同一角色的身份与服装确定性拼成一张参考板；'
-                          '若拼接后仍超过三张，校验会要求拆成反打或空场景镜头。'),
+                          '再追加一张 scene_references.asset_id；不要为了数量上限省略身份或服装。'
+                          f'程序把完整列表原样附给视频模型，每镜最多 {MAX_REFERENCE_IMAGES} 张；'
+                          '超过上限的多人内容请拆成反打、近景或空场景镜头。'),
     }
 
 
@@ -133,7 +137,15 @@ def storyboard_preproduction(prep):
 
 def shot_prompt_preproduction(prep):
     """Prompt compilation must see any physical stitched references selected by the caller."""
-    return {**prep,'asset_binding_contract':storyboard_asset_contract(prep)}
+    assets={asset_id:({**spec,'notes':CONDENSED_REFERENCE_NOTE}
+                      if _is_condensed_character_reference(spec,prep.get('assets',{})) else spec)
+            for asset_id,spec in prep.get('assets',{}).items()}
+    return {**prep,'assets':assets,'asset_binding_contract':storyboard_asset_contract(prep)}
+
+
+# Reviewed identity-plus-costume boards are stitched by the local image tool. Models only need to
+# know they show one character wearing one set of clothes; the board layout stays out of prompts.
+CONDENSED_REFERENCE_NOTE='同一角色的已确认人物参考：输出为这个人物穿着他的这套服装。'
 
 
 def _is_condensed_character_reference(spec,assets):
@@ -177,7 +189,7 @@ def plan_board_asset_packing(board,prep):
     assets=prep['assets'];result={}
     for shot in board.shots:
         ids=list(dict.fromkeys(shot.assets))
-        needed=max(0,len(ids)-3)
+        needed=max(0,len(ids)-MAX_REFERENCE_IMAGES)
         if not needed:continue
         pairs=[]
         for character_id in ids:
@@ -200,10 +212,10 @@ def validate_board(board,prep,packing=None):
             issues.append(f'{shot.id} 的 assets 为空，必须按 asset_binding_contract 绑定参考图。')
             continue
         packed_count=len(ids)-len(packing.get(shot.id,[]))
-        if packed_count>3:
+        if packed_count>MAX_REFERENCE_IMAGES:
             labels='、'.join(_asset_label(asset_id,assets) for asset_id in ids)
-            issues.append(f'{shot.id} 的 assets 完整绑定为 {len(ids)} 张（{labels}），人物服装条件拼接后仍需 {packed_count} 张，'
-                          '当前模型每镜最多接收 3 张；多人内容必须拆成单人反打或空场景镜头。')
+            issues.append(f'{shot.id} 的 assets 完整绑定为 {len(ids)} 张（{labels}），仍需 {packed_count} 张，'
+                          f'视频模型每镜最多接收 {MAX_REFERENCE_IMAGES} 张参考图；多人内容必须拆成单人反打、近景或空场景镜头。')
         duplicates=list(dict.fromkeys(asset_id for index,asset_id in enumerate(ids) if asset_id in ids[:index]))
         if duplicates:
             issues.append(f'{shot.id} 的 assets 重复绑定：'+ '、'.join(duplicates)+'。每个 ID 只能出现一次。')
@@ -235,14 +247,6 @@ def validate_board(board,prep,packing=None):
                 choices='、'.join(costumes) or '当前没有可用服装图'
                 issues.append(f'{shot.id} 已绑定角色“{spec.get("name") or character_id}”但缺少对应服装；'
                               f'请从该角色服装中选择一张：{choices}。')
-        for asset_id in selected:
-            spec=assets[asset_id]
-            if not _is_condensed_character_reference(spec,assets):continue
-            expanded=list(dict.fromkeys([*(item for item in selected if item!=asset_id),
-                spec['identity_asset_id'],spec['costume_asset_id']]))
-            if len(expanded)<=3:
-                issues.append(f'{shot.id} 未达到三图上限却使用了人物服装拼接参考板 {asset_id}；'
-                              '请直接绑定原人物身份图与服装图，只有超限时才允许拼接。')
         if not unknown:
             try:validate_shot_identities(selected,assets)
             except HTTPException as exc:issues.append(f'{shot.id} 人物与服装映射错误：{exc.detail}')
@@ -250,7 +254,7 @@ def validate_board(board,prep,packing=None):
 
 
 def add_condensed_reference_alternatives(db,pid,pairs):
-    """Materialize only the identity+costume pairs selected by an over-limit shot plan."""
+    """Stitch over-limit identity+costume pairs with the local image tool, never with a model."""
     config=db.get(Record,'prep_'+pid)
     if not config:raise HTTPException(409,'前期素材配置不存在，不能制作条件拼接参考。')
     assets=dict(config.data['assets']);versions=dict(config.data['versions'])
@@ -277,7 +281,7 @@ def add_condensed_reference_alternatives(db,pid,pairs):
     _,token=snapshot(db,pid)
     gate=db.get(Record,'prep_gate_'+pid)
     data={'stamp':token,'assets':dict(versions),'mode':'reference_images',
-          'note':'保留已确认原图；仅为实际超过三图上限的镜头添加本地人物服装拼接参考板。'}
+          'note':f'保留已确认原图；仅为实际超过每镜 {MAX_REFERENCE_IMAGES} 图上限的镜头，用本地图像工具拼接人物身份与服装参考板，不调用任何生图或改图接口。'}
     if gate and gate.data.get('history'):data['history']=gate.data['history']
     if gate:gate.data=data;gate.version+=1
     else:db.add(Record(id='prep_gate_'+pid,kind='preproduction_gate',data=data))
@@ -306,8 +310,6 @@ def repair_board_assets(board,prep):
     """Repair only unambiguous reference-list mistakes; never infer creative content."""
     repaired=board.model_copy(deep=True);changes=[]
     assets=prep['assets']
-    condensed={(spec.get('identity_asset_id'),spec.get('costume_asset_id')):asset_id
-               for asset_id,spec in assets.items() if _is_condensed_character_reference(spec,assets)}
     for shot in repaired.shots:
         unique=list(dict.fromkeys(shot.assets))
         if unique!=shot.assets:
@@ -333,7 +335,7 @@ def repair_board_assets(board,prep):
                 changes.append({'shot_id':shot.id,'action':'bind_unique_character_costume',
                                 'asset_id':costumes[0],'identity_asset_id':character_id})
         has_scene=any(aid in prep['assets'] and prep['assets'][aid]['role']=='scene' for aid in unique)
-        if not has_scene and len(unique)<3:
+        if not has_scene and len(unique)<MAX_REFERENCE_IMAGES:
             location=shot.scene.strip();matches=[]
             for aid,spec in prep['assets'].items():
                 name=spec.get('name','').strip()
@@ -341,22 +343,40 @@ def repair_board_assets(board,prep):
                 if spec.get('role')=='scene' and name and (location==name or suffix and suffix in '，,、；;：:（( '):matches.append(aid)
             if len(matches)==1:
                 unique.append(matches[0]);changes.append({'shot_id':shot.id,'action':'bind_unique_named_scene','asset_id':matches[0]})
-        if len(unique)>3:
-            pairs=[]
+        # Reference images are attached as reviewed project assets; legacy stitched boards are
+        # expanded back into their identity and costume sources instead of being merged again.
+        expanded=[]
+        for asset_id in unique:
+            spec=assets.get(asset_id,{})
+            if _is_condensed_character_reference(spec,assets):
+                sources=[spec['identity_asset_id'],spec['costume_asset_id']]
+                expanded.extend(source for source in sources if source not in expanded and source in assets)
+                changes.append({'shot_id':shot.id,'action':'expand_identity_costume_reference',
+                                'asset_id':asset_id,'source_asset_ids':sources})
+            elif asset_id not in expanded:
+                expanded.append(asset_id)
+        unique=expanded
+        # Only when the reviewed list exceeds one request's image capacity does the caller
+        # stitch a character's identity and costume with the local image tool; the image
+        # generation API is never asked to merge, and no picture is regenerated.
+        condensed={(spec.get('identity_asset_id'),spec.get('costume_asset_id')):asset_id
+                   for asset_id,spec in assets.items() if _is_condensed_character_reference(spec,assets)}
+        if len(unique)>MAX_REFERENCE_IMAGES:
+            candidates=[]
             for character_id in unique:
                 spec=assets.get(character_id,{})
                 if spec.get('role')!='character' or spec.get('costume_asset_id'):continue
                 costumes=[costume_id for costume_id in unique if assets.get(costume_id,{}).get('role')=='costume'
                           and assets[costume_id].get('identity_asset_id')==character_id]
                 if len(costumes)==1 and (character_id,costumes[0]) in condensed:
-                    pairs.append((min(unique.index(character_id),unique.index(costumes[0])),character_id,costumes[0],condensed[(character_id,costumes[0])]))
-            for _,character_id,costume_id,reference_id in sorted(pairs):
-                if len(unique)<=3:break
+                    candidates.append((min(unique.index(character_id),unique.index(costumes[0])),character_id,costumes[0],condensed[(character_id,costumes[0])]))
+            for _,character_id,costume_id,reference_id in sorted(candidates):
+                if len(unique)<=MAX_REFERENCE_IMAGES:break
                 position=min(unique.index(character_id),unique.index(costume_id))
                 unique=[asset_id for asset_id in unique if asset_id not in (character_id,costume_id)]
                 unique.insert(position,reference_id)
                 changes.append({'shot_id':shot.id,'action':'pack_identity_costume_reference','asset_id':reference_id,
-                    'source_asset_ids':[character_id,costume_id]})
+                    'source_asset_ids':[character_id,costume_id],'stitched_by':'local_image_tool'})
         shot.assets=unique
     return repaired,changes
 

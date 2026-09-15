@@ -70,7 +70,10 @@ def test_real_workflow_fits_two_costumes_to_one_frozen_identity(creative,monkeyp
     monkeypatch.setattr(c,'chat_json',design)
     response=creative.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'悬疑','confirm_paid':True})
     drain()
-    assert calls==['StylePlan','CharacterPlan','CostumePlan','ScenePlan','AssetPromptBatch','AssetPromptBatch']
+    # Design runs once per specification, then prompt batches stay role-homogeneous: the single
+    # character identity is one batch, and the two costumes plus the scene fill two more.
+    assert calls==['StylePlan','CharacterPlan','CostumePlan','ScenePlan',
+                   'AssetPromptBatch','AssetPromptBatch','AssetPromptBatch']
     with Session() as db:
         run=db.get(Record,'creative_pid');items=run.data['items']
         identity=next(i for i in items if i['role']=='character')
