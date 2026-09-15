@@ -1,33 +1,137 @@
-.account-dock{position:relative;z-index:40}
-.account-dock-trigger{display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border:1px solid #d9cfa8;border-radius:999px;background:#fffdf4cc;color:#4a4432;font-size:12px;cursor:pointer;backdrop-filter:blur(6px)}
-.account-dock-trigger:hover{border-color:#c3b17a}
-.account-dock-trigger img{width:22px;height:22px;border-radius:50%;object-fit:cover;background:#e8e2c9}
-.account-dock-dot{width:8px;height:8px;border-radius:50%;background:#c3b17a}
+.account-dock{
+  --dock-bg:#fcfdf9;
+  --dock-raised:#f3f7ee;
+  --dock-field:#fff;
+  --dock-text:#33483a;
+  --dock-muted:#7d8c77;
+  --dock-line:#d7e1cf;
+  --dock-line-strong:#adbea0;
+  --dock-accent:#3f603f;
+  --dock-accent-soft:#e7efdd;
+  --dock-on-accent:#f6f8f1;
+  --dock-trigger:#f8faf4e8;
+  --dock-chip:#e8f0dc;
+  --dock-warning-bg:#fff7e9;
+  --dock-warning-line:#dcb57a;
+  --dock-warning:#865f30;
+  --dock-success:#5f7a45;
+  --dock-danger:#a4563a;
+  --dock-shadow:#263a2529;
+  position:relative;
+  z-index:80;
+  color:var(--dock-text);
+}
+
+.reader-world .account-dock{
+  --dock-bg:#18241f;
+  --dock-raised:#202f27;
+  --dock-field:#111c17;
+  --dock-text:#e4eadb;
+  --dock-muted:#93a28e;
+  --dock-line:#ffffff18;
+  --dock-line-strong:#758c68;
+  --dock-accent:#c9dfab;
+  --dock-accent-soft:#c9dfab16;
+  --dock-on-accent:#1c3022;
+  --dock-trigger:#18251fdb;
+  --dock-chip:#c9dfab18;
+  --dock-warning-bg:#6d4f252e;
+  --dock-warning-line:#aa8350;
+  --dock-warning:#dcc28e;
+  --dock-success:#b9d59c;
+  --dock-danger:#e1a08d;
+  --dock-shadow:#020806a8;
+}
+
+.account-dock-trigger{
+  min-height:38px;
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:6px 10px 6px 7px;
+  border:1px solid var(--dock-line);
+  border-radius:999px;
+  background:var(--dock-trigger);
+  color:var(--dock-text)!important;
+  font-size:11px;
+  cursor:pointer;
+  box-shadow:0 4px 14px #0b160d0d;
+  backdrop-filter:blur(10px);
+}
+.account-dock-trigger:hover,.account-dock-trigger[aria-expanded=true]{border-color:var(--dock-line-strong);background:var(--dock-raised)}
+.account-dock-trigger img{width:24px;height:24px;border:1px solid var(--dock-line-strong);border-radius:50%;object-fit:cover;background:var(--dock-accent-soft)}
+.account-dock-dot{width:8px;height:8px;margin:0 4px;border-radius:50%;background:var(--dock-accent);box-shadow:0 0 0 4px var(--dock-accent-soft)}
 .account-dock-name{max-width:9em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.account-dock-beans{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:999px;background:#efe7c8;color:#6b5f2f;font-weight:600}
-.account-dock-beans.is-low{background:#f6dcc9;color:#8a4a24}
-.account-dock-panel{position:absolute;right:0;top:calc(100% + 8px);width:min(340px,calc(100vw - 32px));padding:16px;border:1px solid #d9cfa8;border-radius:12px;background:#fffdf6;box-shadow:0 14px 34px #3b33191f;text-align:left}
-.account-dock-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
-.account-dock-head strong{font-size:14px}
-.account-dock-close{border:0;background:transparent;color:#8b8265;cursor:pointer;padding:2px}
-.account-dock-alert{margin:0 0 12px;padding:10px 12px;border:1px solid #e5b98d;border-left:4px solid #cf8b4a;border-radius:8px;background:#fdf3e6;color:#7d4d1d;font-size:12px;line-height:1.7}
-.account-dock-line{margin:0 0 6px;font-size:12px;color:#5a5341}
-.account-dock-costs{margin:0 0 12px;font-size:11px;color:#8b8265;line-height:1.7}
-.account-dock-actions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
-.account-dock-actions .button{margin:0}
-.account-dock-keys{display:grid;gap:8px;padding-top:12px;border-top:1px solid #ece5cd}
-.account-dock-subtitle{margin:0;font-size:12px;font-weight:600;color:#4a4432}
-.account-dock-hint{margin:0 0 2px;font-size:11px;color:#8b8265;line-height:1.7}
-.account-dock-keys input{padding:9px 11px;border:1px solid #ded6bb;border-radius:7px;background:#fff;font-size:12px;color:#4a4432}
-.account-dock-keyfield{display:grid;gap:5px}
+.account-dock-beans{display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:999px;background:var(--dock-chip);color:var(--dock-accent);font-weight:600;font-variant-numeric:tabular-nums}
+.account-dock-beans.is-low{background:#a95d3420;color:var(--dock-danger)}
+.account-dock-chevron{color:var(--dock-muted);transition:transform .16s ease}
+.account-dock-trigger[aria-expanded=true] .account-dock-chevron{transform:rotate(180deg)}
+
+.account-dock-panel{
+  position:absolute;
+  right:0;
+  top:calc(100% + 10px);
+  width:min(378px,calc(100vw - 32px));
+  max-height:min(720px,calc(100vh - 108px));
+  overflow:auto;
+  padding:16px;
+  border:1px solid var(--dock-line-strong);
+  border-radius:11px;
+  background:var(--dock-bg);
+  color:var(--dock-text);
+  box-shadow:0 22px 55px var(--dock-shadow);
+  text-align:left;
+  scrollbar-width:thin;
+  scrollbar-color:var(--dock-line-strong) transparent;
+  animation:account-dock-enter .14s ease-out;
+}
+.account-dock-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:13px;padding-bottom:13px;border-bottom:1px solid var(--dock-line)}
+.account-dock-title{display:flex;align-items:center;gap:10px;min-width:0}
+.account-dock-title>span:last-child{display:grid;min-width:0}
+.account-dock-title small{color:var(--dock-muted);font-size:8px;line-height:1.2;letter-spacing:1.7px}
+.account-dock-title strong{margin-top:4px;overflow:hidden;color:var(--dock-text);font-size:14px;font-weight:500;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}
+.account-dock-head-avatar,.account-dock-head-placeholder{width:34px;height:34px;flex:0 0 34px;border:1px solid var(--dock-line-strong);border-radius:50%;background:var(--dock-accent-soft)}
+.account-dock-head-avatar{display:block;object-fit:cover}
+.account-dock-head-placeholder{display:grid;place-items:center;color:var(--dock-accent);font:500 14px/1 Georgia,serif}
+.account-dock-close{width:28px;height:28px;flex:0 0 28px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:transparent;color:var(--dock-muted);cursor:pointer}
+.account-dock-close:hover{background:var(--dock-accent-soft);color:var(--dock-text)}
+
+.account-dock-alert{margin:0 0 12px;padding:10px 12px;border:1px solid var(--dock-warning-line);border-left:3px solid var(--dock-warning-line);border-radius:7px;background:var(--dock-warning-bg);color:var(--dock-warning);font-size:11px;line-height:1.75}
+.account-dock-line{margin:0 0 8px;padding:10px 11px;border:1px solid var(--dock-line);border-radius:8px;background:var(--dock-raised);color:var(--dock-text);font-size:11px;line-height:1.75}
+.account-dock-line strong{color:var(--dock-accent);font-size:17px;font-weight:500;font-variant-numeric:tabular-nums}
+.account-dock-costs{margin:0 2px 12px;color:var(--dock-muted);font-size:10px;line-height:1.75}
+.account-dock-actions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 14px}
+.account-dock-actions .button{min-height:40px;margin:0!important;border-radius:7px;font-size:11px}
+.account-dock-actions .button.primary{width:100%;background:var(--dock-accent)!important;color:var(--dock-on-accent)!important;box-shadow:none}
+.account-dock-actions .button.primary:hover{filter:brightness(1.04)}
+.account-dock-panel .button.secondary{border:1px solid var(--dock-line)!important;background:var(--dock-raised)!important;color:var(--dock-muted)!important}
+.account-dock-panel .button.secondary:hover:not(:disabled){border-color:var(--dock-line-strong)!important;color:var(--dock-text)!important}
+
+.account-dock-keys{display:grid;gap:10px;margin:14px -16px 0;padding:15px 16px 0;border-top:1px solid var(--dock-line);background:linear-gradient(180deg,var(--dock-raised),transparent 125px)}
+.account-dock-subtitle{margin:0;color:var(--dock-text);font-size:12px;font-weight:500}
+.account-dock-hint{margin:0 0 2px;color:var(--dock-muted);font-size:10px;line-height:1.75}
+.account-dock-keyfield{display:grid;gap:6px;padding-top:1px}
+.account-dock-keyfield+.account-dock-keyfield{padding-top:9px;border-top:1px solid var(--dock-line)}
 .account-dock-keyhead{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
-.account-dock-keyhead label{font-size:11px;color:#5a5341}
-.account-dock-keyhead .account-dock-purpose{color:#948b6c}
-.account-dock-keyhead a{font-size:11px;color:#8a6a2f;text-decoration:none;white-space:nowrap}
-.account-dock-keyhead a:hover{text-decoration:underline}
-.account-dock-keystate{margin:0;font-size:10px;color:#948b6c;line-height:1.7}
-.account-dock-keystate.is-attached{color:#5f7a45}
-.account-dock-keys .button{justify-self:start;margin:2px 0 0}
-.account-dock-note{margin:10px 0 0;font-size:11px;color:#5f7a45}
-.account-dock-note.is-error{color:#a4563a}
-@media(max-width:640px){.account-dock-name{display:none}}
+.account-dock-keyhead label{color:var(--dock-text);font-size:10px}
+.author-page .account-dock-keyhead label{display:inline;margin:0;color:var(--dock-text);font-size:10px}
+.account-dock-keyhead .account-dock-purpose{color:var(--dock-muted)}
+.account-dock-keyhead a{color:var(--dock-accent);font-size:10px;text-decoration:none;white-space:nowrap}
+.account-dock-keyhead a:hover{text-decoration:underline;text-underline-offset:3px}
+.account-dock-keys input{width:100%;min-height:39px;padding:9px 10px;border:1px solid var(--dock-line);border-radius:7px;background:var(--dock-field);color:var(--dock-text);font-size:11px}
+.account-dock-keys input::placeholder{color:var(--dock-muted)}
+.account-dock-keys input:focus{outline:2px solid var(--dock-line-strong);outline-offset:1px}
+.account-dock-keystate{margin:0;color:var(--dock-muted);font-size:9px;line-height:1.65}
+.account-dock-keystate.is-attached{color:var(--dock-success)}
+.account-dock-keys .button{width:100%;min-height:40px;justify-self:stretch;justify-content:center;margin:0!important;border-radius:7px;font-size:11px}
+.account-dock-save{border:1px solid var(--dock-accent)!important;background:var(--dock-accent)!important;color:var(--dock-on-accent)!important}
+.account-dock-note{margin:11px 0 0;padding:9px 11px;border-radius:7px;background:var(--dock-accent-soft);color:var(--dock-success);font-size:10px;line-height:1.7}
+.account-dock-note.is-error{background:#a4563a14;color:var(--dock-danger)}
+
+@keyframes account-dock-enter{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+@media(max-width:640px){
+  .account-dock-name{display:none}
+  .account-dock-panel{position:fixed;top:72px;right:16px;max-height:calc(100vh - 88px)}
+  .account-dock-keyhead .account-dock-purpose{display:none}
+}
+@media(prefers-reduced-motion:reduce){.account-dock-panel{animation:none}.account-dock-chevron{transition:none}}

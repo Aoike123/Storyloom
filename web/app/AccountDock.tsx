@@ -1,6 +1,6 @@
 'use client';
 import {useEffect, useRef, useState} from 'react';
-import {Coins, KeyRound, LogOut, X} from 'lucide-react';
+import {ChevronDown, Coins, KeyRound, LogOut, X} from 'lucide-react';
 import {clearModelAccess, readModelAccess} from './model-access';
 import {emptyZhihuStatus, readZhihuStatus, zhihuLoginLink, zhihuLogout, type ZhihuStatus} from './zhihu-account';
 import {
@@ -106,6 +106,7 @@ export default function AccountDock({next = '/'}: {next?: string}) {
   const label = account ? (account.fullname || '知乎账号')
     : usingOwnKeys ? '使用自己的 Key'
     : '登录';
+  const accountInitial = Array.from(account?.fullname || '叙')[0] || '叙';
 
   return <div className="account-dock" ref={panel}>
     <button className="account-dock-trigger" aria-expanded={open} onClick={() => setOpen(value => !value)}>
@@ -117,11 +118,19 @@ export default function AccountDock({next = '/'}: {next?: string}) {
         <Coins size={12}/>{beans.toFixed(0)}
       </span>}
       {beans === null && usingOwnKeys && <KeyRound size={12}/>}
+      <ChevronDown size={12} className="account-dock-chevron" aria-hidden="true"/>
     </button>
 
-    {open && <div className="account-dock-panel" role="dialog" aria-label="账号与额度">
+    {open && <div className="account-dock-panel" role="dialog" aria-label="账号与创作额度">
       <div className="account-dock-head">
-        <strong>{account ? (account.fullname || '知乎账号') : '账号与额度'}</strong>
+        <div className="account-dock-title">
+          {account?.avatar_path
+            ? <img className="account-dock-head-avatar" src={account.avatar_path} alt=""/>
+            : <span className="account-dock-head-placeholder" aria-hidden="true">{accountInitial}</span>}
+          <span><small>{account ? 'SIGNED IN' : 'STORYLOOM ACCOUNT'}</small>
+            <strong>{account ? (account.fullname || '知乎账号') : '登录与创作额度'}</strong>
+          </span>
+        </div>
         <button className="account-dock-close" aria-label="关闭" onClick={() => setOpen(false)}><X size={14}/></button>
       </div>
 
@@ -183,7 +192,7 @@ export default function AccountDock({next = '/'}: {next?: string}) {
             </p>
           </div>;
         })}
-        <button className="button secondary" disabled={busy || !Object.values(keys).some(v => v.trim())}>
+        <button className="button account-dock-save" disabled={busy || !Object.values(keys).some(v => v.trim())}>
           {busy ? '正在保存…' : '用这些 Key 继续'}
         </button>
         {usingOwnKeys && <button type="button" className="button secondary" disabled={busy}
