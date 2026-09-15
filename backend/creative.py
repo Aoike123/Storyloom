@@ -111,6 +111,23 @@ def validate_sourced_spec(schema,raw,passages,collection):
     return result
 
 
+def validate_costume_plan(raw,passages,characters):
+    """Costume coverage is checked inside the node retry loop, so the model can fix it itself.
+
+    A character that quietly disappears from the costume list is what made the stage look skipped,
+    so the missing C ids are returned as retry feedback instead of failing much later.
+    """
+    result=validate_sourced_spec(asset_sheets.CostumePlan,raw,passages,'costumes')
+    covered={costume.character_ref for costume in result.costumes}
+    missing=[person.character_id for person in characters if person.character_id not in covered]
+    if missing:
+        raise ModelOutputError('角色 → 服装 → 环境必须对每个角色都给出服装结论，缺少这些角色的服装记录：'
+            +'、'.join(missing)+
+            '。着衣物的角色给出实际服装（mode=garment）；天然体表、不着衣物的角色使用空衣服模式（mode=bare），'
+            'wardrobe 留空并用 bare_surface 写明自然体表依据。不要用空列表跳过整段。')
+    return result
+
+
 def cached_node_output(db,task_id,node,schema):
     task=db.get(Task,task_id)
     if not task:return None
@@ -257,9 +274,9 @@ def run_design(task_id,payload):
             if costumes is None:
                 costumes,_=call_node(chat_json,'costume_spec',{**context,'visual_style':identity.visual_style.model_dump(),
                     'locked_characters':[p.model_dump() for p in identity.characters],'schema':asset_sheets.CostumePlan.model_json_schema()},task_id,
-                    validator=lambda raw:validate_sourced_spec(asset_sheets.CostumePlan,raw,passages,'costumes'))
+                    validator=lambda raw:validate_costume_plan(raw,passages,identity.characters))
                 checkpoint('costume_plan',costumes.model_dump())
-            else:costumes=validate_sourced_spec(asset_sheets.CostumePlan,costumes,passages,'costumes')
+            else:costumes=validate_costume_plan(costumes,passages,identity.characters)
             scenes=checkpoints.get('scene_plan')
             if scenes is None:
                 schema=asset_sheets.ScenePlan.model_json_schema()
@@ -274,7 +291,13 @@ def run_design(task_id,payload):
         raw={'visual_style':identity.visual_style.model_dump(),'items':[p.model_dump() for p in identity.characters]+[i.model_dump() for i in materials.items]}
         checkpoint('raw_design',raw)
     plan,bindings=validate_design(raw,passages,payload.get('asset_schema'))
-    prompts,prompt_fallbacks,prompt_nodes=write_asset_prompts(task_id,payload,plan) if payload.get('skill_pipeline') else ({},set(),{})
+    # Every character answered the costume stage, but the empty-clothing mode has no sheet of its
+    # own: rendering one would fabricate a garment for a natural body. Those records are kept as
+    # decisions and only the real sheets are rendered.
+    renderable=[(item,refs) for item,refs in zip(plan.items,bindings) if not is_bare_costume(item)]
+    bare_costumes=[item for item in plan.items if is_bare_costume(item)]
+    prompt_plan=plan.model_copy(update={'items':[item for item,_ in renderable]})
+    prompts,prompt_fallbacks,prompt_nodes=write_asset_prompts(task_id,payload,prompt_plan) if payload.get('skill_pipeline') else ({},set(),{})
     with Session.begin() as db:
         current=db.get(Task,task_id)
         if current.status!='running':return
@@ -282,7 +305,7 @@ def run_design(task_id,payload):
         if r.data.get('watch')!=task_id:raise ProviderError('美术设计任务已更新，旧结果不再使用。')
         if r.data.get('items'):return
         items=[]
-        for index,(item,refs) in enumerate(zip(plan.items,bindings)):
+        for index,(item,refs) in enumerate(renderable):
             prompt=prompts.get(index) or asset_sheets.compose_prompt(plan.visual_style,item)
             metadata={'asset_schema':asset_sheets.VERSION,'asset_kind':asset_sheets.KINDS[item.role],
                 'asset_role':item.role,'asset_spec':item.model_dump(),'visual_style':plan.visual_style.model_dump(),
@@ -296,7 +319,14 @@ def run_design(task_id,payload):
             saved={**item.model_dump(),'design':asset_sheets.description(item),'prompt':prompt,**metadata}
             db.add(t);items.append({**saved,'source_refs':refs,'source_quote':'\n'.join(passages[ref] for ref in refs),'task_id':t.id})
         r=get_run(db,payload['creative_id']);r.data={**r.data,'visual_style':plan.visual_style.model_dump(),
-            'visual_language':asset_sheets.style_prompt(plan.visual_style),'asset_schema':asset_sheets.VERSION,'items':items,'looks':[],'stage':'assets_review'}
+            'visual_language':asset_sheets.style_prompt(plan.visual_style),'asset_schema':asset_sheets.VERSION,'items':items,'looks':[],
+            'costume_records':[{'costume_id':item.costume_id,'character_ref':item.character_ref,'name':item.name,
+                'mode':item.mode,'description':asset_sheets.description(item),
+                'source_quote':'\n'.join(passages[ref] for ref in refs)}
+                for item,refs in zip(plan.items,bindings) if item.role=='costume'],
+            'bare_costumes':[{'costume_id':item.costume_id,'character_ref':item.character_ref,'name':item.name,
+                'mode':item.mode,'description':asset_sheets.description(item)} for item in bare_costumes],
+            'stage':'assets_review'}
         current.result={**current.result,'replaced_assets':payload.get('replaces_assets',[]),
                         'prompt_fallbacks':sorted(prompt_fallbacks)}
         owner=current.owner
@@ -307,6 +337,11 @@ def run_design(task_id,payload):
 
 def asset_prompt_node(item):
     return 'character_prompts' if item.role=='character' else 'asset_prompts'
+
+
+def is_bare_costume(item):
+    """The empty-clothing mode documents a costume decision without rendering a sheet."""
+    return getattr(item,'role',None)=='costume' and getattr(item,'mode','garment')=='bare'
 
 
 def write_asset_prompts(task_id,payload,plan):
@@ -532,11 +567,24 @@ def prepare_reference_inputs(pid):
         approve_images(db,[row.id for row in rows.values()],automatic=False)
         people={item['character_id']:rows[item['task_id']].id for item in data['items'] if item['role']=='character'}
         costumed={item['character_ref'] for item in data['items'] if item['role']=='costume'}
+        # Empty-clothing decisions are not rendered sheets, so they are carried in separately and
+        # recorded on the character so the storyboard never asks for a garment that does not exist.
+        bare={record['character_ref']:record for record in data.get('bare_costumes',[])}
         assets={}
         for item in data['items']:
             asset=rows[item['task_id']]
             spec={'role':item['role'],'name':item['name'],'notes':str(item.get('design') or item.get('facts') or '使用这张已确认的基础参考图')[:1500]}
-            if item['role']=='character':spec.update(identity_asset_id=asset.id,requires_costume=item['character_id'] in costumed)
+            if item['role']=='character':
+                spec.update(identity_asset_id=asset.id,requires_costume=item['character_id'] in costumed)
+                decision=bare.get(item['character_id'])
+                if decision:
+                    spec.update(clothing_mode='bare',clothing_note=decision['description'][:600])
+                elif not spec['requires_costume']:
+                    # No garment and no empty-clothing decision means the costume stage never
+                    # answered for this character; refuse instead of silently drawing base clothes.
+                    raise HTTPException(409,f'「{item["name"]}」既没有服装记录也没有空衣服模式记录，请先重新运行美术设计节点。')
+                else:
+                    spec['clothing_mode']='garment'
             elif item['role']=='costume':
                 identity=people.get(item.get('character_ref'))
                 if not identity:raise HTTPException(409,'服装缺少对应的人物身份图，请先检查基础素材。')
@@ -573,7 +621,10 @@ def run_watch(task_id,payload):
         if child.status in BUSY:return False
         if child.status!='completed':raise ProviderError('自动分镜未完成，请查看导演诊断。已有图片保留。')
         p=db.get(Record,pid)
-        if not p.data.get('review',{}).get('approved'):raise ProviderError('分镜专业预审发现问题，已停止后续生成；请在高级详情查看问题。')
+        review=p.data.get('review') or {}
+        if not review.get('approved'):
+            issues=[str(issue).strip() for issue in (review.get('issues') or []) if str(issue).strip()]
+            raise ProviderError('分镜专业预审未通过：'+(('；'.join(issues[:5])) if issues else '评审没有返回具体问题。'))
         version=p.version;board=director.Board.model_validate(p.data['board'])
     # Format and semantic text checks succeeded; this is not an image review.
     approved=director.approve(pid,director.Approve(version=version,confirm=True,note='系统分镜结构与模型文本预审通过；后续图片仍须管理员审核'))

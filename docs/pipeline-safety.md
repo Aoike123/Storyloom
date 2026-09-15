@@ -11,6 +11,8 @@
 | 跨片段承接只能引用调用方给出的 `segment.referenceable_shot_ids`，其它片段范围内的编号一律报错 | `segments.earlier_shot_ids`、`director.check_board(external_ids=…)` |
 | 模型自己写的原文引文会被核对；原文中查不到即拒绝，属于其它 P 编号则改绑并记录为代码校正 | `director.bind_sources(..., content=…)` |
 | 每个镜头必须绑定 1–9 张已审核参考图；超限要求拆镜，不会丢弃多余参考图 | `preproduction.validate_board`、`production.reviewed_references` |
+| 角色 → 服装 → 环境对所有角色都跑完：每个角色至少一条服装记录，不着衣物的天然体表用空衣服模式（`mode=bare`），人类不能用它顶替服装 | `asset_sheets.AssetSheetPlan`、`visual_specs.CostumeSheet` |
+| 空衣服模式不生成服装图，也不会被绑进分镜的服装参考；分镜契约用 `bare_characters` 明确告知模型 | `creative.run_design`、`preproduction.storyboard_asset_contract` |
 | 参考图、身份、服装、场景的版本变化会使下游分镜、视频和门失效 | `preproduction.invalidate_downstream_references`、`consistency.stamp` |
 | 旧轮次（重做前的作品）不能作为当前制作的参考 | `asset_workflow.validate_asset_origin` |
 | 视频只能引用它提交时冻结的那一版参考图 | `production.validate_references` |
@@ -46,6 +48,9 @@
 - 校验失败会在节点内自动重试（默认 3 次），并把具体原因回灌给模型。
 - 制作节点失败后会**自动恢复一次**（复用已通过校验的成果）；再次失败才停下来等人处理。额度不足、未配置、供应商暂停等不会自动重试。
 - 分镜重试按片段进行：只有出错的片段重新生成，已通过校验的片段沿用已保存结果。
+- 分镜专业预审（`storyboard_review`）未通过属于**可自动恢复**的失败：预审给出的具体问题会作为本轮必须修正的约束交回分镜模型，整片重做一次；评审结论（连续性、戏剧逻辑、可剪辑性、制作可行性）一并附上。预审是整片判断，因此这次重做不沿用任何已通过校验的片段。再次未通过才停下等人。
+- 自动恢复的判定只拦截需要人工介入的原因（额度不足、未配置、未开启、模型使用权限、供应商今日已暂停、HTTP 401/402/403、Key 缺失）。判定必须精确：曾经用过过宽的「暂停」一词，把「分镜生成暂停」这类可恢复消息也一起挡掉了。
+- 失败消息只保留**一个**错误编号；同一个原因被上层任务再次上报时替换旧编号，不叠加。
 
 ## 额度
 

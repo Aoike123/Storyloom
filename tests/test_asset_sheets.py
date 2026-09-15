@@ -9,7 +9,7 @@ from backend.db import Record, Session, Task, task_dict
 from test_creative import creative, drain
 
 
-from asset_spec_fixtures import character, costume, scene, style
+from asset_spec_fixtures import bare_costume, character, costume, scene, style
 
 
 def creature(name='孙悟空',species='花果山石猴',body_plan='拟人双足',costume_mode='required'):
@@ -61,10 +61,138 @@ def test_character_sheet_preserves_nonhuman_species(name,species,body_plan):
     assert ('不添加人类服装' in prompt)==(item.costume_mode=='none')
 
 
-def test_unclothed_mythical_creature_does_not_require_fake_costume():
+def test_unclothed_mythical_creature_uses_the_empty_clothing_mode():
+    """A natural body must still answer the costume stage instead of dropping out of the chain."""
     dragon=creature('应龙','有翼应龙','龙形','none')
-    plan=sheets.AssetSheetPlan.model_validate({'visual_style':style(),'items':[dragon,scene()]})
-    assert [item.role for item in plan.items]==['character','scene']
+    plan=sheets.AssetSheetPlan.model_validate({'visual_style':style(),
+        'items':[dragon,bare_costume(),scene()]})
+    assert [item.role for item in plan.items]==['character','costume','scene']
+    costume_item=next(item for item in plan.items if item.role=='costume')
+    assert costume_item.mode=='bare' and costume_item.wardrobe==[]
+    assert '空衣服模式' in sheets.description(costume_item)
+    with pytest.raises(ValueError,match='不生成服装设定图'):
+        sheets.compose_prompt(style(),costume_item)
+    # Omitting the record entirely is what used to skip the stage.
+    with pytest.raises(ValidationError,match='每个角色都必须至少有一条服装记录'):
+        sheets.AssetSheetPlan.model_validate({'visual_style':style(),'items':[dragon,scene()]})
+
+
+def test_human_characters_cannot_escape_into_the_empty_clothing_mode():
+    """Humans need real clothing, otherwise the identity sheet's base outfit becomes final dress."""
+    bare=bare_costume('W001','C001')
+    with pytest.raises(ValidationError,match='不能使用空衣服模式'):
+        sheets.AssetSheetPlan.model_validate({'visual_style':style(),
+            'items':[character(),bare,scene()]})
+    assert sheets.CostumeSheet.model_validate(bare).mode=='bare'
+    # The same restriction holds for a costume_mode=required non-human such as 孙悟空.
+    monkey='C001'
+    ape=creature('孙悟空','花果山石猴','拟人双足','required')
+    ape['character_id']=monkey
+    with pytest.raises(ValidationError,match='不能使用空衣服模式'):
+        sheets.AssetSheetPlan.model_validate({'visual_style':style(),
+            'items':[ape,bare_costume('W002',monkey),scene()]})
+
+
+def test_garment_costume_requires_at_least_one_piece_and_bare_requires_a_reason():
+    empty=dict(costume())
+    empty['wardrobe']=[]
+    with pytest.raises(ValidationError,match='空衣服模式'):
+        sheets.CostumeSheet.model_validate(empty)
+    no_reason=dict(bare_costume())
+    no_reason['bare_surface']=''
+    with pytest.raises(ValidationError,match='自然体表的身份依据'):
+        sheets.CostumeSheet.model_validate(no_reason)
+    both=dict(bare_costume())
+    both['wardrobe']=costume()['wardrobe']
+    with pytest.raises(ValidationError,match='wardrobe 必须为空数组'):
+        sheets.CostumeSheet.model_validate(both)
+
+
+def test_creature_without_clothing_still_runs_the_costume_stage_end_to_end(creative, monkeypatch):
+    """The empty-clothing mode keeps the character->costume->set order without faking a garment."""
+    dragon=creature('应龙','有翼应龙','龙形','none')
+    calls=[]
+    def chat(system,payload,*args,**kwargs):
+        title=payload['schema']['title'];calls.append(title)
+        if title=='StylePlan':return {'visual_style':style()},{}
+        if title=='CharacterPlan':return {'characters':[dragon]},{}
+        if title=='CostumePlan':return {'costumes':[bare_costume()]},{}
+        if title=='ScenePlan':return {'scenes':[scene()]},{}
+        if title=='AssetPromptBatch':
+            return {'items':[{'asset_index':a['asset_index'],'prompt':a['render_contract']} for a in payload['assets']]},{}
+        raise AssertionError('unexpected node '+title)
+    monkeypatch.setattr(c,'chat_json',chat)
+    assert creative.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'温馨','confirm_paid':True}).status_code==200
+    drain()
+    assert calls[:4]==['StylePlan','CharacterPlan','CostumePlan','ScenePlan']
+    with Session() as db:
+        run=db.get(Record,'creative_pid');items=run.data['items'];records=run.data['costume_records']
+        assert [item['role'] for item in items]==['character','scene']
+        assert [record['mode'] for record in records]==['bare']
+        assert records[0]['character_ref']=='C002'
+        # The empty-clothing decision reaches the asset review, and no garment sheet is rendered.
+        assert run.data['bare_costumes'][0]['costume_id']=='W001'
+        assert '空衣服模式' in run.data['bare_costumes'][0]['description']
+        assert not [t for t in db.scalars(select(Task).where(Task.kind=='image'))
+                    if t.payload.get('asset_role')=='costume']
+
+
+def test_storyboard_binds_identity_and_scene_for_an_unclothed_character(creative, monkeypatch):
+    """A bare character must not be handed a garment reference it does not own."""
+    dragon=creature('应龙','有翼应龙','龙形','none')
+    monkeypatch.setattr(c,'chat_json',lambda system,payload,*a,**k:(
+        {'visual_style':style()} if payload['schema']['title']=='StylePlan' else
+        {'characters':[dragon]} if payload['schema']['title']=='CharacterPlan' else
+        {'costumes':[bare_costume()]} if payload['schema']['title']=='CostumePlan' else
+        {'scenes':[scene()]} if payload['schema']['title']=='ScenePlan' else
+        {'items':[{'asset_index':a['asset_index'],'prompt':a['render_contract']} for a in payload['assets']]},{}))
+    creative.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'温馨','confirm_paid':True})
+    drain()
+    with Session() as db:
+        items=db.get(Record,'creative_pid').data['items']
+        for item in items:
+            c.image_asset(db,item['task_id'])
+    c.prepare_reference_inputs('pid')
+    from backend import preproduction as pp
+    contract=pp.storyboard_asset_contract(pp.get('pid')['config'])
+    character_set=contract['character_reference_sets'][0]
+    assert character_set['character']=='应龙' and character_set['costume'] is None
+    assert len(character_set['asset_ids'])==1
+    assert contract['bare_characters']==[{'character':'应龙','asset_id':character_set['asset_ids'][0],
+        'note':contract['bare_characters'][0]['note']}]
+    assert '不添加任何衣物' in contract['bare_characters'][0]['note']
+    # No garment reference may reach the shot bindings for an unclothed character.
+    assert len(contract['character_reference_sets'])==1
+
+
+def test_mixed_cast_runs_the_costume_stage_for_every_character(creative, monkeypatch):
+    """One dressed human and one natural body: both answer the costume stage, in one order."""
+    dragon=creature('应龙','有翼应龙','龙形','none')
+    calls=[]
+    def chat(system,payload,*args,**kwargs):
+        title=payload['schema']['title'];calls.append(title)
+        if title=='StylePlan':return {'visual_style':style()},{}
+        if title=='CharacterPlan':return {'characters':[character(),dragon]},{}
+        if title=='CostumePlan':
+            assert [c['character_id'] for c in payload['locked_characters']]==['C001','C002']
+            return {'costumes':[costume(),bare_costume('W002','C002')]},{}
+        if title=='ScenePlan':return {'scenes':[scene()]},{}
+        if title=='AssetPromptBatch':
+            return {'items':[{'asset_index':a['asset_index'],'prompt':a['render_contract']} for a in payload['assets']]},{}
+        raise AssertionError('unexpected node '+title)
+    monkeypatch.setattr(c,'chat_json',chat)
+    assert creative.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'温馨','confirm_paid':True}).status_code==200
+    drain()
+    assert calls[:4]==['StylePlan','CharacterPlan','CostumePlan','ScenePlan']
+    with Session() as db:
+        run=db.get(Record,'creative_pid')
+        assert [(r['costume_id'],r['character_ref'],r['mode']) for r in run.data['costume_records']]==[
+            ('W001','C001','garment'),('W002','C002','bare')]
+        assert [item['name'] for item in run.data['bare_costumes']]==['天然体表W002']
+        # Only the human's garment becomes a rendered sheet: two characters, one costume sheet,
+        # one scene sheet.
+        sheet_roles=sorted(t.payload.get('asset_role') for t in db.scalars(select(Task).where(Task.kind=='image')))
+        assert sheet_roles==['character','character','costume','scene']
 
 
 def test_pig_head_human_body_is_structurally_locked_by_region():
@@ -184,3 +312,30 @@ def test_request_prompt_snapshot_survives_image_completion_and_is_exposed(client
     assert 'never-expose-this-key' not in json.dumps(public)
     with Session() as db:
         assert authors.completed_outputs([db.get(Task,'sheet-image')])[0]['generation']==public
+
+
+def test_human_left_without_a_costume_record_is_reported_not_silently_skipped(creative, monkeypatch):
+    """This is the reported failure: an empty costume list used to pass and skip the stage."""
+    def chat(system,payload,*args,**kwargs):
+        title=payload['schema']['title']
+        if title=='StylePlan':return {'visual_style':style()},{}
+        if title=='CharacterPlan':return {'characters':[character()]},{}
+        if title=='CostumePlan':return {'costumes':[]},{}
+        if title=='ScenePlan':return {'scenes':[scene()]},{}
+        if title=='AssetPromptBatch':
+            return {'items':[{'asset_index':a['asset_index'],'prompt':a['render_contract']} for a in payload['assets']]},{}
+        raise AssertionError('unexpected node '+title)
+    monkeypatch.setattr(c,'chat_json',chat)
+    assert creative.post('/api/creative/pid/design',json={'art':'手绘漫画','tone':'温馨','confirm_paid':True}).status_code==200
+    drain()
+    with Session() as db:
+        run=db.get(Record,'creative_pid')
+        assert run.data.get('items') in (None,[]) and run.data['stage']=='designing'
+        task=db.get(Task,run.data['watch'])
+        records=list(db.scalars(select(Record).where(Record.kind=='node_output')))
+    errors=task.result.get('model_output_errors') or []
+    assert task.status in ('needs_review','failed')
+    assert errors, 'the costume node must have retried with the missing-character feedback'
+    message=json.dumps(errors,ensure_ascii=False)
+    assert '缺少这些角色的服装记录' in message and 'C001' in message
+    assert '空衣服模式' in message

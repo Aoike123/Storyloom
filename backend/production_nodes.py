@@ -108,6 +108,19 @@ def retry_current_node(db,work):
         project=db.get(Record,sid)
         raw=(project.data.get('board_diagnostics') or {}).get('raw') if project else None
         chunk=(project.data.get('board_chunk_diagnostics') or {}) if project else {}
+        review=(project.data.get('review') or {}) if project else {}
+        # A rejected text pre-review is a recoverable failure: the reviewer already named the
+        # concrete problems, so they are handed to the storyboard model instead of stopping cold
+        # with "请看高级详情".
+        review_issues=list(dict.fromkeys(str(issue) for issue in (review.get('issues') or []) if str(issue).strip()))
+        review_rejected=review.get('approved') is False and bool(review_issues)
+        if review_rejected:
+            details=[f'分镜专业预审未通过（{key}：{value}）' for key,value in
+                (('连续性',review.get('continuity')),('戏剧逻辑',review.get('dramatic_logic')),
+                 ('可剪辑性',review.get('editability')),('制作可行性',review.get('production_feasibility')))
+                if isinstance(value,str) and value.strip() and value.strip() not in ('通过','可衔接','成立','可剪辑','待视觉审核')]
+            feedback_items.append('上一次分镜专业预审发现了这些问题，本次必须逐条修正：'
+                +'；'.join(review_issues[:8])+(('。评审结论：'+'；'.join(details)) if details else ''))
         if chunk.get('errors'):
             detail='；'.join(str(error.get('field'))+'：'+str(error.get('reason')) for error in chunk['errors'][:5])
             feedback_items.append(f"{chunk.get('segment_id') or '片段'} 上一次分镜输出问题：{detail}")
@@ -124,8 +137,9 @@ def retry_current_node(db,work):
                 pass
         feedback='；'.join(feedback_items)[:1200]
         # A failure that happened inside one segment must not throw away the segments that
-        # already passed validation; only a whole-board failure regenerates everything.
-        reuse_valid_chunks=bool(chunk.get('errors')) and not raw
+        # already passed validation; only a whole-board failure regenerates everything. A rejected
+        # pre-review judges the film as a whole, so every segment is rewritten.
+        reuse_valid_chunks=bool(chunk.get('errors')) and not raw and not review_rejected
         for task in problems:
             task.status='superseded';task.message='已由重新运行的分镜节点接替；原错误与输出保留。'
         data={key:value for key,value in run.data.items() if key!='watch'}
@@ -233,7 +247,11 @@ def run_node(task_id,payload,owner):
         if state=='storyboarding':
             with Session() as db:
                 run=db.get(Record,'creative_'+sid);watch=db.get(Task,run.data.get('watch',''))
-            raise HTTPException(409,'分镜生成暂停：'+(watch.message if watch else '分镜任务记录缺失'))
+            # Point at the reviewer's own words instead of asking the operator to dig for them.
+            project=db.get(Record,sid)
+            issues=[str(issue).strip() for issue in ((project.data.get('review') or {}).get('issues') or []) if str(issue).strip()]
+            detail=('；'.join(issues[:5])) if issues else (watch.message if watch else '分镜任务记录缺失')
+            raise HTTPException(409,'分镜生成暂停：'+detail)
         return _finish(task_id,owner,payload,'rendering')
     if state in ('storyboard_ready','samples_review','frames_review'):
         # Legacy rounds stop at the removed shot-reference-image step; the reviewed project

@@ -70,12 +70,29 @@ class AssetSheetPlan(Spec):
         costume_characters={item.character_ref for item in costumes}
         if not costume_characters <= set(characters):
             raise ValueError('每套服装必须绑定已有身份')
-        required={item.character_id for item in character_items if item.costume_mode=='required'}
-        forbidden={item.character_id for item in character_items if item.costume_mode=='none'}
-        if not required <= costume_characters:
-            raise ValueError('标记为 required 的人物必须至少绑定一套服装')
-        if forbidden & costume_characters:
-            raise ValueError('标记为 none 的神话生物不能绑定独立服装')
+        # Character -> costume -> set is one sequence for every role, so a character can never
+        # drop out of the costume stage. Natural bodies answer it with the empty-clothing mode.
+        # Several outfits for one character stay legal: those are wardrobe alternatives, not
+        # separate people, and the storyboard picks one per shot.
+        owners={item.character_id:item for item in character_items}
+        missing=[item.character_id for item in character_items if item.character_id not in costume_characters]
+        if missing:
+            raise ValueError('每个角色都必须至少有一条服装记录；不着衣物的天然体表角色请使用空衣服模式（mode=bare），'
+                             '不要省略记录。缺少服装记录：'+'、'.join(missing))
+        for costume in costumes:
+            owner=owners[costume.character_ref]
+            if costume.mode=='bare':
+                if not isinstance(owner.appearance,CreatureAppearance) or owner.costume_mode!='none':
+                    raise ValueError(f'「{owner.name}」不是天然体表的不着衣物角色，不能使用空衣服模式；'
+                                     '人类或有服装需求的角色必须给出实际服装，避免身份图上的基础服装被当成最终衣着')
+            else:
+                if owner.costume_mode=='none':
+                    raise ValueError(f'「{owner.name}」标记为 costume_mode=none，不能绑定实际服装；请改用空衣服模式')
+        bare_characters={costume.character_ref for costume in costumes if costume.mode=='bare'}
+        mixed=sorted(bare_characters & {costume.character_ref for costume in costumes if costume.mode=='garment'})
+        if mixed:
+            raise ValueError('同一角色的空衣服模式与实际服装不能同时存在：'+'、'.join(mixed)+
+                             '。该角色到底着不着衣物只能有一个答案。')
         names = [item.name for item in self.items if item.role == 'character']
         if len(set(names)) != len(names):
             raise ValueError('同一人物不能重复建立身份')
@@ -85,6 +102,8 @@ class AssetSheetPlan(Spec):
 
 
 def frame(kind,item=None):
+    if kind=='costume_sheet' and getattr(item,'mode','garment')=='bare':
+        raise ValueError('空衣服模式不生成服装设定图：该角色的自然体表已由人物身份图承载。')
     if kind == 'character_sheet':
         if item is not None and isinstance(item.appearance,CreatureAppearance):
             if item.appearance.body_plan in ('拟人双足','兽首人身') and item.costume_mode!='none':

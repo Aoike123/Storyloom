@@ -1,5 +1,6 @@
 from fastapi import HTTPException
 import os
+import re
 import time
 import threading
 import httpx
@@ -40,7 +41,28 @@ def repair_message(value):
         detail=change.get('asset_id') or '、'.join(change.get('asset_ids') or []) or '、'.join(change.get('source_asset_ids') or [])
         parts.append(label+('（'+detail+'）' if detail else ''))
     return '模型原稿经代码校正：'+'；'.join(dict.fromkeys(parts))[:600]
-NO_AUTO_RETRY_MARKERS=('额度','未配置','未开启','权限','暂停','HTTP 401','HTTP 402','HTTP 403','Key')
+
+
+# Automatic recovery cannot help when the operator still has to act: no budget, no configuration,
+# a blocked provider key, or denied model access. Matching must stay precise — a bare word like
+# 「暂停」also appears in recoverable messages such as「分镜生成暂停」.
+NO_AUTO_RETRY_MARKERS=('额度','未配置','未开启','权限','供应商今日已暂停','HTTP 401','HTTP 402','HTTP 403','Key')
+
+
+def is_retryable_failure(message):
+    """Whether an automatic retry could plausibly succeed without a person changing something."""
+    text=message or ''
+    return not any(marker in text for marker in NO_AUTO_RETRY_MARKERS)
+
+
+_FAILURE_CODE=re.compile(r'（错误编号 E-[0-9A-F]{6}）')
+
+
+def with_failure_code(message, code):
+    """Attach one failure code. A message that already carries one refers to an earlier attempt,
+    so the stale code is replaced instead of stacking a second code into the same line."""
+    text=_FAILURE_CODE.sub('',message or '').strip()
+    return f'{text}（错误编号 {code}）'
 
 
 def auto_retry_node(task_id):
@@ -49,7 +71,7 @@ def auto_retry_node(task_id):
         task=db.get(Task,task_id)
         if not task or task.kind not in PRODUCTION_KINDS:return False
         if task.payload.get('auto_retry_count',0)>=AUTO_RETRY_LIMIT:return False
-        if any(marker in (task.message or '') for marker in NO_AUTO_RETRY_MARKERS):return False
+        if not is_retryable_failure(task.message):return False
         work=db.get(Record,task.payload.get('work_id',''))
         if not work:return False
         attempt=int(task.payload.get('auto_retry_count',0))+1
@@ -361,17 +383,17 @@ def process_one(owner,lane='any'):
         patch(task_id,owner,status='waiting',lease=time.time()+30,message=str(exc)[:900])
     except HTTPException as exc:
         code=record_failure(task_id,exc)
-        patch_failure(task_id,owner,'needs_review',f'{str(exc.detail)[:820]}（错误编号 {code}）',code)
+        patch_failure(task_id,owner,'needs_review',with_failure_code(str(exc.detail)[:820],code),code)
         auto_retry_node(task_id)
     except ProviderError as exc:
         code=record_failure(task_id,exc)
-        patch_failure(task_id,owner,'needs_review',f'{str(exc)[:820]}（错误编号 {code}）',code)
+        patch_failure(task_id,owner,'needs_review',with_failure_code(str(exc)[:820],code),code)
         auto_retry_node(task_id)
     except Exception as exc:
         # Do not leak provider response bodies, signed URLs, credentials, or local paths.
         code=record_failure(task_id,exc)
         patch_failure(task_id,owner,'failed',
-            f'任务未完成（{type(exc).__name__}，错误编号 {code}）。已保留已有结果，可重新运行当前节点。',code)
+            with_failure_code(f'任务未完成（{type(exc).__name__}）。已保留已有结果，可重新运行当前节点。',code),code)
         auto_retry_node(task_id)
     finally:stop.set();thread.join(timeout=1)
     return True

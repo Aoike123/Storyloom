@@ -80,6 +80,13 @@ def workspace(pid: str):
         data['segments']=current.data.get('segments') if current else None
         repairs=current.data.get('board_repairs') if current else None
         data['board_repairs']=repairs if repairs else None
+        review=(current.data.get('review') or {}) if current else {}
+        issues=[str(issue).strip() for issue in (review.get('issues') or []) if str(issue).strip()]
+        # Surface the text pre-review where the operator already is, instead of "请看高级详情".
+        data['storyboard_review']=({'approved':bool(review.get('approved')),'issues':issues,
+            'continuity':review.get('continuity'),'dramatic_logic':review.get('dramatic_logic'),
+            'editability':review.get('editability'),'production_feasibility':review.get('production_feasibility')}
+            if review else None)
     data['creative'] = creative.workspace(sid) if sid else None
     data['display_stage']=data['stage']
     if data['stage'] in ('producing','compositing') and data['creative']:
