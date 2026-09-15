@@ -97,16 +97,20 @@
 .studio-live-module{position:relative;scroll-margin-top:96px;border-radius:12px}
 .studio-live-module.is-following::after{content:'';position:absolute;top:22px;right:2px;width:6px;height:6px;border-radius:50%;background:#789960;box-shadow:0 0 0 5px #78996017;pointer-events:none}
 .studio-follow-control{position:fixed;right:max(20px,calc((100vw - 1440px)/2 + 28px));bottom:max(20px,env(safe-area-inset-bottom,0px));z-index:65;max-width:290px;color:#38533b}
-.studio-follow-status,.studio-follow-control button{min-height:52px;display:flex;align-items:center;gap:11px;padding:8px 13px;border:1px solid #cad9be;border-radius:999px;background:#f8fbf3ee;box-shadow:0 12px 34px #243b2630;backdrop-filter:blur(14px)}
-.studio-follow-status{pointer-events:none;opacity:.9}
+.studio-follow-status,.studio-follow-control>button{min-height:52px;display:flex;align-items:center;gap:11px;padding:8px 13px;border:1px solid #cad9be;border-radius:999px;background:#f8fbf3ee;box-shadow:0 12px 34px #243b2630;backdrop-filter:blur(14px)}
+.studio-follow-status{opacity:.94}
+.studio-follow-status>span{flex:1}
+.studio-follow-unlock{flex:0 0 auto;min-height:32px;padding:5px 13px;border-radius:999px;border:1px solid #b9cdab;background:#fff;color:#4f6f45;font-size:10px;cursor:pointer;transition:border-color .16s ease,background .16s ease}
+.studio-follow-unlock:hover{border-color:#8aa976;background:#f2f8ec}
+.studio-follow-unlock:focus-visible{outline:2px solid #6f9259;outline-offset:2px}
 .studio-follow-status>i{width:9px;height:9px;flex:0 0 9px;border-radius:50%;background:#6f9458;box-shadow:0 0 0 5px #6f94581b;animation:studio-follow-pulse 1.8s ease-in-out infinite}
 .studio-follow-control span{display:grid;min-width:0;text-align:left}
 .studio-follow-control strong{color:#36533a;font-size:11px;font-weight:600;line-height:1.35}
 .studio-follow-control small{margin-top:2px;color:#7a8f70;font-size:9px;line-height:1.35;white-space:nowrap}
-.studio-follow-control button{width:100%;border-color:#91ae7c;background:#eff6e7;color:#547548;cursor:pointer;transition:transform .16s ease,background .16s ease,border-color .16s ease}
-.studio-follow-control button:hover{transform:translateY(-2px);border-color:#6f9259;background:#f5faef}
-.studio-follow-control button:focus-visible{outline:2px solid #6f9259;outline-offset:3px}
+.studio-follow-control>button{width:100%;border-color:#91ae7c;background:#eff6e7;color:#547548;cursor:pointer;transition:transform .16s ease,background .16s ease,border-color .16s ease}
+.studio-follow-control>button:hover{transform:translateY(-2px);border-color:#6f9259;background:#f5faef}
+.studio-follow-control>button:focus-visible{outline:2px solid #6f9259;outline-offset:3px}
 @keyframes studio-follow-pulse{50%{box-shadow:0 0 0 8px #6f945808}}
-@media(max-width:760px){.studio-live-module{scroll-margin-top:82px}.studio-live-module.is-following::after{top:17px;right:0}.studio-follow-control{left:16px;right:16px;bottom:max(12px,env(safe-area-inset-bottom,0px));max-width:none;display:flex;justify-content:center}.studio-follow-status,.studio-follow-control button{width:min(100%,390px);min-height:54px;padding:9px 14px}.studio-review-handoff{padding:15px 14px}.studio-review-handoff h3{font-size:14px}}
+@media(max-width:760px){.studio-live-module{scroll-margin-top:82px}.studio-live-module.is-following::after{top:17px;right:0}.studio-follow-control{left:16px;right:16px;bottom:max(12px,env(safe-area-inset-bottom,0px));max-width:none;display:flex;justify-content:center}.studio-follow-status,.studio-follow-control>button{width:min(100%,390px);min-height:54px;padding:9px 14px}.studio-review-handoff{padding:15px 14px}.studio-review-handoff h3{font-size:14px}}
 @media(prefers-reduced-motion:reduce){.studio-follow-status>i{animation:none}.studio-follow-control button{transition:none}}
 .asset-redesign-heading.is-rejected{align-items:flex-start}.asset-redesign-heading.is-rejected>div:first-child{flex:1}.asset-redesign-heading.is-rejected textarea{width:100%;margin-top:8px;padding:10px;border:1px solid #b6c8a4;border-radius:8px;font-size:12px;line-height:1.7;font-family:inherit;color:#3d5236;background:#fff;resize:vertical}.asset-redesign-heading.is-rejected small{display:block;margin-top:6px;font-size:11px;color:#718560;line-height:1.7}.asset-redesign-heading.is-rejected .asset-redesign-action{margin-top:8px}

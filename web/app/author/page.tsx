@@ -169,7 +169,7 @@ export default function Author(){
     </div>
    </div>
   </>}
-  {followEnabled&&productionFollow.ready&&<div className={'studio-follow-control'+(productionFollow.following?' is-following':' is-paused')} aria-live="polite">{productionFollow.following?<div className="studio-follow-status"><i aria-hidden="true"/><span><strong>自动跟随制作</strong><small>{currentStage?.name||'当前节点'} · 滚动离开即可暂停</small></span></div>:<button type="button" onClick={productionFollow.resume}><LocateFixed size={18}/><span><strong>回到正在制作</strong><small>恢复自动跟随 · {currentStage?.name||'当前节点'}</small></span></button>}</div>}
+  {followEnabled&&productionFollow.ready&&<div className={'studio-follow-control'+(productionFollow.following?' is-following':' is-paused')} aria-live="polite">{productionFollow.following?<div className="studio-follow-status"><i aria-hidden="true"/><span><strong>自动跟随制作</strong><small>{currentStage?.name||'当前节点'} · 跟随输出文字，可随时解锁</small></span><button type="button" className="studio-follow-unlock" aria-label="解锁自动跟随，自由滚动页面" title="解锁自动跟随，自由滚动页面" onClick={productionFollow.unlock}>解锁</button></div>:<button type="button" onClick={productionFollow.resume}><LocateFixed size={18}/><span><strong>回到正在制作</strong><small>恢复自动跟随 · {currentStage?.name||'当前节点'}</small></span></button>}</div>}
   <footer className="studio-footer"><span>叙间 · 从一篇微小说，到一个可观看的故事</span></footer>
  </main>;
 }

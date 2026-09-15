@@ -26,6 +26,10 @@ export default function AccountDock({next = '/'}: {next?: string}) {
   const [note, setNote] = useState('');
   const [noteError, setNoteError] = useState(false);
   const [reason, setReason] = useState('');
+  // The browser's own-key hint lives in sessionStorage, which the server cannot read. Reading it
+  // during render made the server send "登录" while the first client render said "使用自己的 Key",
+  // so React reported a hydration mismatch. It is filled in after mount instead.
+  const [localOwnKeys, setLocalOwnKeys] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
 
   async function reload() {
@@ -36,7 +40,10 @@ export default function AccountDock({next = '/'}: {next?: string}) {
     }
   }
 
-  useEffect(() => {void reload();}, []);
+  useEffect(() => {
+    setLocalOwnKeys(!!readModelAccess());
+    void reload();
+  }, []);
 
   useEffect(() => {
     // Beans are spent by the worker, so the balance changes without this component being involved.
@@ -93,8 +100,8 @@ export default function AccountDock({next = '/'}: {next?: string}) {
     }
   }
 
-  // The server is authoritative about the payer; local storage is only a hint.
-  const usingOwnKeys = status?.own_keys ?? !!readModelAccess();
+  // The server is authoritative about the payer; local storage is only a hint, and only after mount.
+  const usingOwnKeys = status?.own_keys ?? localOwnKeys;
   const account = status?.account ?? null;
   const wallet = status?.wallet ?? null;
   const beans = wallet ? Number(wallet.beans) : null;

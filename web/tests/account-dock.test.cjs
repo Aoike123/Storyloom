@@ -27,6 +27,33 @@ const dock=load('app/account-dock.ts',{'./model-access':modelAccess},{window:fak
 const account=load('app/zhihu-account.ts',{'./model-access':modelAccess});
 const types=load('app/reader-types.ts');
 
+test('the dock renders the same label on the server as in the first client render',()=>{
+  // The trigger used to read the own-key session during render, so the server sent "登录" while the
+  // first client render said "使用自己的 Key" and React reported a hydration mismatch. The stored
+  // hint may only be applied after mount.
+  const React=require('react');
+  const {renderToStaticMarkup}=require('react-dom/server');
+  const reads=[];
+  const access={
+    readModelAccess:()=>{reads.push(1);return {token:'own-key-session',mode:'own',expires_at:Date.now()/1000+3600};},
+    clearModelAccess:()=>{},
+  };
+  const icons=new Proxy({},{get:()=>()=>null});
+  const zhihu={emptyZhihuStatus:{configured:false,authorized:false,account:null,wallet:null,can_generate:false,own_keys:false},
+    readZhihuStatus:async()=>zhihu.emptyZhihuStatus,zhihuLoginLink:()=>'/api/zhihu/login',zhihuLogout:async()=>undefined};
+  const helpers={OWN_KEY_PROVIDERS:[],announcePayerChanged:()=>{},clearOwnKeys:async()=>{},
+    isBeansProblem:()=>false,onBeansProblem:()=>()=>{},saveOwnKeys:async()=>{}};
+  const component=load('app/AccountDock.tsx',{
+    'react/jsx-runtime':require('react/jsx-runtime'),'react':React,'lucide-react':icons,
+    './model-access':access,'./zhihu-account':zhihu,'./account-dock':helpers,
+  });
+  const html=renderToStaticMarkup(React.createElement(component.default,{next:'/'}));
+  assert.match(html,/aria-label="登录"/);
+  assert.doesNotMatch(html,/使用自己的 Key/);
+  // Rendering must not consult the browser's session at all: that is what made the two disagree.
+  assert.deepEqual(reads,[]);
+});
+
 test('a wallet that cannot cover the next step is recognised from the server message',()=>{
   assert.equal(dock.isBeansProblem('算力豆不足：这一步需要 MiniMax 视频。请填写自己的 API Key 继续。'),true);
   assert.equal(dock.isBeansProblem('算力豆已用完'),true);
