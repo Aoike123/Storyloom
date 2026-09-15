@@ -1,6 +1,6 @@
 'use client';
 import {useEffect, useRef, useState} from 'react';
-import {ChevronDown, Coins, KeyRound, LogOut, X} from 'lucide-react';
+import {ChevronDown, Coins, KeyRound, LogOut, UserRound, X} from 'lucide-react';
 import {clearModelAccess, readModelAccess} from './model-access';
 import {emptyZhihuStatus, readZhihuStatus, zhihuLoginLink, zhihuLogout, type ZhihuStatus} from './zhihu-account';
 import {
@@ -109,15 +109,18 @@ export default function AccountDock({next = '/'}: {next?: string}) {
   const accountInitial = Array.from(account?.fullname || '叙')[0] || '叙';
 
   return <div className="account-dock" ref={panel}>
-    <button className="account-dock-trigger" aria-expanded={open} onClick={() => setOpen(value => !value)}>
+    <button type="button" className="account-dock-trigger" aria-expanded={open}
+      aria-label={beans !== null ? `${label}，剩余 ${beans.toFixed(0)} 算力豆` : label}
+      onClick={() => setOpen(value => !value)}>
       {account?.avatar_path
-        ? <img src={account.avatar_path} alt=""/>
-        : <span className="account-dock-dot" aria-hidden="true"/>}
+        ? <img className="account-dock-avatar" src={account.avatar_path} alt=""/>
+        : <span className="account-dock-avatar account-dock-avatar-fallback" aria-hidden="true">
+          {account ? accountInitial : usingOwnKeys ? <KeyRound size={13}/> : <UserRound size={14}/>}
+        </span>}
       <span className="account-dock-name">{label}</span>
       {beans !== null && <span className={'account-dock-beans' + (beans < Number(wallet?.costs?.video ?? 0) ? ' is-low' : '')}>
         <Coins size={12}/>{beans.toFixed(0)}
       </span>}
-      {beans === null && usingOwnKeys && <KeyRound size={12}/>}
       <ChevronDown size={12} className="account-dock-chevron" aria-hidden="true"/>
     </button>
 
@@ -164,8 +167,17 @@ export default function AccountDock({next = '/'}: {next?: string}) {
       <div className="account-dock-actions">
         {!account && status?.configured &&
           <a className="button primary" href={zhihuLoginLink(next)}>用知乎账号登录</a>}
-        {account && <button className="button secondary" disabled={busy} onClick={async () => {
-          await zhihuLogout(); clearModelAccess(); setNote('已退出登录。'); await reload();
+        {account && <button type="button" className="button secondary" disabled={busy} onClick={async () => {
+          setBusy(true); setNote(''); setNoteError(false);
+          try {
+            await zhihuLogout();
+            clearModelAccess();
+            // Destroy the private workspace immediately and keep its work id out of history.
+            window.location.replace('/');
+          } catch (error) {
+            setNote((error as Error).message || '退出失败，请稍后重试。');
+            setNoteError(true); setBusy(false);
+          }
         }}><LogOut size={13}/> 退出登录</button>}
       </div>
 

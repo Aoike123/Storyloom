@@ -44,7 +44,7 @@
 }
 
 .account-dock-trigger{
-  min-height:38px;
+  min-height:40px;
   display:inline-flex;
   align-items:center;
   gap:8px;
@@ -59,8 +59,8 @@
   backdrop-filter:blur(10px);
 }
 .account-dock-trigger:hover,.account-dock-trigger[aria-expanded=true]{border-color:var(--dock-line-strong);background:var(--dock-raised)}
-.account-dock-trigger img{width:24px;height:24px;border:1px solid var(--dock-line-strong);border-radius:50%;object-fit:cover;background:var(--dock-accent-soft)}
-.account-dock-dot{width:8px;height:8px;margin:0 4px;border-radius:50%;background:var(--dock-accent);box-shadow:0 0 0 4px var(--dock-accent-soft)}
+.account-dock-avatar{width:24px;height:24px;flex:0 0 24px;border:1px solid var(--dock-line-strong);border-radius:50%;object-fit:cover;background:var(--dock-accent-soft)}
+.account-dock-avatar-fallback{display:grid;place-items:center;color:var(--dock-accent);font:500 11px/1 Georgia,serif}
 .account-dock-name{max-width:9em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .account-dock-beans{display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:999px;background:var(--dock-chip);color:var(--dock-accent);font-weight:600;font-variant-numeric:tabular-nums}
 .account-dock-beans.is-low{background:#a95d3420;color:var(--dock-danger)}

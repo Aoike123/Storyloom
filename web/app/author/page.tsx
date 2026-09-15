@@ -123,7 +123,7 @@ export default function Author(){
  const activeShot=shots[index],recommending=activeStatuses.includes(work?.recommend_task_status?.status),currentStage=workStages.find(s=>s.id===stage);
  const retryCurrentNode=!browsingEarlier&&canRetryCurrentNode(work,stage);
  return <main className="author-page">
-  <header className="studio-header"><Link href="/" className="studio-brand">叙间<span>STORYLOOM / STUDIO</span></Link><div className="studio-header-right"><Link className="studio-back" href="/"><ArrowLeft size={15}/>返回故事市场</Link><AccountDock next={'/author'+(selected?'?work='+encodeURIComponent(selected):'')}/></div></header>
+  <header className="studio-header"><Link href="/" className="studio-brand">叙间<span>STORYLOOM / STUDIO</span></Link><div className="studio-header-right"><Link className="studio-back" href="/"><ArrowLeft size={15}/><span>返回故事市场</span></Link><AccountDock next={'/author'+(selected?'?work='+encodeURIComponent(selected):'')}/></div></header>
   <div className="studio-heading"><div><span className="studio-eyebrow">MICROFICTION TO MOTION</span><h1>把一个脑洞，拍成一幕。</h1><p>阅读原文，选择风格，见证微小说成为漫剧的每一步。</p></div>{works.length>0&&<label className="studio-picker">继续已有制作<select aria-label="继续已有制作" value={selected} onChange={e=>{if(e.target.value)window.location.href='/author?work='+encodeURIComponent(e.target.value);}}><option value="">选择我的制作</option>{works.map(w=><option value={w.id} key={w.id}>{w.title}</option>)}</select></label>}</div>
   <InteractionFeedback busy={opening||busy} text={opening?'正在读取所选微小说原文与制作记录…':busy?actionLabel:message} error={!opening&&!busy&&messageError}/>
   {syncError&&<div className="studio-error" role="alert">{syncError}{work?' · 当前显示上次同步结果。':''}<button disabled={busy} onClick={()=>setRefresh(n=>n+1)}>重新同步</button></div>}

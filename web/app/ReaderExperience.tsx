@@ -390,7 +390,7 @@ export default function ReaderExperience() {
     <nav className="reader-nav">
       <button className="reader-brand" onClick={() => {if (story) back(); else window.scrollTo({top: 0, behavior: 'instant'});}}>叙间<span>每个故事，都有另一种可能</span></button>
       <div className="reader-entry-links">
-        <Link href="/author" prefetch={false} onClick={() => {if (!story) remember('nav:author');}} data-reader-focus="nav:author">我的制作 <ArrowRight size={14}/></Link>
+        <Link className="reader-work-link" href="/author" prefetch={false} onClick={() => {if (!story) remember('nav:author');}} data-reader-focus="nav:author">我的制作 <ArrowRight size={14}/></Link>
         <AccountDock next={story ? '/?story=' + encodeURIComponent(story.id) : '/'}/>
       </div>
     </nav>

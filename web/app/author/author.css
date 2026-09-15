@@ -30,8 +30,15 @@
 .asset-redesign .asset-redesign-note{font-size:10px;color:#8b997c}
 .asset-feedback-permission{margin:10px 0;color:#526c42!important}.asset-feedback-note{display:block;margin-top:5px;color:#7c8c6e;font-size:11px;line-height:1.8}
 
-/* Zhihu account sign-in and bean balance */
-.studio-header-right{display:flex;align-items:center;gap:14px}
+/* One connected route/account control, shared in spirit with the dark reader header. */
+.studio-header-right{display:flex;align-items:center;gap:0;padding:3px;border:1px solid #d7e0cf;border-radius:999px;background:#f8faf4;box-shadow:0 7px 20px #34482f0b;transition:border-color .16s ease,background .16s ease}
+.studio-header-right:focus-within{border-color:#91a982;background:#fbfcf8}
+.studio-header-right .studio-back{min-height:38px;padding:0 13px;border-radius:999px;transition:background .16s ease,color .16s ease;white-space:nowrap}
+.studio-header-right .studio-back:hover{background:#edf3e6;color:#38543b}
+.studio-header-right>.account-dock{display:flex;align-items:center}
+.studio-header-right>.account-dock::before{content:'';width:1px;height:20px;flex:0 0 1px;background:#dce4d4}
+.studio-header-right .account-dock-trigger{min-height:38px;padding:6px 10px 6px 8px;border:0;background:transparent;box-shadow:none;backdrop-filter:none}
+.studio-header-right .account-dock-trigger:hover,.studio-header-right .account-dock-trigger[aria-expanded=true]{border-color:transparent;background:#eaf1e2}
 .zhihu-account{margin:0 0 18px;padding:16px 18px;border:1px solid #d7e2ca;border-radius:10px;background:#f7faf1}
 .zhihu-account-heading{display:flex;align-items:center;gap:10px;color:#4c6440}
 .zhihu-account-heading strong{font-size:15px;font-weight:600}
@@ -46,6 +53,7 @@
 .zhihu-account .button{margin:0}
 .studio-notice{margin:0 0 14px;padding:10px 14px;border:1px solid #c9dcb4;border-left:4px solid #6f9a52;border-radius:8px;background:#f2f8e9;color:#4c6440;font-size:12px}
 @media(max-width:950px){.asset-redesign-heading{align-items:flex-start;flex-direction:column;gap:14px}.asset-redesign-action{max-width:none}.asset-redesign-action .button{min-height:44px}}
+@media(max-width:520px){.studio-header{padding:18px 0}.studio-header-right{padding:2px}.studio-header-right .studio-back,.studio-header-right .account-dock-trigger{min-height:40px}.studio-header-right .studio-back{padding-inline:10px;font-size:11px}.studio-header-right .studio-back svg{width:13px}.studio-header-right .account-dock-trigger{padding-inline:8px}}
 
 .studio-asset-grid{align-items:start}
 
