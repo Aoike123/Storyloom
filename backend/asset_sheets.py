@@ -11,6 +11,19 @@ MAX_CHARACTERS = 6
 MAX_MATERIALS = 12
 PROMPT_BATCH_SIZE = 2
 
+# Which parts of a body are human. Whether the identity sheet must cover the character is decided
+# by anatomy first, never by the plan name: 兽首人身 is a beast head on a human torso, so asking it
+# to "完整展示自然体表" asks for a naked human body, which the provider refuses as prohibited
+# content. Only a body with no human part may show its natural surface (fur, scales, feathers,
+# shell), and only when the story assigns it no clothing either.
+HUMAN_BODY_PARTS=(('躯干','torso'),('臂手','arms_hands'),('腿足','legs_feet'))
+
+
+def human_body_regions(appearance):
+    """Labels of the human body regions, in the order the prompt names them. Empty for pure beasts."""
+    return [label for label,field in HUMAN_BODY_PARTS
+            if (part:=getattr(appearance,field,None)) is not None and part.nature=='人类']
+
 
 class IdentityPlan(Spec):
     visual_style: VisualStyle
@@ -82,6 +95,13 @@ class AssetSheetPlan(Spec):
         for costume in costumes:
             owner=owners[costume.character_ref]
             if costume.mode=='bare':
+                # The empty-clothing mode answers "this species wears no story clothing". A body
+                # with human regions would be rendered naked, which the provider refuses and which
+                # no costume record can fix, so those characters must bring real clothing.
+                regions=human_body_regions(owner.appearance) if isinstance(owner.appearance,CreatureAppearance) else []
+                if regions:
+                    raise ValueError(f'「{owner.name}」不能使用空衣服模式：它是兽首人身一类带人类{"、".join(regions)}的角色，'
+                                     '空衣服模式会把它的人类身体画成裸露并被供应商判定违规；请为该角色给出实际服装')
                 if not isinstance(owner.appearance,CreatureAppearance) or owner.costume_mode!='none':
                     raise ValueError(f'「{owner.name}」不是天然体表的不着衣物角色，不能使用空衣服模式；'
                                      '人类或有服装需求的角色必须给出实际服装，避免身份图上的基础服装被当成最终衣着')
@@ -101,15 +121,26 @@ class AssetSheetPlan(Spec):
         return self
 
 
+def covering_text(appearance,costume_mode):
+    """What the identity sheet puts on the body: anatomy decides first, clothing decides the rest."""
+    regions=human_body_regions(appearance)
+    if regions:
+        return ('不添加剧情服装、盔甲、法器或饰品；人类'+'、'.join(regions)+
+                '必须以无标识、低遮挡的中性基础短装覆盖，保留必要遮盖，不做裸露、紧身透视或性化呈现；'
+                '非人类分区的毛皮、鳞片、羽毛或甲壳完整露出，不被衣物遮住物种结构。')
+    if appearance.body_plan in ('拟人双足','兽首人身') and costume_mode!='none':
+        # A clothed humanoid still gets the neutral base outfit, so the identity sheet never looks
+        # undressed while the story costume stays in its own sheet.
+        return '不添加剧情服装、盔甲、法器或饰品；仅使用无标识、低遮挡的中性基础短装，不遮住体表和物种结构。'
+    return '不添加人类服装、盔甲、法器或饰品，完整展示该物种自然体表与身体结构。'
+
+
 def frame(kind,item=None):
     if kind=='costume_sheet' and getattr(item,'mode','garment')=='bare':
         raise ValueError('空衣服模式不生成服装设定图：该角色的自然体表已由人物身份图承载。')
     if kind == 'character_sheet':
         if item is not None and isinstance(item.appearance,CreatureAppearance):
-            if item.appearance.body_plan in ('拟人双足','兽首人身') and item.costume_mode!='none':
-                clothing='不添加剧情服装、盔甲、法器或饰品；仅使用无标识、低遮挡的中性基础短装，不遮住体表和物种结构。'
-            else:
-                clothing='不添加人类服装、盔甲、法器或饰品，完整展示该物种自然体表与身体结构。'
+            clothing=covering_text(item.appearance,item.costume_mode)
             return ('神话生物或非人角色身份三视图设定板。正面、左侧面、背面三个全身或全体视图从左到右并排；'
                     '同一物种、同一头身分区、体表、肢体、尾翼角及固定特征，等比例、等尺寸、同一地面基线，主体完整可见。'
                     '头部和颈部以下身体必须分别服从结构化分区，不得把头部物种特征扩散到人身或把妖身替换成人身。'

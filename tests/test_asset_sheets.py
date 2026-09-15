@@ -206,6 +206,44 @@ def test_pig_head_human_body_is_structurally_locked_by_region():
     with pytest.raises(ValidationError):sheets.CharacterSheet.model_validate(pig)
 
 
+def test_the_identity_sheet_covers_exactly_the_human_body_regions():
+    """遮盖按解剖分区决定，不按整体构型搭配 costume_mode。
+
+    兽首人身（以及任何带人类躯干、臂手、腿足的分区）在旧逻辑里只要 costume_mode=none 就掉进
+    else，被要求"完整展示该物种自然体表"，等于让模型画一张裸露的人类身体；供应商按违规内容
+    拒绝并返回 HTTP 451。人类分区必须始终遮盖，非人类体表照旧完整露出。
+    """
+    pig=creature('猪八戒','猪首类人神怪','兽首人身')
+    for costume_mode in ('required','optional','none'):
+        pig['costume_mode']=costume_mode
+        prompt=sheets.compose_prompt(style(),sheets.CharacterSheet.model_validate(pig))
+        assert '人类躯干、臂手、腿足必须以无标识、低遮挡的中性基础短装覆盖' in prompt
+        assert '不做裸露、紧身透视或性化呈现' in prompt
+        assert '完整展示该物种自然体表' not in prompt
+    # 没有人类身体分区的角色保持原样：穿衣的类人给中性基础短装，纯兽身展示自然体表。
+    for body_plan,costume_mode,expected in (
+            ('拟人双足','required','仅使用无标识、低遮挡的中性基础短装'),
+            ('拟人双足','none','完整展示该物种自然体表与身体结构'),
+            ('龙形','required','完整展示该物种自然体表与身体结构'),
+            ('龙形','none','完整展示该物种自然体表与身体结构')):
+        prompt=sheets.compose_prompt(style(),sheets.CharacterSheet.model_validate(
+            creature('示例','示例物种',body_plan,costume_mode)))
+        assert expected in prompt,f'{body_plan}/{costume_mode}'
+
+
+def test_a_human_bodied_creature_cannot_use_the_empty_clothing_mode():
+    """空衣服模式在兽首人身身上等于要求一张裸体人类画面，必须在设计阶段就被拒绝。"""
+    pig=creature('猪八戒','猪首类人神怪','兽首人身','none')
+    with pytest.raises(ValidationError,match='人类躯干、臂手、腿足'):
+        sheets.AssetSheetPlan.model_validate({'visual_style':style(),
+            'items':[pig,bare_costume('W001','C002'),scene()]})
+    # With a real garment the same character is accepted.
+    pig['costume_mode']='required'
+    plan=sheets.AssetSheetPlan.model_validate({'visual_style':style(),
+        'items':[pig,{**costume(),'character_ref':'C002'},scene()]})
+    assert [item.role for item in plan.items]==['character','costume','scene']
+
+
 def test_demon_body_cannot_silently_fall_back_to_a_human_body():
     demon=creature('沙悟净','流沙河妖怪','拟人双足')
     demon['appearance']['body_nature']='妖异身体'

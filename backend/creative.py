@@ -126,7 +126,9 @@ def validate_costume_plan(raw,passages,characters):
         raise ModelOutputError('角色 → 服装 → 环境必须对每个角色都给出服装结论，缺少这些角色的服装记录：'
             +'、'.join(missing)+
             '。着衣物的角色给出实际服装（mode=garment）；天然体表、不着衣物的角色使用空衣服模式（mode=bare），'
-            'wardrobe 留空并用 bare_surface 写明自然体表依据。不要用空列表跳过整段。')
+            'wardrobe 留空并用 bare_surface 写明自然体表依据；但颈部以下为人类身体分区的角色（例如兽首人身）'
+            '必须给出实际服装，空衣服模式在这些角色身上等于要求一张裸露的人类身体画面，会被供应商拒绝。'
+            '不要用空列表跳过整段。')
     return result
 
 
