@@ -47,12 +47,67 @@ def _invalidate_record(row,reason,replacement_task_id,at):
     return True
 
 
-def invalidate_downstream_references(db,pid,reason,replacement_task_id):
-    """Invalidate every current pointer derived from replaced base artwork without deleting history."""
+def units_using_assets(project,asset_ids):
+    """Episodes whose storyboard binds one of these assets, in cut order.
+
+    The binding is what the episode's own shots recorded, so the answer is exact instead of a guess
+    about which episode "probably" uses a picture.
+    """
+    wanted=set(asset_ids or ())
+    if not wanted:return []
+    units=project.data.get('units') or {}
+    order=[segment['id'] for segment in ((project.data.get('segments') or {}).get('segments') or [])]
+    used=[]
+    for gid in order or list(units):
+        board=(units.get(gid) or {}).get('board') or {}
+        for shot in board.get('shots',[]):
+            if wanted & set(shot.get('assets') or []):
+                used.append(gid);break
+    return used
+
+
+def invalidate_units(db,pid,gids,reason,replacement_task_id):
+    """Drop the storyboards of the named episodes and stop their video tasks.
+
+    Replacing one picture used to invalidate the whole film. Now the episodes that actually bound
+    that picture are the ones that lose their storyboard, and the episodes beside them keep
+    everything they already paid for.
+    """
+    current=project(db,pid);units=dict(current.data.get('units') or {})
+    dropped=[gid for gid in gids if gid in units]
+    if not dropped:return []
+    for gid in dropped:units.pop(gid,None)
+    current.data={**current.data,'units':units,'requires_preproduction':True,'status':'awaiting_preproduction',
+        'downstream_invalidated_at':time.time(),'downstream_invalidation_reason':reason,
+        'replacement_task_id':replacement_task_id}
+    current.version+=1
+    for task in db.scalars(select(Task).where(Task.kind=='video')):
+        if task.payload.get('director_id')!=pid or task.status not in ('queued','running','waiting','completed','needs_review'):
+            continue
+        if task.payload.get('shot_id','').split('-')[0] in dropped:
+            task.status='superseded'
+            task.message='该情节的参考素材已更新，本片段需要重新生成'
+    db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'episode_references_invalidated',
+        'episodes':dropped,'reason':reason,'replacement_task_id':replacement_task_id,'at':time.time()}))
+    return dropped
+
+
+def invalidate_downstream_references(db,pid,reason,replacement_task_id,changed_asset_ids=None):
+    """Invalidate the current pointers derived from replaced base artwork.
+
+    With ``changed_asset_ids`` and an episode-based run, only the episodes that bound those assets
+    lose their work; everything else is kept. Without it — a full redesign, where no picture of the
+    previous plan is trustworthy — the whole film is invalidated as before.
+    """
+    current=project(db,pid)
+    if changed_asset_ids and current.data.get('units'):
+        affected=units_using_assets(current,changed_asset_ids)
+        if affected:
+            return invalidate_units(db,pid,affected,reason,replacement_task_id)
+        return []
     at=time.time();invalidated=[]
     for rid in ('prep_'+pid,'prep_gate_'+pid,'visual_'+pid,'visual_gate_'+pid):
         if _invalidate_record(db.get(Record,rid),reason,replacement_task_id,at):invalidated.append(rid)
-    current=project(db,pid)
     board_keys=('board','review','board_diagnostics','preproduction_stamp','board_recovery')
     if any(key in current.data for key in board_keys):
         saved={key:current.data.get(key) for key in board_keys if key in current.data}

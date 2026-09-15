@@ -24,6 +24,15 @@ def public_creator(value):
     return {'name': name, 'avatar_path': avatar}
 
 
+def release_progress(data):
+    """How much of the cut this release covers: 3 of 6 episodes, for the market card."""
+    units=data.get('published_units') or []
+    total=int(data.get('total_units') or 0)
+    if not total:return None
+    return {'published_units': len(units), 'total_units': total,
+            'complete': len(units) >= total, 'next_unit': data.get('next_unit')}
+
+
 def playable(entries):
     if not isinstance(entries, list) or not entries:
         return False
@@ -82,6 +91,9 @@ def catalog(refresh: bool = False):
             work = works_by_release.get(row.id) or works_by_director.get(data.get('director_id'))
             release = {'id': row.id, **{k: data.get(k) for k in ('title', 'source_title', 'author', 'description', 'entries')},
                        'source_work_id': story_id, 'project_id': work.id if work else None,
+                       # Publishing progress is public: a reader deciding what to open should see
+                       # how much of the cut is watchable, and the maker sees the same numbers.
+                       'progress': release_progress(data),
                        'mine': bool(work), 'created': row.created, 'creator': public_creator(data.get('creator'))}
             releases.append(release)
             if story_id:

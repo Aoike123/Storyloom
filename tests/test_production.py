@@ -61,7 +61,7 @@ def test_review_publish_reader_and_pause_intent(client,monkeypatch,sample_video)
     import shutil
     shutil.copyfile(sample_video,DATA/'media'/'prod.mp4')
     monkeypatch.setattr(p,'ready',lambda *a,**k:(None,'test',True))
-    monkeypatch.setattr(p,'matching',lambda t,pid,v,sid=None,token=None:t.payload.get('director_id')==pid and t.payload.get('director_version')==v)
+    monkeypatch.setattr(p,'matching',lambda t,pid,v,sid=None,token=None:t.payload.get('director_id')==pid and t.payload.get('director_version')==v and (sid is None or t.payload.get('shot_id')==sid))
     monkeypatch.setattr(p,'validate_references',lambda *a:None)
     with Session.begin() as db:
         setup(db)
@@ -74,13 +74,61 @@ def test_review_publish_reader_and_pause_intent(client,monkeypatch,sample_video)
     assert client.post(path,json={'version':3,'start':1,'end':4,'confirm_visual':True}).status_code==200
     result=client.post(publish,json={'version':3,'confirm':True});assert result.status_code==200
     release=result.json()
-    assert client.post(publish,json={'version':3,'confirm':True}).json()['id']==release['id']
+    again=client.post(publish,json={'version':3,'confirm':True});assert again.status_code==200,again.text
+    assert again.json()['id']==release['id']
+    # 重新发布是同一条发布记录的新修订，读清单快照因此不会互相覆盖。
+    assert again.json()['manifest_revision']==release['manifest_revision']+1
     stories=client.get('/api/reader/stories').json();assert len(stories)==1
     assert stories[0]['entries'][0]['start']==1
     assert client.post(path,json={'version':3,'start':0,'end':3,'confirm_visual':True}).status_code==409
     body={'release_id':release['id'],'index':0,'offset':2.35,'text':'换一个选择'}
     assert client.post('/api/reader/wishes',json=body).json()['status']=='saved'
     assert client.post('/api/reader/wishes',json={**body,'offset':8}).status_code==422
+
+
+def two_episode_setup(db):
+    """Two episodes in the cut, one reviewed clip each, so publishing can stop in the middle."""
+    setup(db)
+    project=db.get(Record,'director_prod')
+    project.data={**project.data,'segments':{'segments':[{'id':'G01'},{'id':'G02'}]},
+        'board':{'title':'短场景','shots':[
+            {'id':'G01-S01','segment_id':'G01','motion_prompt':'单镜动作描述','generation_seconds':5,'edit_seconds':3},
+            {'id':'G02-S01','segment_id':'G02','motion_prompt':'单镜动作描述','generation_seconds':5,'edit_seconds':3}]}}
+    for index,gid in enumerate(('G01','G02')):
+        saved_clip(db,f'clip_{gid}')
+        db.add(Task(id=f'video_{gid}',kind='video',status='completed',
+            payload={'director_id':'director_prod','director_version':3,'shot_id':f'{gid}-S01'},
+            result={'clip_id':f'clip_{gid}'}))
+
+
+def test_publishing_an_unfinished_film_releases_the_episodes_that_are_ready(client,monkeypatch,sample_video):
+    """读者能看到已完成的情节，制作中的情节不阻塞发布，也不被半截发布。"""
+    import shutil
+    shutil.copyfile(sample_video,DATA/'media'/'prod.mp4')
+    path='/api/production/director_prod/shots/{}/approve-clip'
+    monkeypatch.setattr(p,'ready',lambda *a,**k:(None,'test',True))
+    monkeypatch.setattr(p,'matching',lambda t,pid,v,sid=None,token=None:t.payload.get('director_id')==pid and t.payload.get('director_version')==v and (sid is None or t.payload.get('shot_id')==sid))
+    monkeypatch.setattr(p,'validate_references',lambda *a:None)
+    with Session.begin() as db:two_episode_setup(db)
+    # Only the first episode is reviewed.
+    assert client.post(path.format('G01-S01'),json={'version':3,'start':1,'end':4,'confirm_visual':True}).status_code==200
+    result=client.post('/api/production/director_prod/publish',json={'version':3,'confirm':True})
+    assert result.status_code==200,result.text
+    release=result.json()
+    assert release['published_units']==['G01'] and release['total_units']==2
+    assert release['units_complete'] is False and release['next_unit']=='G02'
+    assert [entry['shot_id'] for entry in release['entries']]==['G01-S01']
+    # The reader sees exactly the finished episode plus the progress on the card.
+    story=client.get('/api/reader/catalog').json()['releases'][0]
+    assert story['progress']=={'published_units':1,'total_units':2,'complete':False,'next_unit':'G02'}
+    # Finishing the second episode and republishing replaces the release with the longer cut.
+    assert client.post(path.format('G02-S01'),json={'version':3,'start':1,'end':4,'confirm_visual':True}).status_code==200
+    longer=client.post('/api/production/director_prod/publish',json={'version':3,'confirm':True})
+    assert longer.status_code==200,longer.text
+    assert longer.json()['id']==release['id']
+    assert longer.json()['published_units']==['G01','G02'] and longer.json()['units_complete'] is True
+    assert len(longer.json()['entries'])==2
+    assert len(client.get('/api/reader/catalog').json()['releases'])==1
 
 
 def test_old_version_outputs_do_not_enter_new_workspace(client):

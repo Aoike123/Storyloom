@@ -442,7 +442,13 @@ export default function ReaderExperience() {
                   <ReaderArtwork src={cover} order={order}/><span className="catalog-not-made">还没有人做出漫剧</span>
                 </Link>}
                 {playable && <ReaderCreatorAvatar creator={release?.creator} className="catalog-creator"/>}
-                <span className="catalog-status">{playable ? '公开放映 · 可临时改写' : stage ? '我的制作 · ' + stage.name : '等待创作'}</span>
+                <span className="catalog-status">{playable
+                  ? release!.progress && release!.progress.total_units > 1
+                    ? (release!.progress.complete
+                        ? `全 ${release!.progress.total_units} 个情节 · 可临时改写`
+                        : `连载中 · 已完成 ${release!.progress.published_units}/${release!.progress.total_units} 情节`)
+                    : '公开放映 · 可临时改写'
+                  : stage ? '我的制作 · ' + stage.name : '等待创作'}</span>
                 {stacked && <span className="catalog-stack-count">{productions.length} 个版本</span>}
               </div>
               <div className="catalog-story-info">

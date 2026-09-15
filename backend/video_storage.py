@@ -234,17 +234,25 @@ def use_entry(db, use, occurrence_id):
 
 
 def export_manifest(release):
-    """Derived export; a retry repairs a missing export from the committed DB record."""
-    data = {'schema_version': release.data.get('schema_version', 0), 'release_id': release.id,
-            'revision': release.version, **release.data}
+    """Derived export; a retry repairs a missing export from the committed DB record.
+
+    A published snapshot is immutable: publishing again writes the next free revision instead of
+    rewriting a file an earlier release already exported. Without that, a release recorded at the
+    same revision but with a longer cut collided with the file already on disk.
+    """
     folder = DATA / 'manifests' / 'releases' / release.id
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f'v{release.version}.json'
-    encoded = canonical(data)
-    if path.exists():
-        if path.read_text(encoding='utf-8') != encoded:
-            raise StorageError('已发布的清单快照存在不同内容。')
-        return path
+    revision = max(1, int(release.version or 1))
+    while True:
+        data = {'schema_version': release.data.get('schema_version', 0), 'release_id': release.id,
+                'revision': revision, **release.data}
+        path = folder / f'v{revision}.json'
+        encoded = canonical(data)
+        if not path.exists():
+            break
+        if path.read_text(encoding='utf-8') == encoded:
+            return path
+        revision += 1
     temp = folder / ('.' + uuid.uuid4().hex + '.json')
     try:
         temp.write_text(encoded, encoding='utf-8')

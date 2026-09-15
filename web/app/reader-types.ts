@@ -28,6 +28,8 @@ export type Release = {
   created?: number;
   /** Public attribution snapshot for the maker of this particular version. */
   creator?: {name: string; avatar_path?: string | null};
+  /** How much of the cut this release covers, e.g. 3 of 6 episodes. Public. */
+  progress?: {published_units: number; total_units: number; complete: boolean; next_unit?: string | null} | null;
 };
 
 export type ReaderBranch = {

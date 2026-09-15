@@ -158,40 +158,73 @@ class Publish(BaseModel):
 
 @router.post('/{pid}/publish')
 def publish(pid:str,body:Publish):
+    """Publish every episode that is finished, in order; later episodes are added by republishing.
+
+    The first unfinished episode stops the walk instead of failing the request, so a film can appear
+    in the reader catalogue while the rest is still being made. Republishing replaces the current
+    release with the longer one.
+    """
     if not body.confirm:raise HTTPException(422,'请确认将审核完成的短片放入本地读者空间。')
     with Session.begin() as db:
         p=project(db,pid)
         if p.version!=body.version or p.data.get('status')!='approved':raise HTTPException(409,'方案版本尚未批准。')
         _,token,_=ready(db,pid,batch=True)
-        rid=f'release_{pid}_{p.version}_{token[:12]}'
-        previous=db.get(Record,rid)
-        if previous:
-            export_manifest(previous)
-            return record_dict(previous)
         jobs=list(db.scalars(select(Task).order_by(Task.created.desc())))
-        entries=[]
+        order=[segment['id'] for segment in ((p.data.get('segments') or {}).get('segments') or [])]
+        # An episode is the smallest publishable unit: a cut that ends in the middle of one would
+        # read as a broken film, so the walk stops at the first episode that is not fully reviewed.
+        episodes=[]
         for shot in p.data['board']['shots']:
-            task=next((t for t in jobs if t.kind=='video' and matching(t,pid,p.version,shot['id'],token)),None)
-            if task:validate_references(db,task)
-            clip=db.get(Record,task.result.get('clip_id','')) if task else None
-            if not clip or clip.data.get('status')!='approved' or not clip.data.get('visual_reviewed') or not clip.data.get('reader_trim'):
-                raise HTTPException(422,f'{shot["id"]} 尚未完成视频审核与剪辑区间选择。')
-            use=db.get(Record,clip.data.get('selected_use_id',''))
-            if not use:
-                trim=clip.data['reader_trim']
-                shot_ref=(task.payload.get('input_snapshot') or {}).get('shot') or {'story_id':p.data.get('source_id'),'director_id':pid,'shot_id':shot['id'],'revision':p.version}
-                use=create_use(db,clip,trim['start'],trim['end'],shot_ref)
-                clip.data={**clip.data,'selected_use_id':use.id}
-            if use.data['clip_id']!=clip.id or use.data['shot'].get('director_id')!=pid or use.data['shot'].get('shot_id')!=shot['id'] or use.data['shot'].get('revision')!=p.version:
-                raise HTTPException(409,'选用记录与当前分镜版本不一致，请重新审片。')
-            entries.append(use_entry(db,use,f'{rid}:{shot["id"]}:{len(entries)}'))
-            clip.data={**clip.data,'locked':True}
+            gid=str(shot.get('segment_id') or '')
+            if not episodes or episodes[-1][0]!=gid:episodes.append((gid,[]))
+            episodes[-1][1].append(shot)
+        published=[];entries=[];stopped=None
+        for gid,shots in episodes:
+            ready_shots=[]
+            for shot in shots:
+                task=next((t for t in jobs if t.kind=='video' and matching(t,pid,p.version,shot['id'],token)),None)
+                if task:validate_references(db,task)
+                clip=db.get(Record,task.result.get('clip_id','')) if task else None
+                if not clip or clip.data.get('status')!='approved' or not clip.data.get('visual_reviewed') or not clip.data.get('reader_trim'):
+                    break
+                ready_shots.append((shot,task,clip))
+            if len(ready_shots)!=len(shots):
+                if not entries:
+                    unfinished=(shots[len(ready_shots)] if len(ready_shots)<len(shots) else shots[0])['id']
+                    raise HTTPException(422,f'{unfinished} 尚未完成视频审核与剪辑区间选择。')
+                stopped=gid or shots[0]['id']
+                break
+            for shot,task,clip in ready_shots:
+                use=db.get(Record,clip.data.get('selected_use_id',''))
+                if not use:
+                    trim=clip.data['reader_trim']
+                    shot_ref=(task.payload.get('input_snapshot') or {}).get('shot') or {'story_id':p.data.get('source_id'),'director_id':pid,'shot_id':shot['id'],'revision':p.version}
+                    use=create_use(db,clip,trim['start'],trim['end'],shot_ref)
+                    clip.data={**clip.data,'selected_use_id':use.id}
+                if use.data['clip_id']!=clip.id or use.data['shot'].get('director_id')!=pid or use.data['shot'].get('shot_id')!=shot['id'] or use.data['shot'].get('revision')!=p.version:
+                    raise HTTPException(409,f'选用记录与当前分镜版本不一致（{use.data.get("shot")} / {shot["id"]} / v{p.version}），请重新审片。')
+                entries.append(use_entry(db,use,f'release_{pid}:{shot["id"]}:{len(entries)}'))
+                clip.data={**clip.data,'locked':True}
+            published.append(gid)
         source=db.get(Record,p.data['source_id'])
-        release=Record(id=rid,kind='reader_release',data={'schema_version':1,'manifest_revision':1,'status':'ready',
+        data={'schema_version':1,'status':'ready',
             'title':p.data['board']['title'],'author':source.data.get('author_name'),
             'source_title':source.data.get('title'),'source_id':source.id,'source_work_id':source.data.get('work_id'),'director_id':pid,'director_version':p.version,
-            'description':p.data['treatment']['premise'],'scope':'短场景改编','entries':entries,'published_at':time.time()})
-        db.add(release);db.flush()
+            'description':p.data['treatment']['premise'],'scope':'短场景改编','entries':entries,'published_at':time.time(),
+            'published_units':published,'total_units':len(order),
+            'next_unit':stopped,'units_complete':bool(order) and len(published)>=len(order)}
+        # One release per project: republishing replaces it, so the reader always sees the longest
+        # finished cut instead of choosing between versions of the same film. The record is updated
+        # in place, because the manifest keeps one immutable snapshot per revision.
+        rid=f'release_{pid}'
+        for stale in db.scalars(select(Record).where(Record.kind=='reader_release')):
+            if stale.id!=rid and stale.data.get('director_id')==pid:db.delete(stale)
+        release=db.get(Record,rid)
+        if release:
+            release.data={**data,'manifest_revision':release.version+1};release.version+=1
+        else:
+            release=Record(id=rid,kind='reader_release',data={**data,'manifest_revision':1});db.add(release)
+        db.flush()
         response=record_dict(release)
     export_manifest(release)
     return response
