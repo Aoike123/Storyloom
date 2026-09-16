@@ -150,17 +150,19 @@ export default function Author(){
    <section className="studio-flow" aria-label="当前制作流程"><div className="studio-flow-heading"><div><span className="studio-eyebrow">PRODUCTION JOURNEY</span><h2>{work.title}</h2></div><span className={'studio-sync'+(syncError||!work.worker_online?' is-offline':'')}><i/>{syncError?'同步中断':work.worker_online?'后台制作服务在线':'后台制作服务离线'}<small>{updated&&'更新于 '+updated}</small></span></div><WorkProgress stage={actualStage} viewedStage={stage} onStepSelect={showStep} disabled={busy}/><p className="studio-note">已完成的步骤可点击返回查看和重新测试。</p></section>
    <NodeSkillsPanel/>
    {canRedoStage&&<section className={'studio-redo'+(redoCascades?' is-cascading':'')} aria-label="重做这一步">
-     <div>
+     <div className="studio-redo-heading">
+       <div>
        <strong>重做「{currentStage?.name||stage}」</strong>
        <p>{redoCascades
          ? '会删除这一步以及它之后所有步骤的成果，从这一步重新开始；原文、风格和更早的素材都会保留。'
          : '会删除这一步的成果，从这一步重新开始；后面的步骤还没有做，不受影响。'}</p>
+       </div>
+       <button type="button" className="button is-danger" disabled={busy||!paid}
+         title={!paid?'请先勾选下方的模型调用许可':'删除这一步及其之后的成果，从这一步重新开始'}
+         onClick={()=>act(async()=>{await api('/projects/'+selected+'/redo',{stage,confirm_paid:true});followProduction();},'正在删除这一步的成果并重新开始…')}>
+         重做这一步{redoCascades?'（含之后）':''}
+       </button>
      </div>
-     <button type="button" className="button is-danger" disabled={busy||!paid}
-       title={!paid?'请先勾选下方的模型调用许可':'删除这一步及其之后的成果，从这一步重新开始'}
-       onClick={()=>act(async()=>{await api('/projects/'+selected+'/redo',{stage,confirm_paid:true});followProduction();},'正在删除这一步的成果并重新开始…')}>
-       重做这一步{redoCascades?'（含之后）':''}
-     </button>
    </section>}
    <div className="studio-layout">
     <aside className="studio-source"><div className="studio-source-heading"><span><BookOpen size={16}/>微小说原文</span><small>{source?.labels?.join(' · ')||'脑洞'}</small></div><h2>{work.title}</h2>{source?.author_name&&<p className="studio-author">原著 / {source.author_name}</p>}{source?.title&&source.title!==work.title&&<p className="studio-chapter">{source.title}</p>}<div className="studio-source-body">{source?.content||'该历史作品未保存可展示的原文。'}</div><p className="studio-source-note">来源：{source?.source||'本地已保存作品'}。保留本次导入的原文版本。{source?.completeness==='unknown'?'接口未声明全文完整性，以上为实际返回正文。':''}</p>{work.source_warning&&<p className="studio-source-note">本次使用已缓存的原文，接口最新请求未成功。</p>}</aside>
@@ -168,10 +170,12 @@ export default function Author(){
      {browsingEarlier&&<div className="studio-step-return" role="status">已返回「{currentStage?.name}」。实际制作进度：{workStages.find(s=>s.id===actualStage)?.name}。<button type="button" onClick={()=>showStep(actualStage)}>返回当前进度</button><p>{['storyboarding','rendering'].includes(stage||'')?'正在回看本节点保存的结果。当前失败节点处理完问题后可以继续，上游结果会复用。':'提交重新测试会从形象准备开始新一轮制作，原轮次的素材、分镜、视频及发布结果失效，保留在历史制作中。'}</p></div>}
      <section className="author-panel studio-action"><div className="studio-action-heading"><span className="studio-step">{String(workStages.findIndex(s=>s.id===stage)+1).padStart(2,'0')}</span><div><span className="studio-eyebrow">{currentStage?.name||'制作进度'}</span><h2>{stages[stage||'']||'查看当前制作状态'}</h2></div></div>
       {stage==='assets_review'&&<AssetRedesign paid={paid} busy={busy} running={inFlight} onPaidChange={setPaid} onRedesign={()=>act(async()=>{if(browsingEarlier){await restartPreparation();}else{await api('/projects/'+selected+'/redesign',{art:work.art,tone:work.tone,confirm_paid:true});followProduction();}setConfirmed(false);},'正在按设定图规范重新设计人物与场景…')}/>}
-      {['segments_review','preparing','assets_review','storyboarding','rendering','episode_review','film_review','published'].includes(stage||'')&&(work.episodes||[]).length>0&&
-        <SegmentReview episodes={work.episodes} paid={paid} busy={busy||inFlight} readOnly={browsingEarlier}
-          onApprove={()=>act(async()=>{await api('/projects/'+selected+'/segments/approve',{confirm:true});followProduction();},'正在确认情节切割，开始生成人物与场景…')}/>}
-      {stage!=='style'&&<div ref={productionFollow.targetRef} className={'studio-live-module'+(followEnabled&&productionFollow.following?' is-following':'')}><ProductionProgress tasks={jobs} outputs={work.outputs||[]} stage={stage||actualStage} connection={streamConnection} phase={stage} node={(work.production_steps||[]).find((node:any)=>node.id===stage)}/></div>}
+      {stage!=='style'&&stage!=='segments_review'&&<div ref={productionFollow.targetRef} className={'studio-live-module'+(followEnabled&&productionFollow.following?' is-following':'')}><ProductionProgress tasks={jobs} outputs={work.outputs||[]} stage={stage||actualStage} connection={streamConnection} phase={stage} node={(work.production_steps||[]).find((node:any)=>node.id===stage)}/></div>}
+      {stage==='segments_review'&&(work.episodes||[]).length>0&&<SegmentReview episodes={work.episodes}>
+        <div className="studio-confirm"><label className="checkbox"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/>我已核对情节切割，确认按这个顺序制作</label>
+          <button className="button primary" disabled={busy||!confirmed||!paid} onClick={()=>act(async()=>{await api('/projects/'+selected+'/segments/approve',{confirm:true});followProduction();},'正在确认情节切割，开始生成人物与场景…')}>确认情节，开始制作 <ArrowRight size={15}/></button></div>
+      </SegmentReview>}
+      {stage!=='segments_review'&&(work.episodes||[]).length>0&&<SegmentReview episodes={work.episodes} collapsed/>}
       {problems.length>0&&<div className="studio-error">有 {problems.length} 项任务需要处理，已生成的结果会保留。<button onClick={()=>{setFilter('attention');setExpanded(true);document.getElementById('studio-activity')?.scrollIntoView({behavior:'smooth'});}}>查看具体提示 <ArrowRight size={13}/></button>{retryCurrentNode&&<button disabled={busy||!paid} title={!paid?'请先勾选下方的模型调用许可':'带上结构错误重跑，保留已通过校验的片段'} onClick={()=>act(async()=>{await api('/projects/'+selected+'/retry-node',{confirm_paid:true});},'正在带上结构错误重新运行当前节点，保留已通过的片段…')}>重试本节点</button>}</div>}
       {stage!=='published'&&stage!=='assets_review'&&<label className="checkbox studio-paid"><input type="checkbox" checked={paid} onChange={e=>setPaid(e.target.checked)}/>允许本次操作调用付费模型；生成漫剧将继续执行后续制作步骤</label>}
       {stage==='style'&&<><p>让 AI 根据原文推荐几种电影视觉语言，也可以直接写下你的想法。</p><button className="button secondary" disabled={busy||recommending||!paid} onClick={()=>act(async()=>{const task=await api('/projects/'+selected+'/recommend',{confirm:true});setWork((current:any)=>current?.id===selected?{...current,recommend_task_status:task}:current);})}>{recommending?'AI 正在构思电影视觉…':'让 AI 推荐电影风格'}</button>{recommendation&&<div ref={productionFollow.targetRef} className={'studio-live-module'+(followEnabled&&productionFollow.following?' is-following':'')}><StyleProgress task={recommendation} detailed connection={streamConnection}/></div>}<StyleOptions task={recommendation} options={work.recommendations||[]} art={art} tone={tone} onSelect={(nextArt,nextTone)=>{setArt(nextArt);setTone(nextTone);}}/><label>电影视觉提示词<textarea rows={4} maxLength={500} value={art} onChange={e=>setArt(e.target.value)} placeholder="选用方案会带入全片视觉规则，也可以编辑成像媒介、构图、焦段、运动、灯光与调色。"/></label><label>剧情气质<input maxLength={300} value={tone} onChange={e=>setTone(e.target.value)} placeholder="例如：悬疑中带一些荒诞幽默"/></label><button className="button primary" disabled={busy||inFlight||!paid||art.trim().length<2||tone.trim().length<2} onClick={()=>act(async()=>{await restartPreparation(art,tone);},'正在保存电影视觉方向，安排人物与场景制作…')}>{browsingEarlier?'确定电影风格，重新测试后续步骤':'确定电影风格，生成人物与场景'} <ArrowRight size={15}/></button><p className="studio-note">本次会选取原文制作一个 4–8 镜头的完整短场景，人物与场景图片完成后由你确认。</p></>}
@@ -195,7 +199,7 @@ export default function Author(){
     </div>
    </div>
   </>}
-  {followEnabled&&productionFollow.ready&&<div className={'studio-follow-control'+(productionFollow.following?' is-following':' is-paused')} aria-live="polite">{productionFollow.following?<div className="studio-follow-status"><i aria-hidden="true"/><span><strong>自动跟随制作</strong><small>{currentStage?.name||'当前节点'} · 跟随输出文字，可随时解锁</small></span><button type="button" className="studio-follow-unlock" aria-label="解锁自动跟随，自由滚动页面" title="解锁自动跟随，自由滚动页面" onClick={productionFollow.unlock}>解锁</button></div>:<button type="button" onClick={productionFollow.resume}><LocateFixed size={18}/><span><strong>回到正在制作</strong><small>恢复自动跟随 · {currentStage?.name||'当前节点'}</small></span></button>}</div>}
+  {followEnabled&&productionFollow.ready&&<div className={'studio-follow-control'+(productionFollow.following?' is-following':' is-paused')} aria-live="polite">{productionFollow.following?<div className="studio-follow-status"><i aria-hidden="true"/><span><strong>自动跟随制作</strong><small>{currentStage?.name||'当前节点'} · 滚动页面即暂停跟随</small></span></div>:<button type="button" onClick={productionFollow.resume}><LocateFixed size={18}/><span><strong>回到正在制作</strong><small>恢复自动跟随 · {currentStage?.name||'当前节点'}</small></span></button>}</div>}
   <footer className="studio-footer"><span>叙间 · 从一篇微小说，到一个可观看的故事</span></footer>
  </main>;
 }

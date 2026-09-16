@@ -8,6 +8,8 @@ const SCROLL_KEYS=new Set(['ArrowUp','ArrowDown','PageUp','PageDown','Home','End
 // loop now chases the box while it grows.
 const EASE=0.18;
 const SETTLED=0.75;
+// A scroll position this hook did not ask for is the reader moving the page.
+const OWN_SCROLL_TOLERANCE=2;
 
 function isEditable(target:EventTarget|null){
   const element=target instanceof HTMLElement?target:null;
@@ -53,6 +55,8 @@ export default function useProductionFollow({enabled,resetKey,targetKey}:{enable
   // The animation loop runs outside React, so it reads the current flags from a ref instead of a
   // captured render value.
   const state=useRef({enabled,following:true});
+  // The scroll position this hook last asked the browser for; any other position is the reader.
+  const ownScroll=useRef<number|null>(null);
   const targetRef=useCallback((next:HTMLDivElement|null)=>{
     node.current=next;
     setTarget(current=>current===next?current:next);
@@ -82,10 +86,13 @@ export default function useProductionFollow({enabled,resetKey,targetKey}:{enable
     const distance=found.top-window.scrollY;
     if(Math.abs(distance)<=SETTLED)return;
     if(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches){
+      ownScroll.current=found.top;
       window.scrollTo({top:found.top,behavior:'auto'});
       return;
     }
-    window.scrollTo(0,window.scrollY+distance*EASE);
+    const next=window.scrollY+distance*EASE;
+    ownScroll.current=next;
+    window.scrollTo(0,next);
     frame.current=window.requestAnimationFrame(step);
   },[destination]);
 
@@ -128,42 +135,32 @@ export default function useProductionFollow({enabled,resetKey,targetKey}:{enable
 
   useEffect(()=>{
     if(!enabled||!target)return;
-    let touchY:number|undefined;
     const markManual=()=>{
       manualUntil.current=performance.now()+900;
       // Drop any easing already in flight, so a scroll gesture is never pulled back mid-drag.
       if(frame.current!==undefined){window.cancelAnimationFrame(frame.current);frame.current=undefined;}
     };
-    const onWheel=(event:WheelEvent)=>{if(Math.abs(event.deltaY)>2)markManual();};
-    const onTouchStart=(event:TouchEvent)=>{touchY=event.touches[0]?.clientY;};
-    const onTouchMove=(event:TouchEvent)=>{
-      const next=event.touches[0]?.clientY;
-      if(touchY!==undefined&&next!==undefined&&Math.abs(next-touchY)>6)markManual();
-      touchY=next;
-    };
-    const onPointerDown=(event:PointerEvent)=>{
-      // A scrollbar drag has no wheel/touch event, but starts at the viewport edge.
-      if(event.pointerType==='mouse'&&event.clientX>=document.documentElement.clientWidth-18)markManual();
-    };
-    const onKeyDown=(event:KeyboardEvent)=>{
-      if(SCROLL_KEYS.has(event.key)&&!isEditable(event.target))markManual();
-    };
     const onScroll=()=>{
-      if(performance.now()>manualUntil.current)return;
-      // Judged against the same box that is being followed, not the whole module.
+      // A position this hook did not ask for is the reader moving the page: dragging the scrollbar,
+      // the wheel, a trackpad, the keyboard. That is the whole cancel gesture, with no control in
+      // the interface to press.
+      const ours=ownScroll.current!==null&&Math.abs(window.scrollY-ownScroll.current)<=OWN_SCROLL_TOLERANCE;
+      if(!ours)markManual();
       const visible=isEnoughVisible(followAnchor(target));
       setFollowing(current=>current===visible?current:visible);
     };
-    window.addEventListener('wheel',onWheel,{passive:true});
-    window.addEventListener('touchstart',onTouchStart,{passive:true});
-    window.addEventListener('touchmove',onTouchMove,{passive:true});
+    // A scrollbar drag starts on the viewport edge; forget our own position so the first scroll event
+    // of the drag is read as the reader's, not as a follow we performed.
+    const onPointerDown=(event:PointerEvent)=>{
+      if(event.pointerType==='mouse'&&event.clientX>=document.documentElement.clientWidth-18)ownScroll.current=null;
+    };
+    const onKeyDown=(event:KeyboardEvent)=>{
+      if(SCROLL_KEYS.has(event.key)&&!isEditable(event.target))ownScroll.current=null;
+    };
     window.addEventListener('pointerdown',onPointerDown,{passive:true});
     window.addEventListener('keydown',onKeyDown);
     window.addEventListener('scroll',onScroll,{passive:true});
     return()=>{
-      window.removeEventListener('wheel',onWheel);
-      window.removeEventListener('touchstart',onTouchStart);
-      window.removeEventListener('touchmove',onTouchMove);
       window.removeEventListener('pointerdown',onPointerDown);
       window.removeEventListener('keydown',onKeyDown);
       window.removeEventListener('scroll',onScroll);

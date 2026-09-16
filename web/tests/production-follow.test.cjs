@@ -43,26 +43,29 @@ test('following eases toward the box instead of jumping to it',()=>{
   const source=fs.readFileSync(path.join(__dirname,'../app/author/useProductionFollow.ts'),'utf8');
   // A single eased loop chases a moving box; instant re-scrolls on every resize are what made the
   // page move in visible steps while the answer was typed.
-  assert.match(source,/window\.scrollTo\(0,window\.scrollY\+distance\*EASE\)/);
+  assert.match(source,/const next=window\.scrollY\+distance\*EASE;/);
+  assert.match(source,/window\.scrollTo\(0,next\)/);
   assert.match(source,/requestAnimationFrame\(step\)/);
   assert.doesNotMatch(source,/behavior:'auto'\);\s*return;\s*\}\s*window\.scrollTo\(0/);
   // Reduced motion still gets a direct jump rather than an animation.
   assert.match(source,/prefers-reduced-motion: reduce/);
 });
 
-test('following can be unlocked by the reader, not only by scrolling away',()=>{
+test('the reader cancels following by scrolling, with no control to press',()=>{
   const hook=fs.readFileSync(path.join(__dirname,'../app/author/useProductionFollow.ts'),'utf8');
   const page=fs.readFileSync(path.join(__dirname,'../app/author/page.tsx'),'utf8');
-  // The hook exposes an explicit unlock that also drops any easing already in flight, so releasing
-  // the page cannot be undone by the animation that was running.
-  assert.match(hook,/const unlock=useCallback\(\(\)=>\{/);
-  assert.match(hook,/window\.cancelAnimationFrame\(frame\.current\);frame\.current=undefined;/);
-  assert.match(hook,/state\.current\.following=false;/);
-  assert.match(hook,/return \{targetRef,following,unlock,resume,ready:!!target\}/);
-  // A scroll or drag also releases the easing at once, instead of being pulled back mid-gesture.
+  // A scroll we did not perform is the reader moving the page; that releases the easing at once,
+  // so a scrollbar drag is never pulled back mid-gesture.
+  assert.match(hook,/const ownScroll=useRef<number\|null>\(null\)/);
+  assert.match(hook,/const ours=ownScroll\.current!==null&&Math\.abs\(window\.scrollY-ownScroll\.current\)<=OWN_SCROLL_TOLERANCE;/);
+  assert.match(hook,/if\(!ours\)markManual\(\);/);
   assert.match(hook,/const markManual=\(\)=>\{\s*manualUntil\.current=performance\.now\(\)\+900;/);
   assert.match(hook,/if\(!force&&performance\.now\(\)<manualUntil\.current\)return;/);
-  // While following, the control offers "解锁"; when paused, the existing resume button returns.
-  assert.match(page,/className="studio-follow-unlock"[^>]*onClick=\{productionFollow\.unlock\}>解锁</);
+  // Dragging the scrollbar starts at the viewport edge, and a wheel or trackpad produces ordinary
+  // scroll events; both are covered without adding an unlock button to the interface.
+  assert.match(hook,/event\.clientX>=document\.documentElement\.clientWidth-18/);
+  assert.doesNotMatch(page,/studio-follow-unlock/);
+  assert.match(page,/滚动页面即暂停跟随/);
+  // When paused, the existing resume button returns.
   assert.match(page,/onClick=\{productionFollow\.resume\}/);
 });
