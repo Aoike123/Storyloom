@@ -775,25 +775,49 @@ class EpisodeContinue(BaseModel):
 
 @router.post('/projects/{pid}/episodes/continue')
 def continue_episodes(pid: str, body: EpisodeContinue):
-    """Produce the next episode after the author has seen the finished one."""
-    creative.paid(body, 'llm', 'video')
+    """Produce the next episode after the author has seen the finished one.
+
+    The next episode may need either of two things, and it is the film's own state that decides
+    which: an episode that has no board yet is planned first, and an episode that already has its
+    board is rendered. Choosing the phase here also keeps the step reachable after a release, since
+    publishing one episode is not the end of the film.
+    """
     with attempt_lock, Session.begin() as db:
         row = get_work(db, pid)
-        if row.data.get('stage') not in ('episode_review', 'film_review'):
+        if row.data.get('stage') not in ('episode_review', 'film_review', 'published'):
             raise HTTPException(409, '当前不在情节确认阶段。')
         sid = row.data['director_id']
-        order, done, run = creative.storyboard_units(sid)
-        pending = next((gid for gid in order if gid not in done), None)
-        if pending is None:
-            pending = creative.next_rendering_unit(sid)
+        project = db.get(Record, sid) if sid else None
+        if not project: raise HTTPException(409, '导演项目不存在，不能继续下一个情节。')
+        # The run is fetched and written inside this session. Reading it through a helper that
+        # closes its own session left the stage change on a detached object, so the save was lost
+        # and the queued node still believed the film was waiting at the episode decision.
+        run = db.get(Record, 'creative_' + sid)
+        if not run: raise HTTPException(409, '先选择画风和剧情风格。')
+        order = [segment['id'] for segment in ((project.data.get('segments') or {}).get('segments') or [])]
+        planned = dict(project.data.get('units') or {})
+        rendered = dict(creative.rendering_state(sid))
+        pending = phase = None
+        for gid in order:
+            state = rendered.get(gid) or {'shots': 0, 'finished': 0}
+            if gid not in planned:
+                pending, phase = gid, 'storyboarding'
+                break
+            if not (state['shots'] and state['finished'] >= state['shots']):
+                pending, phase = gid, 'rendering'
+                break
         if pending is None:
             raise HTTPException(409, '全部情节都已生成，可以直接发布。')
-        run.data = {**run.data, 'stage': 'references_ready', 'episode_review_pending': None}
+        # Only the providers this step will actually spend matter here: planning a board calls the
+        # text model, rendering the next episode calls the video model.
+        creative.paid(body, 'llm' if phase == 'storyboarding' else 'video')
+        run.data = {**run.data, 'stage': 'references_ready' if phase == 'storyboarding' else 'storyboard_ready',
+                    'episode_review_pending': None}
         run.version += 1
         db.add(Record(id=uid('audit'), kind='audit', data={'target': pid, 'action': 'episode_continued',
-            'segment_id': pending}))
-        queue_node(db, row, 'storyboarding', segment_id=pending, reopen=True)
-    return {'queued': True, 'segment_id': pending}
+            'segment_id': pending, 'phase': phase}))
+        queue_node(db, row, phase, segment_id=pending, reopen=True)
+    return {'queued': True, 'segment_id': pending, 'phase': phase}
 
 def flow(task_id, payload):
     """One persisted scheduling transition per worker invocation; no browser polling dependency."""

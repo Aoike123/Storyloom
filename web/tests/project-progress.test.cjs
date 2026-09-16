@@ -74,6 +74,10 @@ test('earlier steps can be revisited without unlocking future steps',()=>{
   assert.equal(viewedAuthorStage('assets_review','preparing'),'preparing');
   assert.equal(viewedAuthorStage('assets_review','published'),'assets_review');
   assert.equal(viewedAuthorStage('assets_review','unknown'),'assets_review');
+  // 本集发布是真实存在的步骤：可以回到它之前的步骤查看，但不能跳到它之后。
+  assert.equal(viewedAuthorStage('episode_review','rendering'),'rendering');
+  assert.equal(viewedAuthorStage('episode_review','episode_review'),'episode_review');
+  assert.equal(viewedAuthorStage('episode_review','published'),'episode_review');
 });
 
 test('the displayed stage is the saved stage and a future step stays locked',()=>{

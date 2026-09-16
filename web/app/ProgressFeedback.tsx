@@ -25,6 +25,7 @@ export const workStages = [
   {id: 'assets_review', name: '确认图片', hint: '查看形象，提出修改或确认继续'},
   {id: 'storyboarding', name: '分镜生成', hint: '按情节逐个规划镜头、编写提示词并完成文本预审'},
   {id: 'rendering', name: '漫剧生成', hint: '用已审核的项目参考图逐个情节生成视频'},
+  {id: 'episode_review', name: '本集发布', hint: '每完成一集就决定：发布给读者，还是继续下一集'},
   {id: 'film_review', name: '审片验收', hint: '观看全部片段，确认最终效果'},
   {id: 'published', name: '发布作品', hint: '进入读者空间，供读者观看'},
 ];

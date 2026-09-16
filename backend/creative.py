@@ -741,11 +741,18 @@ class Publish(BaseModel):
     confirm:bool=False
 @router.post('/{pid}/publish')
 def publish(pid:str,body:Publish):
+    """Release the episodes that are finished, and keep the rest in production.
+
+    An episode is the smallest publishable unit, so a shot that has no clip yet is not an error
+    here: the release walk stops at the first unfinished episode and publishing again later
+    replaces the release with the longer cut. Requiring every shot of the whole film before one
+    episode could go out is what made 逐集发布 impossible.
+    """
     if not body.confirm:raise HTTPException(422,'请看过成片后确认发布。')
     run=production.workspace(pid)
-    for s in run['shots']:
-        if not s['clip']:raise HTTPException(409,'还有视频未完成。')
-    for s in run['shots']:
+    finished=[s for s in run['shots'] if s['clip'] and s.get('video_task')]
+    if not finished:raise HTTPException(409,'还没有可以发布的视频片段。')
+    for s in finished:
         if not s['clip'].get('locked'):production.approve_clip(pid,s['shot']['id'],production.Trim(version=run['version'],start=0,end=min(s['shot']['edit_seconds'],s['clip']['duration']),confirm_visual=True))
     result=production.publish(pid,production.Publish(version=run['version'],confirm=True));save_run(pid,stage='published')
     from .skill_runtime import public,snapshot
