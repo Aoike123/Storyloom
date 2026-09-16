@@ -72,18 +72,28 @@ python scripts/demo-data.py assign ../demo-data --owner-uid 969570047710216200 \
 ## 在生产 Docker 部署上导入
 
 生产的数据在 PostgreSQL 与 `story_data` 命名卷里，宿主机上的 Python 环境读不到它们，所以要
-在 api 容器里运行这个工具。API 镜像只包含 `backend/`，脚本本身要从仓库目录挂进去：
+在 api 容器里运行这个工具。API 镜像只包含 `backend/`，脚本本身要从仓库目录挂进去。
+
+**`scp` 这一步在本地执行，不是服务器上。** 它把文件从「放仓库的这台机器」推到服务器；在服务
+器上运行只会得到 `-bash: user: No such file or directory`，因为 `<user>@<server>` 是占位符，
+要替换成实际的登录用户与地址。
 
 ```bash
-# 把演示包传到服务器（bundle 不在版本库里，必须单独传）
-scp -r artifacts/demo-data <user>@<server>:~/storyloom/demo-data
+# ① 本地：把演示包压成单个文件，比逐文件传输更省事
+tar -czf artifacts/demo-data.tar.gz -C artifacts demo-data
 
-# 在仓库目录下运行，数据与媒体都写进容器使用的那份卷
+# ② 本地：传到服务器的部署目录（bundle 不在版本库里，必须单独传）
+scp artifacts/demo-data.tar.gz root@<服务器地址>:/opt/storyloom/
+
+# ③ 服务器：解出 /opt/storyloom/demo-data
+cd /opt/storyloom && tar -xzf demo-data.tar.gz
+
+# ④ 服务器：在仓库目录下运行，数据与媒体都写进容器使用的那份卷
 docker compose --env-file .env.production -f compose.production.yaml run --rm --no-deps -T \
   -v "$PWD/scripts:/app/scripts:ro" -v "$PWD/demo-data:/app/demo-data:ro" \
   --entrypoint python api scripts/demo-data.py import /app/demo-data
 
-# 演示账号登录过一次之后，交给它
+# ⑤ 服务器：演示账号登录过一次之后，交给它
 docker compose --env-file .env.production -f compose.production.yaml run --rm --no-deps -T \
   -v "$PWD/scripts:/app/scripts:ro" -v "$PWD/demo-data:/app/demo-data:ro" \
   --entrypoint python api scripts/demo-data.py assign /app/demo-data
