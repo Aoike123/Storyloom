@@ -69,6 +69,30 @@ python scripts/demo-data.py assign ../demo-data --owner-uid 969570047710216200 \
 - 工具不迁移 `usage`、`audit`、`failure_report`，所以导入后的用量统计从零开始，这是有意的。
 - 导出用的数据库可以是运行中的实例：工具只读记录，不再修改源部署。
 
+## 在生产 Docker 部署上导入
+
+生产的数据在 PostgreSQL 与 `story_data` 命名卷里，宿主机上的 Python 环境读不到它们，所以要
+在 api 容器里运行这个工具。API 镜像只包含 `backend/`，脚本本身要从仓库目录挂进去：
+
+```bash
+# 把演示包传到服务器（bundle 不在版本库里，必须单独传）
+scp -r artifacts/demo-data <user>@<server>:~/storyloom/demo-data
+
+# 在仓库目录下运行，数据与媒体都写进容器使用的那份卷
+docker compose --env-file .env.production -f compose.production.yaml run --rm --no-deps -T \
+  -v "$PWD/scripts:/app/scripts:ro" -v "$PWD/demo-data:/app/demo-data:ro" \
+  --entrypoint python api scripts/demo-data.py import /app/demo-data
+
+# 演示账号登录过一次之后，交给它
+docker compose --env-file .env.production -f compose.production.yaml run --rm --no-deps -T \
+  -v "$PWD/scripts:/app/scripts:ro" -v "$PWD/demo-data:/app/demo-data:ro" \
+  --entrypoint python api scripts/demo-data.py assign /app/demo-data
+```
+
+不要用 `--user root` 覆盖镜像里的服务账号：命名卷归 `storyloom`（uid 10001）所有，用别的身份
+写入会留下容器进程读不了的文件。上面这些命令在本文写作时的 Windows 开发机上没有 Docker
+可用于实测，逻辑与媒体路径已在本机以空部署完整验证过。
+
 ## 验证方式
 
 `tests/test_demo_data.py` 覆盖：演示包只带成片链路（失败与审计被排除）、导入空部署后账号在工作室看到作品且读者目录可播、重复导入不改变数据、账号后创建时 `assign` 生效并署名、没有账号时给出明确提示、`--owner-uid` 只作用于指定账号。
