@@ -286,6 +286,17 @@ cannot survive the reset. Immutable dependency layers may be reused; they contai
 packages rather than account or application data and avoid downloading every package again on a
 bandwidth-limited server. Users sign in again as new accounts after it completes.
 
+A reset empties the demo too, so a public deployment goes back to showing no watchable film. Load
+the prepared demo bundle afterwards to bring back a finished, real film without paying for a single
+model call:
+
+```bash
+python scripts/demo-data.py import ../demo-data    # then, after the demo account signs in once:
+python scripts/demo-data.py assign ../demo-data
+```
+
+See [演示数据](demo-data.md) for what the bundle carries and how ownership is handed out.
+
 Before deleting anything, the script stops public traffic and workers and writes a PostgreSQL dump
 plus the complete application data volume to `backups/pre-reset-<timestamp>/`. It preserves
 `.env.production`, the provider settings/secret files in the data volume, and both Caddy volumes,
