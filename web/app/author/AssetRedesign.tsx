@@ -10,7 +10,7 @@ type Props = {
 };
 
 export default function AssetRedesign({paid, busy, running, onPaidChange, onRedesign, showPermission = true}: Props) {
-  const reason = busy ? '正在提交，请稍候。' : running ? '本轮任务正在执行，完成后可以重做。' : !paid ? showPermission ? '勾选下方付费调用后即可重做。' : '请先开启本页的模型调用许可。' : '已准备好，可以重新生成。';
+  const reason = busy ? '正在提交，请稍候。' : running ? '本轮任务正在执行，完成后可以重做。' : !paid ? showPermission ? '勾选本面板的付费调用后即可重做。' : '请先开启本页的模型调用许可，即可重做。' : '已准备好，可以重新生成。';
   return <section className="asset-redesign" aria-labelledby="asset-redesign-title">
     <div className="asset-redesign-heading">
       <div><h3 id="asset-redesign-title">重做本轮素材</h3>

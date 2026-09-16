@@ -26,9 +26,8 @@
 .asset-redesign-action .button{margin:0;padding:12px 18px;white-space:nowrap}
 .asset-redesign-action .button:disabled{opacity:.7}
 .asset-redesign-action small{display:block;margin-top:7px;font-size:11px;color:#718560;line-height:1.6}
-.asset-redesign .checkbox{margin:16px 0 5px;color:#526c42}
 .asset-redesign .asset-redesign-note{font-size:10px;color:#8b997c}
-.asset-feedback-permission{margin:10px 0;color:#526c42!important}.asset-feedback-note{display:block;margin-top:5px;color:#7c8c6e;font-size:11px;line-height:1.8}
+.asset-feedback-note{display:block;margin-top:5px;color:#7c8c6e;font-size:11px;line-height:1.8}
 
 /* One connected route/account control, shared in spirit with the dark reader header. */
 .studio-header-right{display:flex;align-items:center;gap:0;padding:3px;border:1px solid #d7e0cf;border-radius:999px;background:#f8faf4;box-shadow:0 7px 20px #34482f0b;transition:border-color .16s ease,background .16s ease}
