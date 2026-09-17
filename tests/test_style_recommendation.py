@@ -11,7 +11,7 @@ from backend.db import Record, Session, Task
 
 
 @pytest.mark.parametrize('fast_model', ['style-model', ''])
-def test_recommendation_worker_uses_fast_profile(client, monkeypatch, fast_model):
+def test_recommendation_worker_uses_fast_profile(client, monkeypatch, sign_in, fast_model):
     for key, value in {
         'LLM_BASE_URL': 'https://models.example.test/v1',
         'LLM_MODEL': 'main-model',
@@ -53,6 +53,7 @@ def test_recommendation_worker_uses_fast_profile(client, monkeypatch, fast_model
         })
 
     monkeypatch.setattr(providers.httpx, 'stream', stream)
+    sign_in()
     with Session.begin() as db:
         db.add(Record(id='style-source', kind='story_source', data={'content': source}))
         db.add(Record(id='style-work', kind='author_project', data={

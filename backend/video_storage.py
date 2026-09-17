@@ -10,7 +10,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
-from .db import DATA, Record, Session, Task, record_dict
+from .db import DATA, Record, Session, record_dict
 from .video_files import (StorageError, atomic_copy, digest, extract_boundary,
                           media_path, media_url, prepare_playback, probe_video)
 
@@ -73,28 +73,34 @@ def snapshot_asset(db, asset, version=None):
     return immutable(db, rid, 'asset_revision', data)
 
 
-def generation_snapshot(db, payload, director=None, shot=None, frame_asset=None,*,reference_mode=False):
+def generation_snapshot(db, payload, director=None, shot=None, frame_asset=None,*,reference_mode=False,references=None):
     """Freeze actual input assets before the task is dispatched, not after generation."""
     bindings = []
     if frame_asset:
         frame = snapshot_asset(db, frame_asset, payload.get('asset_version'))
         bindings.append({'role': 'shot_reference' if reference_mode else 'first_frame', 'asset_revision_id': frame.id, **frame.data})
     refs = []
-    if director and shot:
+    if references is not None:
+        for asset in references:
+            frozen = snapshot_asset(db, asset, asset.version)
+            if not any(binding['asset_id']==asset.id for binding in bindings):
+                bindings.append({'role': 'reference', 'asset_revision_id': frozen.id, **frozen.data})
+    elif director and shot:
         from .consistency import config
         cfg = config(db, director.id)
         if cfg:
             refs = [{'id': aid, 'version': cfg.data.get('asset_versions', {}).get(aid)}
                     for aid in cfg.data.get('bindings', {}).get(shot['id'], [])]
-    if not refs and frame_asset:
+    if not refs and frame_asset and references is None:
         refs = frame_asset.data.get('reference_assets') or []
-    for ref in refs:
-        asset = db.get(Record, ref['id'])
-        if not asset or asset.kind != 'asset':
-            raise StorageError('分镜绑定的参考素材不存在。')
-        frozen = snapshot_asset(db, asset, ref.get('version'))
-        if not any(binding['asset_id']==asset.id for binding in bindings):
-            bindings.append({'role': 'reference', 'asset_revision_id': frozen.id, **frozen.data})
+    if references is None:
+        for ref in refs:
+            asset = db.get(Record, ref['id'])
+            if not asset or asset.kind != 'asset':
+                raise StorageError('分镜绑定的参考素材不存在。')
+            frozen = snapshot_asset(db, asset, ref.get('version'))
+            if not any(binding['asset_id']==asset.id for binding in bindings):
+                bindings.append({'role': 'reference', 'asset_revision_id': frozen.id, **frozen.data})
     shot_ref = None
     if director and shot:
         data = {'schema_version': 1, 'story_id': director.data.get('source_id'),
@@ -138,7 +144,7 @@ def register_artifact(db, clip_id, source, provenance=None, keep_source=False):
 
 
 def attach_artifact(clip, artifact):
-    # Legacy releases remain readable with their original file and second offsets.
+    # A published clip keeps the file and offsets it was reviewed with.
     updates = {'artifact_id': artifact.id, 'storage_schema_version': 1}
     if not clip.data.get('locked'):
         updates.update(media=artifact.data['playback']['media'],
@@ -147,20 +153,12 @@ def attach_artifact(clip, artifact):
 
 
 def ensure_artifact(db, clip):
-    if clip.data.get('artifact_id'):
-        row = db.get(Record, clip.data['artifact_id'])
-        if not row or row.kind != 'clip_artifact' or row.data['clip_id'] != clip.id:
-            raise StorageError('片段的存储记录不完整。')
-        verify_file(row.data['source'])
-        verify_file(row.data['playback'])
-        return row
-    task = db.get(Task, clip.data.get('source_task', ''))
-    provenance = {'snapshot_status': 'legacy_unverified', 'source_task': clip.data.get('source_task')}
-    if task:
-        provenance.update(task_id=task.id, provider_id=task.result.get('provider_id'),
-                          input_snapshot=task.payload.get('input_snapshot'))
-    row = register_artifact(db, clip.id, media_path(clip.data['media']), provenance, keep_source=True)
-    attach_artifact(clip, row)
+    """The stored artifact of one clip, verified. Every saved clip registers one at ingest."""
+    row = db.get(Record, clip.data.get('artifact_id', ''))
+    if not row or row.kind != 'clip_artifact' or row.data['clip_id'] != clip.id:
+        raise StorageError('片段的存储记录不完整。')
+    verify_file(row.data['source'])
+    verify_file(row.data['playback'])
     return row
 
 
@@ -236,17 +234,25 @@ def use_entry(db, use, occurrence_id):
 
 
 def export_manifest(release):
-    """Derived export; a retry repairs a missing export from the committed DB record."""
-    data = {'schema_version': release.data.get('schema_version', 0), 'release_id': release.id,
-            'revision': release.version, **release.data}
+    """Derived export; a retry repairs a missing export from the committed DB record.
+
+    A published snapshot is immutable: publishing again writes the next free revision instead of
+    rewriting a file an earlier release already exported. Without that, a release recorded at the
+    same revision but with a longer cut collided with the file already on disk.
+    """
     folder = DATA / 'manifests' / 'releases' / release.id
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f'v{release.version}.json'
-    encoded = canonical(data)
-    if path.exists():
-        if path.read_text(encoding='utf-8') != encoded:
-            raise StorageError('已发布的清单快照存在不同内容。')
-        return path
+    revision = max(1, int(release.version or 1))
+    while True:
+        data = {'schema_version': release.data.get('schema_version', 0), 'release_id': release.id,
+                'revision': revision, **release.data}
+        path = folder / f'v{revision}.json'
+        encoded = canonical(data)
+        if not path.exists():
+            break
+        if path.read_text(encoding='utf-8') == encoded:
+            return path
+        revision += 1
     temp = folder / ('.' + uuid.uuid4().hex + '.json')
     try:
         temp.write_text(encoded, encoding='utf-8')
@@ -271,19 +277,6 @@ def read_storage(cid: str):
         if not clip or clip.kind != 'clip':
             raise HTTPException(404, '视频片段不存在。')
         return storage_view(db, clip)
-
-
-@router.post('/clips/{cid}/register-storage')
-def register_legacy(cid: str):
-    try:
-        with Session.begin() as db:
-            clip = db.get(Record, cid)
-            if not clip or clip.kind != 'clip':
-                raise HTTPException(404, '视频片段不存在。')
-            ensure_artifact(db, clip)
-            return storage_view(db, clip)
-    except StorageError as exc:
-        raise HTTPException(422, str(exc)) from None
 
 
 @router.get('/reader/releases/{rid}/manifest')

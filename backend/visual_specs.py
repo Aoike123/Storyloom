@@ -4,14 +4,21 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
 
+# Words that turn a physical attribute into narration, mood, causality or a guess. The validator
+# names the offending word so the next model attempt can fix it instead of guessing at synonyms.
+_NARRATIVE_WORDS=re.compile(
+    r'^[我你他她它]|[。！？!?\r\n“”「」]|因为|所以|为了|于是|然后|随后|从而|仿佛|好像|似乎|大概|可能|建议|不详|未知|未提供|未明确|或|体现|象征|暗示|寓意|剧情|故事|观众|弹幕|直播|台词|分镜|蒙太奇|主观视角|失焦|信息差|击飞|挥手|拥抱|打斗|攻击|斥责|护住|逃跑|走进|站在|荒诞|温馨|惊悚|恐怖|性感|气质|氛围|主角|角色|风格|一样|看起来|略显|普通')
+_NARRATIVE_WORDS_EN=re.compile(r'\b(maybe|perhaps|story|narrative|viewer|audience|dialogue|storyboard|symbolize|attacking)\b',re.I)
+
+
 def static_phrase(value):
     value=value.strip()
     if not value:
         raise ValueError('静态物理属性不能为空')
-    if re.search(r'^[我你他她它]|[。！？!?\r\n“”「」]|因为|所以|为了|于是|然后|随后|从而|仿佛|好像|似乎|大概|可能|建议|不详|未知|未提供|未明确|或|体现|象征|暗示|寓意|剧情|故事|观众|弹幕|直播|台词|分镜|蒙太奇|主观视角|失焦|信息差|击飞|挥手|拥抱|打斗|攻击|斥责|护住|逃跑|走进|站在|荒诞|温馨|惊悚|恐怖|性感|气质|氛围|主角|角色|风格|一样|看起来|略显|普通',value):
-        raise ValueError('只允许明确的静态物理属性，不能包含剧情、情绪、因果或不确定表达')
-    if re.search(r'\b(maybe|perhaps|story|narrative|viewer|audience|dialogue|storyboard|symbolize|attacking)\b',value,re.I):
-        raise ValueError('只允许明确的静态物理属性')
+    match=_NARRATIVE_WORDS.search(value) or _NARRATIVE_WORDS_EN.search(value)
+    if match:
+        raise ValueError(f'静态物理属性里出现了「{match.group(0)}」，它属于剧情、情绪、因果或不确定表达；'
+                         f'请把「{value}」改为能直接画出的静态形状、颜色、材质或尺寸。')
     return value
 
 
@@ -195,7 +202,26 @@ class CostumeSheet(AssetBase):
     role: Literal['costume']
     costume_id: str=Field(pattern=r'^W[0-9]{3}$')
     character_ref: str=Field(pattern=r'^C[0-9]{3}$',description='绑定已有唯一人物身份编号')
-    wardrobe: list[Garment]=Field(min_length=1,max_length=5,description='同一套定装中的服饰部件，不得混入服装备选方案')
+    mode: Literal['garment','bare']=Field(default='garment',
+        description='garment 为该角色的实际服装；bare 为空衣服模式，表示这个角色天然体表、不着衣物。每个角色都必须有一条服装记录，天然体表用 bare，不要省略。')
+    wardrobe: list[Garment]=Field(default_factory=list,max_length=5,
+        description='同一套定装中的服饰部件，不得混入服装备选方案；空衣服模式下必须为空数组')
+    bare_surface: str=Field(default='',max_length=300,
+        description='仅空衣服模式使用：写明该角色自然体表与形体特征来自人物身份图，不添加任何衣物、盔甲、法器或饰品')
+
+    @model_validator(mode='after')
+    def mode_matches_wardrobe(self):
+        if self.mode=='garment':
+            if not self.wardrobe:
+                raise ValueError('实际服装必须给出至少一件服饰部件；该角色不着衣物时请改用空衣服模式 mode=bare')
+            if self.bare_surface:
+                raise ValueError('实际服装不能填写空衣服说明')
+        else:
+            if self.wardrobe:
+                raise ValueError('空衣服模式表示该角色不着衣物，wardrobe 必须为空数组')
+            if len(self.bare_surface.strip())<5:
+                raise ValueError('空衣服模式必须用 bare_surface 写明自然体表的身份依据，不能留空')
+        return self
 
 
 class Dimensions(Spec):
@@ -289,6 +315,8 @@ def description(item):
         if a.features:lines.append('固定特征：'+'；'.join(a.features))
         return '\n'.join(lines)
     if item.role=='costume':
+        if item.mode=='bare':
+            return '空衣服模式（不着衣物）：'+item.bare_surface
         return '\n'.join(f'{g.slot}：{g.category}，{g.color}，{g.material}，{g.cut}'+('，'+'；'.join(g.details) if g.details else '') for g in item.wardrobe)
     d=item.dimensions;l=item.lighting
     return '\n'.join([

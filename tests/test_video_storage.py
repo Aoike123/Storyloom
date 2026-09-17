@@ -75,18 +75,16 @@ def test_asset_snapshot_survives_replacement_of_live_asset_file():
         with pytest.raises(StorageError,match='版本已变化'):snapshot_asset(db,asset,2)
 
 
-def test_legacy_registration_is_lazy_and_keeps_published_file_and_offsets(client,sample_video):
-    path=DATA/'media'/'legacy_flat.mp4';shutil.copyfile(sample_video,path)
+def test_a_clip_without_a_stored_artifact_cannot_be_used(client,sample_video):
+    """每个片段在保存时都会登记存储记录；缺失即拒绝使用，不会再事后补登。"""
+    path=DATA/'media'/'flat.mp4';shutil.copyfile(sample_video,path)
     with Session.begin() as db:
-        db.add(Record(id='storage_legacy',kind='clip',data={'media':'/media/legacy_flat.mp4','duration':5,'locked':True,'reader_trim':{'start':1.1,'end':3.9}}))
-    assert client.get('/api/clips/storage_legacy/storage').json()['schema_version']==0
-    r=client.post('/api/clips/storage_legacy/register-storage')
-    assert r.status_code==200,r.text
-    assert r.json()['artifact']['source']['media']=='/media/legacy_flat.mp4'
-    assert path.exists()
-    with Session() as db:
-        data=db.get(Record,'storage_legacy').data
-        assert data['media']=='/media/legacy_flat.mp4' and data['reader_trim']=={'start':1.1,'end':3.9}
+        db.add(Record(id='storage_flat',kind='clip',data={'media':'/media/flat.mp4','duration':5,'locked':True,
+            'reader_trim':{'start':1.1,'end':3.9}}))
+    storage=client.get('/api/clips/storage_flat/storage').json()
+    assert storage['schema_version']==0 and storage['artifact'] is None
+    with Session() as db, pytest.raises(StorageError,match='存储记录不完整'):
+        create_use(db,db.get(Record,'storage_flat'),1.1,3.9,{'shot_id':'S01','revision':1})
 
 
 def test_file_tampering_prevents_publishing_a_selection(sample_video):
@@ -190,7 +188,7 @@ def test_submission_provenance_uses_the_exact_per_request_config(monkeypatch):
         assert task.status=='waiting'
 
 
-def test_recovery_upgrades_a_clip_saved_by_the_old_worker(sample_video):
+def test_a_clip_record_without_its_artifact_is_completed_on_the_next_save(sample_video):
     task_id='storage_old_worker'
     with Session.begin() as db:
         db.add(Task(id=task_id,kind='video',status='running',owner='owner',payload={},result={'provider_id':'p123'}))

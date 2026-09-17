@@ -54,7 +54,9 @@ export function StreamRegion({active, streamKey, ...props}: ComponentProps<'div'
     observer.observe(content);
     return () => observer.disconnect();
   }, [streamKey]);
-  return <div {...props} ref={region} onScroll={event => {
+  // Marked while it is streaming so the author page can keep this text box in view instead of
+  // scrolling the whole production module around it.
+  return <div {...props} data-follow={active ? 'stream' : undefined} ref={region} onScroll={event => {
     const element = event.currentTarget;
     follow.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
     props.onScroll?.(event);

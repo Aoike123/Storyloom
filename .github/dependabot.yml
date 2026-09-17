@@ -4,11 +4,51 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    open-pull-requests-limit: 3
+    assignees:
+      - Aoike123
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+      # pydantic pins pydantic-core to an exact version, and requirements.lock.txt
+      # pins both lines. Bumping either one alone fails pip resolution, so move
+      # this pair deliberately (pip install -U pydantic, then re-freeze).
+      - dependency-name: "pydantic"
+      - dependency-name: "pydantic-core"
+    groups:
+      python-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: npm
     directory: "/web"
     schedule:
       interval: weekly
+    open-pull-requests-limit: 3
+    assignees:
+      - Aoike123
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+    groups:
+      web-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    open-pull-requests-limit: 3
+    assignees:
+      - Aoike123
+    groups:
+      github-actions:
+        patterns:
+          - "*"

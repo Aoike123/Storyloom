@@ -37,3 +37,7 @@ web/next-env.d.ts
 Thumbs.db
 .idea/
 .vscode/
+
+# Machine-local agent tooling and installed skills (downloaded packages, not product source)
+.codex/
+.agents/

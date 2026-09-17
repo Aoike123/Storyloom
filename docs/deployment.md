@@ -1,27 +1,34 @@
 # Storyloom public demo deployment
 
-This stack publishes Storyloom as an anonymous public demo on one Linux server.
-It packages Caddy, Next.js, FastAPI, the background worker, and PostgreSQL with
-persistent named volumes. Only ports 80 and 443 are published.
+This stack publishes Storyloom on one Linux server: Caddy, Next.js, FastAPI, the background worker
+and PostgreSQL with persistent named volumes. Only ports 80 and 443 are published.
 
-Visitors first open the model-access page and choose one of two modes:
+Generation is paid for in one of two ways, and the account dock in the top-right corner is the only
+place that manages it:
 
-- **Shared pool** — uses the operator's three API keys while each key's daily
-  internal budget and provider check are available. Each provider is metered
-  independently, and reservations are first come, first served.
-- **Bring your own keys** — accepts only DeepSeek, SiliconFlow, and MiniMax keys.
-  Provider endpoints and model identifiers are fixed by the application.
+- **Compute beans** — every visitor signs in with a Zhihu account and receives a one-time bean
+  grant. Their calls spend that grant instead of the operator's budget, so one visitor cannot use
+  up the day's allowance before anyone else arrives.
+- **Own API keys** — accepts DeepSeek, SiliconFlow and MiniMax keys, and is the way forward once a
+  wallet is empty. Provider endpoints and model identifiers stay fixed by the application.
 
-There is no site password and no product account. BYOK credentials are encrypted
-with `MODEL_ACCESS_SECRET`, retained for a short anonymous session, and selected
-tasks store only its opaque id. Switching modes affects newly submitted tasks;
-already-running tasks keep the session with which they were created.
+There is no site password and no anonymous shared pool. Own-key credentials are encrypted with
+`MODEL_ACCESS_SECRET`, retained for a short session, and tasks store only its opaque id. The bean
+wallet is keyed by the Zhihu account id held as text, because `uid` is an int64 that JavaScript
+cannot represent exactly.
 
-This is intentionally a public demo, not a tenant-isolated SaaS platform. Works,
-progress, and media are shared across visitors. The stack includes lightweight
-per-IP request limits, a global active-task cap, and container resource ceilings,
-but it has no CAPTCHA, distributed abuse scoring, or upstream DDoS protection.
-Keep the daily pool budget conservative.
+This is intentionally a public demo, not a tenant-isolated SaaS platform, but the studio is no
+longer shared between visitors: each work belongs to the payer that created it — a signed-in
+account, or one own-key session — and another visitor cannot list it, open it by id, or spend their
+own beans continuing it. Works created before that rule existed have no owner and are claimed by
+the first account that opens their story. The published reader catalogue stays public on purpose:
+publishing is how a film reaches readers.
+
+Media files are still served from one `/media` prefix to anyone who knows the path, so treat a URL
+as shareable rather than private. The stack includes per-IP request limits, a global active-task cap
+and container resource ceilings, but no CAPTCHA, distributed abuse scoring or upstream DDoS
+protection. Size `BEANS_INITIAL_GRANT` so the total across expected signups stays inside your
+provider budget.
 
 ## 1. Prepare the server and DNS
 
@@ -37,7 +44,7 @@ IPv6 is configured on the server. Allow inbound TCP 22, 80, and 443, plus UDP
 Caddy obtains and renews HTTPS certificates after DNS points at the server and
 ports 80/443 are reachable. Its certificate state lives in a named volume.
 
-## 2. Configure secrets and the shared pool
+## 2. Configure secrets and the operator's provider keys
 
 Clone the repository, then create the production environment file:
 
@@ -62,24 +69,13 @@ The public deployment locks their transports and models to the product-tested
 combination in `backend/environment.py`; visitors cannot submit alternate URLs
 or model ids.
 
-Set `PUBLIC_POOL_LLM_DAILY_BUDGET_CNY`,
-`PUBLIC_POOL_IMAGE_DAILY_BUDGET_CNY`, and
-`PUBLIC_POOL_VIDEO_DAILY_BUDGET_CNY` to the maximum amounts Storyloom may
-reserve from the corresponding operator key each Shanghai calendar day. The
-three `PUBLIC_POOL_*_RESERVE_CNY` values are conservative per-submission
-estimates, not provider invoices. Every attempted provider submission keeps its
-reservation, even if the provider later rejects it, so each local cap fails
-closed rather than overspending from that key.
-
-DeepSeek exposes an official balance endpoint, so the pool verifies that account
-before it can be selected. SiliconFlow retired its `/user/info` balance endpoint
-on 2026-08-14 and MiniMax does not currently document an equivalent general
-balance API. Those two providers are guarded by their independent daily
-reservation caps; an authentication, payment, or permission response (HTTP
-401/402/403) disables only that provider's shared key for the remainder of that
-Shanghai day. Their dashboards remain the source of truth for recharge amounts.
-
-Set `PUBLIC_POOL_ENABLED=false` at any time to offer BYOK only.
+There is no anonymous shared pool. An operator key is spent only through a signed-in account's bean
+wallet, and the size of that wallet is what bounds the spend: `BEANS_INITIAL_GRANT` per account,
+with `BEANS_LLM_COST`, `BEANS_IMAGE_COST` and `BEANS_VIDEO_COST_PER_SECOND` setting the price of
+each call. Size the grant so the total across expected signups stays inside your provider budget.
+An authentication, payment, or permission response (HTTP 401/402/403) from a provider pauses that
+provider for the rest of the Shanghai day, and affected accounts are told to bring their own key;
+the provider dashboards remain the source of truth for recharge amounts.
 
 For a 2 vCPU / 2 GiB demo host, the supplied defaults allow 180 read requests
 and 20 write requests per client IP per minute, and at most 32 queued, running,
@@ -88,12 +84,91 @@ or waiting generation tasks globally. `/api/health` is exempt. Adjust
 `PUBLIC_MAX_ACTIVE_TASKS` in `.env.production` only after observing real usage.
 The request limiter is deliberately local to the single API container; use a
 CDN/WAF or shared rate-limit service before scaling to multiple API replicas.
+Only the reverse-proxy network may set `X-Forwarded-For`
+(`STORYLOOM_TRUSTED_PROXY`, default `172.28.0.0/16`, matching
+`STORYLOOM_NETWORK_SUBNET`). Trusting every peer would let a visitor forge a new
+client address and reset its own per-IP limit. If you change the Compose subnet,
+change both values together.
 
 The Compose file also caps memory, CPU, and process counts per container so one
 runaway service is less likely to take down the host. These defaults are tuned
 for the documented small server. Generated media still consumes the system disk
 and outbound bandwidth, so monitor both and move media to object storage/CDN
 before inviting sustained traffic.
+
+## Zhihu account login
+
+Signed-in visitors spend **compute beans** instead of an anonymous pool, so one visitor cannot
+consume the whole day's budget. There is no third way: a browser that is neither signed in nor
+carrying its own keys cannot generate at all, and the operator's keys stay out of its reach. The
+two paths are independent: beans come from the operator's keys, and a visitor whose beans run out
+can switch to their own keys at `/<setup>` at any time.
+
+### One-time setup
+
+1. On the hackathon project page, obtain the App ID and App Key.
+2. Register this exact callback on the Zhihu open platform — protocol, host, path and trailing
+   slash must match character for character:
+
+   ```text
+   https://<SITE_ADDRESS>/auth/callback
+   ```
+
+3. Put the credentials in `.env.production` (never in the repository or an image layer):
+
+   ```text
+   ZHIHU_OAUTH_APP_ID=<app id>
+   ZHIHU_OAUTH_APP_KEY=<app key>
+   ZHIHU_OAUTH_REDIRECT_URI=https://<SITE_ADDRESS>/auth/callback
+   ```
+
+4. Redeploy. `GET /api/zhihu/status` must report `"configured": true`.
+5. Open `/author` and click the login entry. **You** complete the Zhihu consent screen; the agent
+   must not click it for you.
+
+`/auth/callback` is deliberately outside `/api`, so the Caddyfile routes it to the API container.
+If you change the public path, change both the registered URI and that route together.
+
+### Beans
+
+Each account receives `BEANS_INITIAL_GRANT` once, at first login. Costs are `BEANS_LLM_COST`
+(default 1), `BEANS_IMAGE_COST` (default 5) and `BEANS_VIDEO_COST_PER_SECOND` (default 6). With the
+supplied defaults one six-shot film costs roughly 408 beans, so the 500 default grant finishes a
+film with a little room for a retry. Set `BEANS_INITIAL_GRANT=0` to make accounts bring their own
+keys from the start.
+
+Beans are debited when a call is actually submitted, not when a task is queued, and a provider that
+refuses the request returns them. Set the costs to `0` to make the wallet a pure login gate.
+
+### What is stored where
+
+| Value | Where it lives | Never appears in |
+| --- | --- | --- |
+| App Key | deployment secret | repository, image, log, response |
+| OAuth access token | server-side, encrypted with `MODEL_ACCESS_SECRET` | browser, URL, log, response |
+| `uid`, nickname, avatar | server-side session record | — (nickname and avatar are shown to that account) |
+| Browser session | `HttpOnly` cookie holding a random id | — |
+
+The login screen may not be able to verify `state` if Zhihu does not return it. The app rejects a
+mismatched, missing, expired or replayed `state`, so treat a real login that completes as
+confirmation that the value came back; if it ever stops returning `state`, logins will fail closed
+rather than degrade silently.
+
+## Diagnosing a failed run
+
+A visitor who keeps hitting a refusal after attaching keys should open the account dock in the
+top-right: it lists every provider, whether a key is attached, its tail, and when the session
+expires. That panel is the answer to "did my key actually get recorded?". The dock also removes the
+attached keys so the browser can go back to paying from its account wallet, and it re-checks the
+bean balance while it is open, because the worker spends beans without the page knowing.
+
+A failed task shows a short code such as `E-1A2B3C` in its progress message. On
+the server (local mode) `GET /api/diagnostics/E-1A2B3C` returns the full
+traceback, stage and non-secret context; in public demo mode that endpoint
+returns 404 so visitors never receive stack traces or provider bodies. Failed
+production nodes retry themselves once, reusing already-validated results, and
+then wait for a person. See [制作流程的安全不变量](pipeline-safety.md) for the
+full list of invariants.
 
 If Docker Hub is unreachable from a mainland China server, set
 `DOCKER_HUB_PREFIX=m.daocloud.io/docker.io/library/` in `.env.production`.
@@ -106,23 +181,64 @@ daemon's global registry configuration.
 bash scripts/deploy.sh
 ```
 
+### If the first deploy after a Compose change stops with "has active endpoints"
+
+`scripts/deploy.sh` runs `up --remove-orphans`, which makes Docker recreate the default network
+whenever its definition changes — for example the first release that pins
+`STORYLOOM_NETWORK_SUBNET`. Containers still attached to the old network block that recreate, and
+the run stops with:
+
+```text
+error while removing network: network storyloom_default has active endpoints
+```
+
+Stop the containers first, then deploy. Omitting `-v` keeps every named volume, so works, media and
+the database are untouched:
+
+```bash
+docker compose --env-file .env.production -f compose.production.yaml down --remove-orphans
+bash scripts/deploy.sh
+# The Caddyfile is mounted, not reloaded: restart Caddy so a new public path takes effect.
+docker compose --env-file .env.production -f compose.production.yaml restart caddy
+```
+
+Never add `-v` to that `down`: it deletes `postgres_data`, `story_data` and the Caddy volumes.
+
+### Verify the Zhihu login after deploying
+
+```bash
+curl -s https://<SITE_ADDRESS>/api/zhihu/status
+```
+
+`"configured":true` means the App ID, App Key and redirect URI were all read. Then confirm that the
+login actually sends the registered callback, which is the value the activity page must match
+character for character:
+
+```bash
+curl -s -o /dev/null -w '%{redirect_url}\n' https://<SITE_ADDRESS>/api/zhihu/login
+```
+
+The decoded `redirect_uri` must equal the address registered on the activity page. A mismatch there
+is the most common cause of a login that fails before the consent screen.
+
 The script validates Compose and Caddy configuration, builds immutable
 application images, starts services in dependency order, and waits for the
 database, API, worker, and web health checks. It never removes data volumes.
 
-Open `https://YOUR_DOMAIN`. The story catalog is public; entering production
-first opens `/setup`, where a visitor chooses an available shared pool or enters
-their own three keys. Useful checks:
+Open `https://YOUR_DOMAIN`. The story catalog is public. Entering a story sends a visitor to Zhihu
+to sign in and receive their bean grant, unless they would rather attach their own keys from the
+account dock in the top-right corner. Useful checks:
 
 ```bash
 docker compose --env-file .env.production -f compose.production.yaml ps
 docker compose --env-file .env.production -f compose.production.yaml logs --tail=100 api worker web caddy
 curl https://YOUR_DOMAIN/api/health
+curl https://YOUR_DOMAIN/api/zhihu/status
 curl https://YOUR_DOMAIN/api/model-access/status
 ```
 
-A healthy response reports PostgreSQL and an online worker. The model-access
-status must report `pool.available: true` before the shared option is selectable.
+A healthy response reports PostgreSQL and an online worker. `/api/zhihu/status` must report
+`"configured": true` before the sign-in button can work.
 
 ## Updates and rollback
 
@@ -152,6 +268,41 @@ not-yet-expired BYOK sessions. Store backups privately and never place
 `MODEL_ACCESS_SECRET` in the backup directory. Restore is deliberately not
 automated because it overwrites live data; rehearse a restore runbook before
 accepting irreplaceable content.
+
+## Clean production reset
+
+When a test deployment must return to a genuinely empty state, use the dedicated reset script on
+the server after pulling the reviewed revision:
+
+```bash
+git pull --ff-only
+bash scripts/reset-production.sh --yes
+```
+
+This is a full application reset: it removes every login session, account wallet, work, task,
+public release, database-backed cache and generated media file. It also discards the old web/API
+containers and rebuilds the checked-out frontend and backend source, so stale runtime bundles
+cannot survive the reset. Immutable dependency layers may be reused; they contain installed
+packages rather than account or application data and avoid downloading every package again on a
+bandwidth-limited server. Users sign in again as new accounts after it completes.
+
+A reset empties the demo too, so a public deployment goes back to showing no watchable film. Load
+the prepared demo bundle afterwards to bring back a finished, real film without paying for a single
+model call:
+
+```bash
+python scripts/demo-data.py import ../demo-data    # then, after the demo account signs in once:
+python scripts/demo-data.py assign ../demo-data
+```
+
+See [演示数据](demo-data.md) for what the bundle carries and how ownership is handed out.
+
+Before deleting anything, the script stops public traffic and workers and writes a PostgreSQL dump
+plus the complete application data volume to `backups/pre-reset-<timestamp>/`. It preserves
+`.env.production`, the provider settings/secret files in the data volume, and both Caddy volumes,
+so OAuth configuration and HTTPS certificates are not erased. Do not replace this command with
+`docker compose down -v`; that also destroys the certificate and configuration volumes and skips
+the automatic backup.
 
 ## Container releases
 

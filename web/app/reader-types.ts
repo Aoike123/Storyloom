@@ -22,6 +22,14 @@ export type Release = {
   author: string;
   description: string;
   entries: ReleaseEntry[];
+  /** Whether this published version belongs to the currently signed-in account. */
+  mine?: boolean;
+  /** Publication time; the catalogue itself still defines display order. */
+  created?: number;
+  /** Public attribution snapshot for the maker of this particular version. */
+  creator?: {name: string; avatar_path?: string | null};
+  /** How much of the cut this release covers, e.g. 3 of 6 episodes. Public. */
+  progress?: {published_units: number; total_units: number; complete: boolean; next_unit?: string | null} | null;
 };
 
 export type ReaderBranch = {
@@ -77,11 +85,33 @@ export type Catalog = {
 };
 
 export const productionLink = (item: {work_id?: string | null; source_work_id?: string; project_id?: string | null}) => {
-  const author = item.project_id ? '/author?work=' + encodeURIComponent(item.project_id)
-    : item.work_id || item.source_work_id ? '/author?story=' + encodeURIComponent((item.work_id || item.source_work_id)!)
+  // A public release's project may belong to another maker. Always enter by source story when one
+  // exists: the server then creates or resumes this account's independent version of that story.
+  const sourceId = item.work_id || item.source_work_id;
+  return sourceId ? '/author?story=' + encodeURIComponent(sourceId)
+    : item.project_id ? '/author?work=' + encodeURIComponent(item.project_id)
     : '/author';
-  return '/setup?next=' + encodeURIComponent(author);
 };
 
 export const canWatch = (item: CatalogItem) => !!item.release?.entries.length;
 export const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/**
+ * Group the catalogue by story.
+ *
+ * The catalogue carries every published production, so one story appears more than once when
+ * several people have made it. Cards are stacked per story instead of repeating the same story as
+ * unrelated cards. Productions keep the catalogue order, which is newest first.
+ */
+export function groupProductionsByStory(items: CatalogItem[], releases: Release[]) {
+  const byStory: Record<string, Release[]> = {};
+  for (const release of releases) {
+    if (!release.source_work_id) continue;
+    (byStory[release.source_work_id] ||= []).push(release);
+  }
+  return items.map(item => {
+    const found = item.work_id ? byStory[item.work_id] || [] : [];
+    const productions = found.length ? found : item.release ? [item.release] : [];
+    return {item, productions, stacked: productions.length > 1};
+  });
+}

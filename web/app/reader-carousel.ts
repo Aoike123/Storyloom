@@ -3,20 +3,19 @@ import {canWatch} from './reader-types';
 
 const productionStages: Record<string, number> = {
   style: 1,
-  preparing: 2,
-  assets_review: 3,
-  storyboarding: 4,
-  compositing: 4,
-  rendering: 5,
-  producing: 5,
-  film_review: 6,
-  published: 7,
+  segments_review: 2,
+  preparing: 3,
+  assets_review: 4,
+  storyboarding: 5,
+  rendering: 6,
+  film_review: 7,
+  published: 8,
+  episode_review: 8,
 };
 
 export function productionRank(item: CatalogItem) {
-  // A verified, playable release is the strongest signal that a work is complete.
-  if (canWatch(item)) return 8;
-  return productionStages[item.stage || ''] || (item.project_id ? 0.5 : 0);
+  if (canWatch(item)) return 9;
+  return productionStages[item.stage || ''] || (item.project_id ? .5 : 0);
 }
 
 export function rankByProduction(items: CatalogItem[]) {
@@ -35,4 +34,10 @@ export function circularOffset(index: number, current: number, length: number) {
   const forward = wrapIndex(index - current, length);
   const backward = forward - length;
   return Math.abs(backward) < Math.abs(forward) ? backward : forward;
+}
+
+/** The cover one step away in a direction, wrapping at either end. */
+export function adjacentId(items: {id: string}[], current: number, direction: 1 | -1) {
+  if (items.length < 2) return '';
+  return items[wrapIndex(current + direction, items.length)]?.id || '';
 }

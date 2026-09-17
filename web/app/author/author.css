@@ -14,7 +14,7 @@
 .style-option-placeholder.is-paragraph{width:95%;height:42px;background:linear-gradient(#e8efdf 0 9px,transparent 9px 17px,#e8efdf 17px 26px,transparent 26px 34px,#e8efdf 34px)}
 @media(prefers-reduced-motion:reduce){.author-option{transition:none}}
 @media(max-width:420px){.author-page .button{white-space:normal;text-align:left}.studio-asset-grid{grid-template-columns:1fr}}
-.asset-redesign{padding:20px;margin:0 0 26px;border:1px solid #a8bd96;border-left:4px solid #527448;border-radius:10px;background:#f1f6e9}
+.asset-redesign{padding:20px;margin:0 0 22px;border:1px solid #cfdcc2;border-left:4px solid #6f9458;border-radius:12px;background:#f5f9ef}
 .studio-step-return{padding:13px 17px;margin-bottom:14px;border:1px solid #cbdcbf;border-radius:8px;background:#f1f6e9;color:#5b744e;font-size:12px;line-height:1.8}
 .studio-step-return button{margin-left:12px;padding:5px 8px;border:0;background:transparent;color:#36583b;text-decoration:underline;cursor:pointer}
 .attempt-history>summary{cursor:pointer;color:#526f43;font-size:14px}.attempt-history>p{font-size:11px;color:#879779}
@@ -26,9 +26,141 @@
 .asset-redesign-action .button{margin:0;padding:12px 18px;white-space:nowrap}
 .asset-redesign-action .button:disabled{opacity:.7}
 .asset-redesign-action small{display:block;margin-top:7px;font-size:11px;color:#718560;line-height:1.6}
-.asset-redesign .checkbox{margin:16px 0 5px;color:#526c42}
 .asset-redesign .asset-redesign-note{font-size:10px;color:#8b997c}
-.asset-feedback-permission{margin:10px 0;color:#526c42!important}.asset-feedback-note{display:block;margin-top:5px;color:#7c8c6e;font-size:11px;line-height:1.8}
+.asset-feedback-note{display:block;margin-top:5px;color:#7c8c6e;font-size:11px;line-height:1.8}
+
+/* One connected route/account control, shared in spirit with the dark reader header. */
+.studio-header-right{display:flex;align-items:center;gap:0;padding:3px;border:1px solid #d7e0cf;border-radius:999px;background:#f8faf4;box-shadow:0 7px 20px #34482f0b;transition:border-color .16s ease,background .16s ease}
+.studio-header-right:focus-within{border-color:#91a982;background:#fbfcf8}
+.studio-header-right .studio-back{min-height:38px;padding:0 13px;border-radius:999px;transition:background .16s ease,color .16s ease;white-space:nowrap}
+.studio-header-right .studio-back:hover{background:#edf3e6;color:#38543b}
+.studio-header-right>.account-dock{display:flex;align-items:center}
+.studio-header-right>.account-dock::before{content:'';width:1px;height:20px;flex:0 0 1px;background:#dce4d4}
+.studio-header-right .account-dock-trigger{min-height:38px;padding:6px 10px 6px 8px;border:0;background:transparent;box-shadow:none;backdrop-filter:none}
+.studio-header-right .account-dock-trigger:hover,.studio-header-right .account-dock-trigger[aria-expanded=true]{border-color:transparent;background:#eaf1e2}
+.zhihu-account{margin:0 0 18px;padding:16px 18px;border:1px solid #d7e2ca;border-radius:10px;background:#f7faf1}
+.zhihu-account-heading{display:flex;align-items:center;gap:10px;color:#4c6440}
+.zhihu-account-heading strong{font-size:15px;font-weight:600}
+.zhihu-account-heading small{display:block;margin-top:2px;color:#7c8c6e;font-size:11px}
+.zhihu-account-avatar{width:34px;height:34px;border-radius:50%;object-fit:cover;background:#e4ecda}
+.zhihu-account-beans{margin-left:auto;padding:4px 10px;border-radius:999px;background:#e6efd8;color:#4c6440;font-size:12px;font-weight:600;white-space:nowrap}
+.zhihu-account-beans.is-low{background:#f6e3d5;color:#8a5a34}
+.zhihu-account-note{margin:10px 0 0;color:#7c8c6e;font-size:12px;line-height:1.8}
+.zhihu-account-warning{display:flex;align-items:flex-start;gap:6px;margin:10px 0 0;color:#8a5a34;font-size:12px;line-height:1.8}
+.zhihu-account-warning svg{flex-shrink:0;margin-top:3px}
+.zhihu-account-actions{display:flex;gap:10px;margin-top:12px}
+.zhihu-account .button{margin:0}
+.studio-notice{margin:0 0 14px;padding:10px 14px;border:1px solid #c9dcb4;border-left:4px solid #6f9a52;border-radius:8px;background:#f2f8e9;color:#4c6440;font-size:12px}
 @media(max-width:950px){.asset-redesign-heading{align-items:flex-start;flex-direction:column;gap:14px}.asset-redesign-action{max-width:none}.asset-redesign-action .button{min-height:44px}}
+@media(max-width:520px){.studio-header{padding:18px 0}.studio-header-right{padding:2px}.studio-header-right .studio-back,.studio-header-right .account-dock-trigger{min-height:40px}.studio-header-right .studio-back{padding-inline:10px;font-size:11px}.studio-header-right .studio-back svg{width:13px}.studio-header-right .account-dock-trigger{padding-inline:8px}}
 
 .studio-asset-grid{align-items:start}
+
+.studio-segments{margin-top:22px;padding:16px 18px;background:#f8faf4;border:1px solid #e1e8d8;border-radius:10px}
+.studio-segments>summary{cursor:pointer;font-size:12px;color:#5d7450}
+.studio-segments ol{list-style:none;margin:16px 0 0;padding:0;display:grid;gap:12px}
+.studio-segments li{padding:13px 15px;background:#fff;border:1px solid #e6ecdd;border-radius:8px}
+.studio-segments header{display:flex;justify-content:space-between;gap:12px;font-size:11px;flex-wrap:wrap}
+.studio-segments header strong{font-weight:500;color:#3c5540}
+.studio-segments header span{color:#93a184}
+.studio-segments p{font-size:11px;color:#6f8266;margin:9px 0}
+.studio-segments small{font-size:10px;color:#93a184;line-height:1.8;display:block}
+.studio-segments blockquote{margin:10px 0 0;padding:9px 12px;border-left:2px solid #b9cba9;background:#f6f9f0;color:#74856a;font-size:10px;line-height:1.9;max-height:120px;overflow:auto}
+.studio-bare-costumes{margin:16px 0 0;padding:14px 16px;background:#fbfaf4;border:1px solid #eae4d4;border-radius:10px}
+.studio-bare-costumes strong{display:block;font-size:12px;color:#6b6244}
+.studio-bare-costumes ul{list-style:disc;margin:9px 0 0;padding-left:18px}
+.studio-bare-costumes li{font-size:11px;line-height:1.9;color:#7b7358}
+.studio-bare-costumes p{margin:9px 0 0;font-size:10px;color:#948b6c;line-height:1.8}
+.studio-review{margin-top:14px;padding:13px 16px;border-radius:10px}
+.studio-review>summary{cursor:pointer;font-size:12px}
+.studio-review ul{list-style:disc;margin:9px 0 0;padding-left:18px}
+.studio-review li{font-size:11px;line-height:1.9}
+.studio-review.is-passed{background:#f7faf3;border:1px solid #e2ead6;color:#61794f}
+.studio-review.is-passed li{color:#75875f}
+.studio-review.is-rejected{background:#fdf5f2;border:1px solid #f0d9d0;color:#8d5a4a}
+.studio-review.is-rejected li{color:#9c6a58}
+.studio-review p{margin:9px 0 0;font-size:10px;line-height:1.85;color:#8f9c84}
+
+/* A rejected text review is a visible handoff to the author's final-film judgement, not a pass. */
+.studio-review-handoff{margin:18px 0;padding:17px 18px;border:1px solid #dfc89a;border-left:4px solid #b5873e;border-radius:10px;background:linear-gradient(135deg,#fffaf0,#fbf7eb);color:#6d5731;box-shadow:0 8px 24px #75521c0a}
+.studio-review-handoff header{display:flex;align-items:center;gap:11px}
+.studio-review-handoff header>span{width:34px;height:34px;flex:0 0 34px;display:grid;place-items:center;border-radius:50%;background:#f2e4c8;color:#946a2f}
+.studio-review-handoff header small{display:block;margin-bottom:2px;color:#a17c45;font-size:8px;letter-spacing:1.7px}
+.studio-review-handoff h3{margin:0;color:#674f2c;font-size:15px;font-weight:600;line-height:1.5}
+.studio-review-handoff p{margin:12px 0 0;color:#806d4d;font-size:11px;line-height:1.85}
+.studio-review-handoff ul{margin:11px 0 0;padding:10px 12px 10px 28px;border-radius:7px;background:#ffffff8c;color:#765b35}
+.studio-review-handoff li{padding:2px 0;font-size:11px;line-height:1.75}
+.studio-review-handoff>small{display:block;margin-top:10px;color:#9a835f;font-size:9px;line-height:1.7}
+
+/* Page-level live follow: quiet while active, prominent only after the reader scrolls away. */
+.studio-live-module{position:relative;scroll-margin-top:96px;border-radius:12px}
+.studio-live-module.is-following::after{content:'';position:absolute;top:22px;right:2px;width:6px;height:6px;border-radius:50%;background:#789960;box-shadow:0 0 0 5px #78996017;pointer-events:none}
+.studio-follow-control{position:fixed;right:max(20px,calc((100vw - 1440px)/2 + 28px));bottom:max(20px,env(safe-area-inset-bottom,0px));z-index:65;max-width:290px;color:#38533b}
+.studio-follow-status,.studio-follow-control>button{min-height:52px;display:flex;align-items:center;gap:11px;padding:8px 13px;border:1px solid #cad9be;border-radius:999px;background:#f8fbf3ee;box-shadow:0 12px 34px #243b2630;backdrop-filter:blur(14px)}
+.studio-follow-status{opacity:.94}
+.studio-follow-status>span{flex:1}
+.studio-follow-unlock{flex:0 0 auto;min-height:32px;padding:5px 13px;border-radius:999px;border:1px solid #b9cdab;background:#fff;color:#4f6f45;font-size:10px;cursor:pointer;transition:border-color .16s ease,background .16s ease}
+.studio-follow-unlock:hover{border-color:#8aa976;background:#f2f8ec}
+.studio-follow-unlock:focus-visible{outline:2px solid #6f9259;outline-offset:2px}
+.studio-follow-status>i{width:9px;height:9px;flex:0 0 9px;border-radius:50%;background:#6f9458;box-shadow:0 0 0 5px #6f94581b;animation:studio-follow-pulse 1.8s ease-in-out infinite}
+.studio-follow-control span{display:grid;min-width:0;text-align:left}
+.studio-follow-control strong{color:#36533a;font-size:11px;font-weight:600;line-height:1.35}
+.studio-follow-control small{margin-top:2px;color:#7a8f70;font-size:9px;line-height:1.35;white-space:nowrap}
+.studio-follow-control>button{width:100%;border-color:#91ae7c;background:#eff6e7;color:#547548;cursor:pointer;transition:transform .16s ease,background .16s ease,border-color .16s ease}
+.studio-follow-control>button:hover{transform:translateY(-2px);border-color:#6f9259;background:#f5faef}
+.studio-follow-control>button:focus-visible{outline:2px solid #6f9259;outline-offset:3px}
+@keyframes studio-follow-pulse{50%{box-shadow:0 0 0 8px #6f945808}}
+@media(max-width:760px){.studio-live-module{scroll-margin-top:82px}.studio-live-module.is-following::after{top:17px;right:0}.studio-follow-control{left:16px;right:16px;bottom:max(12px,env(safe-area-inset-bottom,0px));max-width:none;display:flex;justify-content:center}.studio-follow-status,.studio-follow-control>button{width:min(100%,390px);min-height:54px;padding:9px 14px}.studio-review-handoff{padding:15px 14px}.studio-review-handoff h3{font-size:14px}}
+@media(prefers-reduced-motion:reduce){.studio-follow-status>i{animation:none}.studio-follow-control button{transition:none}}
+.asset-redesign-heading.is-rejected{align-items:flex-start}.asset-redesign-heading.is-rejected>div:first-child{flex:1}.asset-redesign-heading.is-rejected textarea{width:100%;margin-top:8px;padding:10px;border:1px solid #b6c8a4;border-radius:8px;font-size:12px;line-height:1.7;font-family:inherit;color:#3d5236;background:#fff;resize:vertical}.asset-redesign-heading.is-rejected small{display:block;margin-top:6px;font-size:11px;color:#718560;line-height:1.7}.asset-redesign-heading.is-rejected .asset-redesign-action{margin-top:8px}
+
+/* 制作页的统一面板语言：同一组圆角、描边、留白与配色，只让语义色区分状态。
+   新增的「重做」与「情节确认」都复用这套变量，避免每块面板各自为政。 */
+/* 制作页的统一面板语言：同一组圆角、描边、留白与配色，只让语义色区分状态。
+   情节确认、重做、制作动态都复用这套变量，不再各自发明样式。 */
+.activity-tree{display:grid;gap:14px}
+.activity-node{display:grid;gap:8px;padding:10px 12px 12px;border:1px solid #e3ead9;border-radius:12px;background:#fcfdf9}
+.activity-node.has-problem{border-color:#e9d7bc;background:#fffaf2}
+.activity-node-toggle{display:flex;align-items:center;gap:7px;background:none;border:0;padding:3px 2px;color:#718a5f;font:inherit;font-size:11px;cursor:pointer;text-align:left}
+.activity-node-toggle small{color:#98a48a;font-size:10px}
+.activity-node-toggle:hover{color:#4f6f45}
+.activity-children{display:grid;gap:10px;padding-left:13px;border-left:2px solid #e6ecdc}
+.activity-node .activity-children{border-left-color:#dde7d1}
+.studio-error button.is-danger{color:#a2553c;text-decoration:underline}
+
+.segment-review{margin:0 0 22px;padding:20px;border:1px solid #cfdcc2;border-left:4px solid #6f9458;border-radius:12px;background:#f5f9ef}
+.segment-review h3{margin:0 0 8px;font-size:17px;font-weight:600;color:#3c5540}
+.segment-review>p{margin:0;font-size:12px;line-height:1.9;color:#64775c}
+.segment-review-list{display:grid;gap:11px;margin:16px 0;padding:0 4px 0 0;list-style:none;max-height:min(52vh,540px);overflow-y:auto;scrollbar-width:thin;scrollbar-color:#c3d2b5 transparent}
+.segment-review-list>li{position:relative;padding:13px 15px;border:1px solid #e0e8d6;border-radius:10px;background:#fdfefb}
+.segment-review-list header{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
+.segment-review-list header strong{font-size:13px;font-weight:600;color:#3c5540}
+.segment-review-list header span{font-size:10px;color:#8c9a7c;line-height:1.8}
+.segment-review-list p{margin:7px 0 5px;font-size:12px;color:#5d6f56;line-height:1.85}
+.segment-review-list small{display:block;font-size:10px;color:#8b997c;line-height:1.7}
+.segment-review-list blockquote{margin:9px 0 0;padding:9px 12px;border-left:2px solid #cddabf;background:#f4f7ee;border-radius:0 6px 6px 0;font-size:11px;line-height:1.9;color:#71805f;white-space:pre-wrap;max-height:9em;overflow-y:auto}
+.segment-state{font-style:normal;font-size:10px;letter-spacing:.4px;color:#93a084}
+.segment-state.is-board{color:#6f8c5c}.segment-state.is-ready{color:#4f7546;font-weight:600}.segment-state.is-published{color:#3f6b3a;font-weight:600}
+
+/* 重做沿用同一套面板语言：与上方节点面板同宽同高，只用暖色文字和描边提示这是破坏性操作。 */
+.studio-redo{display:grid;gap:12px;margin:0 0 22px;padding:16px 18px;border:1px solid #dbe3d2;border-radius:12px;background:#fbfcf8}
+.studio-redo-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap}
+.studio-redo strong{font-size:13px;font-weight:600;color:#54684c}
+.studio-redo p{margin:6px 0 0;font-size:11px;line-height:1.85;color:#8b997c}
+.studio-redo .button{margin:0;flex-shrink:0}
+.studio-action .button.is-danger{background:#fafcf6;border:1px solid #d9e2cf;color:#9a6247}
+.studio-action .button.is-danger:hover:not(:disabled){background:#fdf5f1;border-color:#cfa78f}
+@media(max-width:1080px){
+  .studio-redo-heading{flex-direction:column;gap:12px}
+  .studio-redo .button{width:100%;justify-content:center;min-height:46px}
+  .segment-review{padding:17px}
+  .segment-review-list{max-height:none}
+}
+@media(max-width:760px){
+  .studio-redo{padding:14px 15px}
+  .segment-review{padding:15px 14px;margin-bottom:18px}
+  .segment-review h3{font-size:15px}
+  .segment-review-list>li{padding:12px 13px}
+  .segment-review-list header{flex-direction:column;gap:5px}
+  .segment-review-list blockquote{max-height:7em}
+}
