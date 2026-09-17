@@ -1,10 +1,17 @@
+"""Who pays for a call: a signed-in account's beans, or the visitor's own keys.
+
+The anonymous shared pool is gone, so these cover the two remaining modes and the guidance a
+browser gets when it has neither.
+"""
 import hashlib
+import json
 
 import pytest
 
 from backend import model_access
 from backend.db import Record, Session, Task, uid
 from backend.environment import model_config
+from backend.public_limits import clear_request_limit_state
 
 
 OWN_KEYS = {
@@ -42,78 +49,135 @@ def test_byok_is_encrypted_locked_and_inherited(client, monkeypatch):
             assert task.session_id == access_id
 
 
-def test_empty_public_pool_cannot_be_selected(client, monkeypatch):
-    monkeypatch.setenv("PUBLIC_POOL_ENABLED", "true")
-    for name in (
-        "PUBLIC_POOL_LLM_DAILY_BUDGET_CNY",
-        "PUBLIC_POOL_IMAGE_DAILY_BUDGET_CNY",
-        "PUBLIC_POOL_VIDEO_DAILY_BUDGET_CNY",
-    ):
-        monkeypatch.setenv(name, "0")
-    for name in ("LLM_API_KEY", "IMAGE_API_KEY", "VIDEO_API_KEY"):
-        monkeypatch.setenv(name, "operator-test-key")
-    monkeypatch.setattr(model_access, "_deepseek_balance", lambda *_args, **_kwargs: {"state": "verified", "available": True})
-
-    status = client.get("/api/model-access/status").json()["pool"]
-    assert status["available"] is False
-    assert {item["kind"]: item["remaining_cny"] for item in status["providers"]} == {
-        "llm": "0.00", "image": "0.00", "video": "0.00",
-    }
-    response = client.post("/api/model-access/sessions", json={"mode": "public"})
-    assert response.status_code == 409
-
-
-def test_public_pool_reservations_are_independent_by_key(client, monkeypatch):
-    monkeypatch.setenv("PUBLIC_POOL_ENABLED", "true")
-    monkeypatch.setenv("PUBLIC_POOL_LLM_DAILY_BUDGET_CNY", "0.50")
-    monkeypatch.setenv("PUBLIC_POOL_IMAGE_DAILY_BUDGET_CNY", "1.00")
-    monkeypatch.setenv("PUBLIC_POOL_VIDEO_DAILY_BUDGET_CNY", "12.00")
-    monkeypatch.setenv("PUBLIC_POOL_LLM_RESERVE_CNY", "0.30")
-    monkeypatch.setenv("PUBLIC_POOL_IMAGE_RESERVE_CNY", "0.50")
-    monkeypatch.setenv("PUBLIC_POOL_VIDEO_RESERVE_CNY", "6.00")
-    for name in ("LLM_API_KEY", "IMAGE_API_KEY", "VIDEO_API_KEY"):
-        monkeypatch.setenv(name, "operator-test-key")
-    monkeypatch.setattr(model_access, "_deepseek_balance", lambda *_args, **_kwargs: {"state": "verified", "available": True})
-
-    created = client.post("/api/model-access/sessions", json={"mode": "public"}).json()
-    access_id = model_access.resolve_access_token(created["token"])
+def test_only_some_keys_may_be_supplied(client, monkeypatch):
+    """A visitor may bring just the providers a step needs."""
+    monkeypatch.setenv("MODEL_ACCESS_SECRET", "test-secret-" + "a" * 48)
+    response = client.post("/api/model-access/sessions",
+                           json={"mode": "own", "keys": {"deepseek": "only-this-key-value"}})
+    assert response.status_code == 200
+    access_id = "model_access_" + hashlib.sha256(response.json()["token"].encode()).hexdigest()
     with model_access.access_scope(access_id):
-        assert model_access.authorize_call("llm")["reserved_cny"] == "0.30"
-        status = model_access.public_pool_status(refresh=False)
-        providers = {item["kind"]: item for item in status["providers"]}
-        assert providers["llm"]["remaining_cny"] == "0.20"
-        assert providers["llm"]["available"] is False
-        assert providers["image"]["remaining_cny"] == "1.00"
-        assert providers["image"]["available"] is True
-        assert providers["video"]["remaining_cny"] == "12.00"
-        assert providers["video"]["available"] is True
-        assert model_access.access_paid_states() == {"all": False, "llm": False, "image": True, "video": True}
-        with pytest.raises(model_access.ModelAccessError, match="额度"):
-            model_access.authorize_call("llm")
-        assert model_access.authorize_call("image")["reserved_cny"] == "0.50"
-    assert model_access.public_pool_status(refresh=False)["available"] is False
-
-    with Session() as db:
-        rows = db.query(Record).filter(Record.kind == model_access.POOL_KIND).all()
-        assert {(row.data["kind"], row.data["reserved_cny"]) for row in rows} == {
-            ("llm", "0.30"), ("image", "0.50"),
-        }
+        cfg = model_config()
+        assert cfg["LLM_API_KEY"] == "only-this-key-value"
+        # The operator's keys must never fill the gaps for a visitor session.
+        assert cfg["IMAGE_API_KEY"] == "" and cfg["VIDEO_API_KEY"] == ""
 
 
-def test_provider_failure_only_blocks_its_own_shared_key(client, monkeypatch):
-    monkeypatch.setenv("PUBLIC_POOL_ENABLED", "true")
-    monkeypatch.setenv("PUBLIC_POOL_LLM_DAILY_BUDGET_CNY", "1.00")
-    monkeypatch.setenv("PUBLIC_POOL_IMAGE_DAILY_BUDGET_CNY", "1.00")
-    monkeypatch.setenv("PUBLIC_POOL_VIDEO_DAILY_BUDGET_CNY", "12.00")
-    for name in ("LLM_API_KEY", "IMAGE_API_KEY", "VIDEO_API_KEY"):
-        monkeypatch.setenv(name, "operator-test-key")
-    monkeypatch.setattr(model_access, "_deepseek_balance", lambda *_args, **_kwargs: {"state": "verified", "available": True})
+def test_the_shared_pool_is_gone(client, monkeypatch):
+    monkeypatch.setenv("STORYLOOM_DEMO_MODE", "public")
+    status = client.get("/api/model-access/status").json()
+    assert "pool" not in status
 
-    created = client.post("/api/model-access/sessions", json={"mode": "public"}).json()
-    access_id = model_access.resolve_access_token(created["token"])
-    with model_access.access_scope(access_id):
-        model_access.mark_public_provider_unavailable("image", 402)
-        assert model_access.access_paid_states() == {"all": False, "llm": True, "image": False, "video": True}
-        assert model_access.authorize_call("llm")["pool_kind"] == "llm"
-        with pytest.raises(model_access.ModelAccessError, match="暂停"):
-            model_access.authorize_call("image")
+    refused = client.post("/api/model-access/sessions", json={"mode": "public"})
+    assert refused.status_code == 409
+    assert "共享体验池已停用" in refused.json()["detail"]
+    assert "算力豆" in refused.json()["detail"]
+    assert "自己的 API Key" in refused.json()["detail"]
+
+
+def test_a_browser_without_a_payer_is_told_both_ways_forward(client, monkeypatch):
+    monkeypatch.setenv("STORYLOOM_DEMO_MODE", "public")
+    assert model_access.has_payer() is False
+    message = model_access.payer_requirement_message()
+    assert "知乎账号登录" in message and "算力豆" in message and "自己的 API Key" in message
+    with pytest.raises(model_access.ModelAccessError, match="登录"):
+        model_access.authorize_call("llm")
+
+
+def test_a_local_run_also_requires_a_payer(client, monkeypatch):
+    """A dev deployment must not spend the pool for a browser that neither signed in nor brought keys.
+
+    The gate used to be lifted whenever STORYLOOM_DEMO_MODE was not "public", so anyone who reached
+    a dev server could generate on the operator's keys. Now the gate only depends on the payer.
+    """
+    monkeypatch.setenv("STORYLOOM_DEMO_MODE", "local")
+    monkeypatch.setenv("LLM_API_KEY", "operator-key")
+    assert model_access.has_payer() is False
+    message = model_access.payer_requirement_message()
+    assert "知乎账号登录" in message and "自己的 API Key" in message
+    with pytest.raises(model_access.ModelAccessError, match="登录"):
+        model_access.authorize_call("llm")
+    # The operator's credentials are cleared and the paid switch is off for this browser.
+    cfg = model_config()
+    assert cfg["LLM_API_KEY"] == "" and cfg["ALLOW_PAID_CALLS"] == "false"
+
+
+def test_a_local_payer_can_still_generate(client, monkeypatch, payer):
+    """Signing in locally works exactly like it does on the hosted demo."""
+    monkeypatch.setenv("STORYLOOM_DEMO_MODE", "local")
+    monkeypatch.setenv("LLM_API_KEY", "operator-key")
+    assert model_access.has_payer() is True
+    assert model_access.payer_requirement_message() is None
+    assert model_access.authorize_call("llm")["mode"] == "account"
+    assert model_access.access_paid_state() is True
+
+
+def test_a_refused_operator_key_is_remembered_for_the_day(client, monkeypatch):
+    """A dead operator key must stop retrying for every visitor instead of failing each time."""
+    monkeypatch.setenv("STORYLOOM_DEMO_MODE", "public")
+    monkeypatch.setenv("MODEL_ACCESS_SECRET", "test-secret-" + "a" * 48)
+    created = model_access.create_account_session("session-key-check", "525")
+    with model_access.access_scope(created["access_id"]):
+        model_access.note_operator_key_rejection("image", 402)
+        assert model_access._operator_key_blocked("image") is True
+    # A visitor's own rejected key is their own business and must not disable the account path.
+    with Session.begin() as db:
+        row = db.get(Record, model_access._operator_key_id(model_access._day(), "image"))
+        row.data = {**row.data, "blocked": {}}
+    own = client.post("/api/model-access/sessions",
+                      json={"mode": "own", "keys": {"deepseek": "visitor-own-key-value"}}).json()
+    own_id = "model_access_" + hashlib.sha256(own["token"].encode()).hexdigest()
+    with model_access.access_scope(own_id):
+        model_access.note_operator_key_rejection("image", 401)
+        assert model_access._operator_key_blocked("image") is False
+
+
+def test_an_account_with_a_blocked_operator_key_is_told_to_bring_its_own(client, monkeypatch):
+    monkeypatch.setenv("STORYLOOM_DEMO_MODE", "public")
+    monkeypatch.setenv("BEANS_INITIAL_GRANT", "100")
+    created = model_access.create_account_session("session-blocked", "525")
+    with Session.begin() as db:
+        db.add(Record(id=model_access._operator_key_id(model_access._day(), "llm"),
+                      kind=model_access.OPERATOR_KEY_KIND,
+                      data={"day": model_access._day(), "kind": "llm",
+                            "blocked": {"at": 0, "status": 401}}))
+    with model_access.access_scope(created["access_id"]):
+        with pytest.raises(model_access.ModelAccessError, match="自己的 API Key"):
+            model_access.authorize_call("llm", task_id="t")
+
+
+def test_the_panel_can_see_which_own_keys_are_attached(client, monkeypatch):
+    """A visitor could not tell whether their keys were saved; the status must say so."""
+    # Public mode turns on the per-IP request limiter, whose counters live in module state.
+    clear_request_limit_state()
+    monkeypatch.setenv("MODEL_ACCESS_SECRET", "test-secret-" + "a" * 48)
+    monkeypatch.setenv("STORYLOOM_DEMO_MODE", "public")
+    created = client.post("/api/model-access/sessions",
+                          json={"mode": "own", "keys": {"deepseek": "sk-deep-12345678", "minimax": "mm-video-abcdef"}})
+    assert created.status_code == 200
+    token = created.json()["token"]
+    status = client.get("/api/model-access/status", headers={"X-Storyloom-Model-Access": token}).json()
+    keys = status["keys"]
+    assert keys["readable"] is True
+    assert set(keys["providers"]) == {"llm", "video"}
+    assert keys["providers"]["llm"]["tail"] == "5678"
+    assert keys["providers"]["llm"]["length"] == len("sk-deep-12345678")
+    assert "image" not in keys["providers"]
+    # The key itself never leaves the server, only its tail.
+    assert "sk-deep-12345678" not in json.dumps(status)
+    # The account page reads the same summary.
+    zhihu = client.get("/api/zhihu/status", headers={"X-Storyloom-Model-Access": token}).json()
+    assert zhihu["own_keys"] is True and zhihu["own_key_summary"]["providers"]["video"]["tail"] == "cdef"
+
+
+def test_attached_keys_can_be_removed_to_go_back_to_the_account(client, monkeypatch):
+    clear_request_limit_state()
+    monkeypatch.setenv("MODEL_ACCESS_SECRET", "test-secret-" + "a" * 48)
+    monkeypatch.setenv("STORYLOOM_DEMO_MODE", "public")
+    token = client.post("/api/model-access/sessions",
+                        json={"mode": "own", "keys": {"deepseek": "sk-deep-12345678"}}).json()["token"]
+    headers = {"X-Storyloom-Model-Access": token}
+    assert client.delete("/api/model-access/session", headers=headers).json()["cleared"] is True
+    assert client.get("/api/model-access/status", headers=headers).json()["keys"] is None
+    # Removing again is harmless rather than an error.
+    assert client.delete("/api/model-access/session", headers=headers).json()["cleared"] is False

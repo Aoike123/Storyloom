@@ -6,7 +6,7 @@ import httpx
 from PIL import Image
 from .db import DATA,save_generation_request
 from .environment import model_config
-from .model_access import mark_public_provider_unavailable
+from .model_access import note_operator_key_rejection
 from .providers import ProviderError,settings,reserve_call,endpoint
 from .reference_image_model import REFERENCE_IMAGE_MODEL, REFERENCE_IMAGE_STEPS, MAX_REFERENCE_IMAGES
 
@@ -52,7 +52,7 @@ def _request_image(body,task_id,cfg,*,input_mode,reference_count=0):
             error=response_error(r,cfg)
             save_error(task_id,error)
             finish(entry,status='rejected')
-            mark_public_provider_unavailable('image',r.status_code)
+            note_operator_key_rejection('image',r.status_code)
             raise ProviderError(error_message(error))
         url=r.json()['images'][0]['url']
         if not isinstance(url,str) or urlparse(url).scheme!='https': raise ValueError()

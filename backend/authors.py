@@ -1,4 +1,4 @@
-"""Shared author production workflow for the account-free demo."""
+"""Account-owned author production workflow."""
 import hashlib
 import asyncio
 import json
@@ -10,30 +10,76 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from .db import Session, Record, Task, uid, record_dict, task_dict, generation_debug
+from .db import HISTORY_LIMIT, Session, Record, Task, uid, record_dict, task_dict, generation_debug
 from . import creative, director
 from . import zhihu_stories
 from .catalog import labels
 from .skill_runtime import call_node
-from .production_nodes import NODES, queue_node, node_snapshots, is_node_task, phase_for_saved_state, retry_current_node
+from .production_nodes import (NODES, queue_node, node_snapshots, is_node_task, stopped_node,
+                               stopped_stage_media)
+# Imported under different names: the HTTP handlers below are also called retry_node / redo_node,
+# and a handler that shadows the function it calls recurses into itself.
+from .production_nodes import retry_node as retry_stage_node, redo_node as redo_stage_node
 
 router = APIRouter(prefix='/api/author', tags=['author'])
 open_lock = Lock()
 attempt_lock = Lock()
 def get_work(db, pid):
+    """The project behind an HTTP request, refused when it belongs to somebody else."""
+    row = work_row(db, pid)
+    owner = row.data.get('owner')
+    actor = current_actor()
+    if owner and owner != actor:
+        # Another account's work is not this visitor's work: it must not appear, and it must not be
+        # resumable on someone else's bean wallet. Ownerless records are pre-account work.
+        raise HTTPException(404, '作品不存在')
+    if not owner:
+        from .model_access import public_demo_mode
+
+        # Pre-account work may only be claimed through ``open_story``. Hiding it here prevents a
+        # visitor who guessed an old id from editing it before the ownership transition is atomic.
+        if public_demo_mode():
+            raise HTTPException(404, '作品不存在')
+    return row
+
+
+def work_row(db, pid):
+    """The project row without an ownership test, for the worker that already holds a task.
+
+    A queued task was authorized when it was created; its stored payer session can expire or be
+    retired by the time the worker runs it, so the worker must not repeat the visitor check.
+    """
     row = db.get(Record, pid)
     if not row or row.kind != 'author_project':
         raise HTTPException(404, '作品不存在')
     return row
 
+
+def current_actor():
+    """Who this request acts as, for work ownership. None in a local run without accounts."""
+    from .model_access import current_actor_id
+
+    return current_actor_id()
+
+
+def work_id_for(work_id, actor):
+    """Stable per-owner id for one story, so two accounts never share one project record."""
+    return 'work_zhihu_' + hashlib.sha256(f'{work_id}|{actor}'.encode()).hexdigest()[:32]
+
 @router.post('/stories/{work_id}/open')
 def open_story(work_id: str):
     if not zhihu_stories.valid_id(work_id):
         raise HTTPException(422, '故事标识格式无效。')
-    pid = 'work_zhihu_' + hashlib.sha256(work_id.encode()).hexdigest()[:32]
+    actor = current_actor()
+    from .model_access import public_demo_mode
+    if public_demo_mode() and not actor:
+        raise HTTPException(401, '请先登录，再制作属于自己的漫剧版本。')
+    pid = work_id_for(work_id, actor)
     with open_lock:
         with Session() as db:
             existing = db.get(Record, pid)
+            if existing is not None and existing.kind == 'author_project':
+                return workspace(pid)
         if existing is None:
             listing = zhihu_stories.stories()
             selected = next((x for x in listing['items'] if x['work_id'] == work_id), None)
@@ -46,7 +92,8 @@ def open_story(work_id: str):
             with Session.begin() as db:
                 db.add(Record(id=pid, kind='author_project', data={
                     'title': selected.get('title') or source['title'], 'source_id': source['id'],
-                    'zhihu_work_id': work_id, 'stage': 'style', 'workflow': 'author-brainstorm-v4',
+                    'zhihu_work_id': work_id, 'stage': 'style', 'workflow': 'author-brainstorm-v7',
+                    'owner': actor,
                     'source_warning': imported.get('warning') if imported.get('stale') else None,
                 }))
     return workspace(pid)
@@ -54,7 +101,13 @@ def open_story(work_id: str):
 @router.get('/projects')
 def projects():
     with Session() as db:
-        return [record_dict(r) for r in db.scalars(select(Record).where(Record.kind=='author_project').order_by(Record.created.desc()))]
+        actor = current_actor()
+        rows = list(db.scalars(select(Record).where(Record.kind == 'author_project').order_by(Record.created.desc())))
+        from .model_access import public_demo_mode
+        # A public visitor sees only their work. Ownerless records remain available in local mode;
+        # online they are reached solely through the atomic one-time claim in ``open_story``.
+        return [record_dict(r) for r in rows
+                if r.data.get('owner') == actor or (not public_demo_mode() and not r.data.get('owner'))]
 
 @router.get('/projects/{pid}')
 def workspace(pid: str):
@@ -76,12 +129,17 @@ def workspace(pid: str):
         data['retryable_images'] = retryable_images(db,row)
         director_version=db.get(Record,sid).version if sid and db.get(Record,sid) else None
         data['outputs'] = completed_outputs(tasks,sid,director_version)
+        current=db.get(Record,sid) if sid else None
+        data['segments']=current.data.get('segments') if current else None
+        # Per-episode progress drives the cut review panel and the publish/continue pause.
+        data['episodes']=creative.episode_progress(sid) if sid else []
+        repairs=current.data.get('board_repairs') if current else None
+        data['board_repairs']=repairs if repairs else None
+        # The text pre-review's findings are opinions for the author, not errors: showing them here
+        # is why the panel calls them 复核提示 rather than a failed step.
+        data['storyboard_review']=creative.review_notes(current)
     data['creative'] = creative.workspace(sid) if sid else None
     data['display_stage']=data['stage']
-    if data['stage'] in ('producing','compositing') and data['creative']:
-        try:data['display_stage']=phase_for_saved_state(data['creative']['stage'])
-        except HTTPException:pass
-    data['asset_redesign_required']=bool(data['creative'] and data['creative'].get('items') and data['creative'].get('asset_schema')!=creative.asset_sheets.VERSION)
     if data.get('stage') in ('film_review','published'):
         from .skill_runtime import public,snapshot
         data['review_skill']=public(snapshot('film_review'))
@@ -144,45 +202,113 @@ class Start(creative.Style):
 
 
 def retryable_images(db,work):
-    from .image_errors import can_retry
+    from .image_errors import can_retry,needs_prompt_edit,task_error
     sid=work.data.get('director_id')
     run=db.get(Record,'creative_'+sid) if sid else None
     if work.data['stage'] not in ('preparing','assets_review') or not run or run.data.get('stage')!='assets_review':return []
     if run.data.get('asset_schema')!=creative.asset_sheets.VERSION:return []
-    return [{'task_id':item['task_id'],'name':item['name']} for item in run.data.get('items',[])
-        if (task:=db.get(Task,item['task_id'])) and can_retry(task)]
+    images=[]
+    for item in run.data.get('items',[]):
+        task=db.get(Task,item['task_id'])
+        if not task or not can_retry(task):continue
+        error=task_error(task) or {}
+        saved=task.result.get('generation_request') or {}
+        images.append({'task_id':task.id,'name':item['name'],'category':error.get('category',''),
+            # A prompt the author may rewrite is sent back so the repair panel can offer the editor.
+            'prompt':(saved.get('prompt') or task.payload.get('prompt') or '') if needs_prompt_edit(error) else '',
+            'needs_prompt_edit':needs_prompt_edit(error)})
+    return images
 
 
 class ImageRetry(BaseModel):
     confirm_paid:bool=False
+    # An optional replacement prompt: the provider repeats a content-policy rejection until the
+    # author rewrites what the picture asks for.
+    prompt:str|None=Field(default=None,min_length=10,max_length=6000)
+
+
+def requeue_image(db,row,tid,prompt=None):
+    """Queue one fresh version of a rejected base picture, keeping its design.
+
+    The saved prompt is reused unless the author rewrote it; an edited prompt no longer follows the
+    validated render contract, so the new task records that the text was changed by hand.
+    """
+    sid=row.data['director_id'];run=creative.get_run(db,sid);old=db.get(Task,tid)
+    saved=old.result.get('generation_request') or {}
+    edited=(prompt or '').strip()
+    chosen=edited or saved.get('prompt') or old.payload.get('prompt')
+    if not chosen:raise HTTPException(409,'没有可恢复的图片提示词，请重新准备素材。')
+    payload={**old.payload,'prompt':chosen,'revision_of':tid}
+    if edited:payload.update({'prompt_source':'manual_edit','prompt_edited':True})
+    task=Task(id=uid('image'),kind='image',payload=payload)
+    db.add(task)
+    creative.prep.invalidate_downstream_references(db,sid,'失败的基础素材已重试并建立新版本',task.id)
+    run.data={**run.data,'items':[{**item,'task_id':task.id} if item['task_id']==tid else item for item in run.data['items']]}
+    run.version+=1
+    old.status='superseded'  # Keep the original rejection and request for history.
+    if edited:
+        db.add(Record(id=uid('audit'),kind='audit',data={'target':task.id,'action':'image_prompt_edited',
+            'replaced_task':tid,'note':'用户按供应商的内容限制手动修改了生图提示词','prompt':edited[:1500]}))
+    return task
+
+
+def open_repair_round(db,row):
+    """Let the round finish once the queued repairs are back, and stop the old supervisor."""
+    supervisor=db.get(Task,row.data.get('supervisor',''))
+    if supervisor and supervisor.status in creative.BUSY:raise HTTPException(409,'制作流程仍在运行，请等待后再处理。')
+    if supervisor:supervisor.status='superseded'
+    row.data={k:v for k,v in row.data.items() if k!='assets_confirmed_at'}
 
 
 @router.post('/projects/{pid}/images/{tid}/retry')
 def retry_image(pid:str,tid:str,body:ImageRetry):
-    """Retry one rejected base image, keeping the approved design and other images."""
-    creative.paid(body)
+    """Retry one rejected base image, keeping the approved design and other images.
+
+    A content-policy rejection (HTTP 451) is refused by every resubmission of the same text, so the
+    author may send a rewritten prompt with this request; other failures keep their saved prompt.
+    """
+    creative.paid(body,'image')
     with attempt_lock,Session.begin() as db:
         row=get_work(db,pid)
-        if tid not in {item['task_id'] for item in retryable_images(db,row)}:
+        entry=next((item for item in retryable_images(db,row) if item['task_id']==tid),None)
+        if not entry:
             raise HTTPException(409,'该图片当前不能单独重试；请检查是否已被替换、属于旧轮次，或调用结果仍不确定。')
+        if body.prompt is not None and not entry['needs_prompt_edit']:
+            raise HTTPException(409,'这次失败不需要改写提示词：请直接重试这张图片；若要改画面，请在图片卡片填写修改意见。')
         sid=row.data['director_id'];creative.get_project(db,sid);creative.no_active(db,sid)
-        run=creative.get_run(db,sid);old=db.get(Task,tid)
-        saved=old.result.get('generation_request') or {}
-        prompt=saved.get('prompt') or old.payload.get('prompt')
-        if not prompt:raise HTTPException(409,'没有可恢复的图片提示词，请重新准备素材。')
-        task=Task(id=uid('image'),kind='image',payload={**old.payload,'prompt':prompt,'revision_of':tid})
-        db.add(task)
-        creative.prep.invalidate_downstream_references(db,sid,'失败的基础素材已重试并建立新版本',task.id)
-        run.data={**run.data,'items':[{**item,'task_id':task.id} if item['task_id']==tid else item for item in run.data['items']]}
-        run.version+=1
-        supervisor=db.get(Task,row.data.get('supervisor',''))
-        if supervisor and supervisor.status in creative.BUSY:raise HTTPException(409,'制作流程仍在运行，请等待后再处理。')
-        if supervisor:supervisor.status='superseded'
-        old.status='superseded'  # Keep the original rejection and request for history.
-        row.data={k:v for k,v in row.data.items() if k!='assets_confirmed_at'}
-        schedule(db,row,'preparing')
+        task=requeue_image(db,row,tid,body.prompt)
+        open_repair_round(db,row)
+        # The supervisor can only finish once every rejected picture is back, so it is queued with
+        # the last repair. Queueing it earlier left it waiting on the other pictures and refused the
+        # visitor's next "重试这张图片" with "制作流程仍在运行".
+        if not [item for item in retryable_images(db,row) if item['task_id']!=tid]:schedule(db,row,'preparing')
         db.flush()
         return {'queued':True,'task':task_dict(task)}
+
+
+@router.post('/projects/{pid}/images/retry')
+def retry_images(pid:str,body:ImageRetry):
+    """Queue a fresh version of every rejected base picture in one action.
+
+    The panel lists one button per picture, so a stopped run of several pictures used to be
+    repaired one click at a time; a single visitor action must be able to bring the whole set back.
+    Pictures whose prompt the provider already rejected are left to their own editor: resubmitting
+    the same prompt would only be refused again.
+    """
+    creative.paid(body,'image')
+    with attempt_lock,Session.begin() as db:
+        row=get_work(db,pid)
+        retryable=retryable_images(db,row)
+        images=[item for item in retryable if not item['needs_prompt_edit']]
+        skipped=[item['task_id'] for item in retryable if item['needs_prompt_edit']]
+        if not images:
+            raise HTTPException(409,'当前没有可以直接重试的失败图片：内容违规的图片需要先修改提示词。')
+        sid=row.data['director_id'];creative.get_project(db,sid);creative.no_active(db,sid)
+        tasks=[requeue_image(db,row,item['task_id']) for item in images]
+        open_repair_round(db,row)
+        schedule(db,row,'preparing')
+        db.flush()
+        return {'queued':True,'tasks':[task_dict(task) for task in tasks],'needs_prompt_edit':skipped}
 
 
 @router.post('/projects/{pid}/redesign')
@@ -191,7 +317,7 @@ def redesign(pid:str,body:Start):
         row=get_work(db,pid)
         if row.data['stage']!='assets_review':raise HTTPException(409,'当前不在人物与场景确认阶段。')
         creative.redesign(db,row.data['director_id'],body)
-        row.data={**row.data,'art':body.art,'tone':body.tone,'workflow':'author-brainstorm-v4'}
+        row.data={**row.data,'art':body.art,'tone':body.tone,'workflow':'author-brainstorm-v7'}
         schedule(db,row,'preparing')
     return {'queued':True}
 
@@ -203,7 +329,7 @@ def recommend(pid: str, body: creative.Publish):
         old=db.get(Task,row.data.get('recommend_task',''))
         if old and old.status in creative.BUSY: return task_dict(old)
         source=db.get(Record,row.data['source_id'])
-        creative.paid(creative.Style(art='推荐画风',tone='依据原著',confirm_paid=True))
+        creative.paid(creative.Style(art='推荐画风',tone='依据原著',confirm_paid=True),'llm')
         task=Task(id=uid('styles'),kind='author_styles',message='已加入队列，等待模型开始构思',payload={'mode':'live','source':source.data['content'],'work_id':pid})
         db.add(task);row.data={**row.data,'recommend_task':task.id};db.flush();return task_dict(task)
 
@@ -299,23 +425,32 @@ async def recommendation_events(pid:str,task_id:str,request:Request):
 
 @router.post('/projects/{pid}/resume')
 def resume(pid: str):
+    """Continue a stopped run without touching what it already saved.
+
+    Continuing used to call the node-retry path, so a button that promised to reuse saved results
+    re-ran the node and rebuilt its media. It now only continues: anything that needs re-running
+    says so and points at 重试 or 重做, which are the two actions that deliberately change work.
+    """
     with attempt_lock,Session.begin() as db:
         row=get_work(db,pid)
-        if row.data['stage'] not in ('preparing','producing','compositing',*NODES):raise HTTPException(409,'当前无需恢复')
+        if row.data['stage'] not in ('preparing',*NODES):raise HTTPException(409,'当前无需恢复')
         old=db.get(Task,row.data.get('supervisor',''))
         if old and old.status in creative.BUSY:raise HTTPException(409,'当前制作节点仍在运行。')
         rejected=retryable_images(db,row)
         if rejected:raise HTTPException(409,'请先重试失败图片：'+'、'.join(item['name'] for item in rejected)+'。其他已完成素材会保留。')
         if row.data['stage']=='preparing' and row.data.get('director_id'):
             creative.resume_saved_design(db,row.data['director_id'])
-        if row.data['stage']=='storyboarding' and row.data.get('director_id'):
-            creative.resume_saved_storyboard(db,row.data['director_id'])
-        if row.data['stage'] in NODES:queue_node(db,row,row.data['stage'])
-        elif row.data['stage'] in ('producing','compositing'):
-            run=creative.get_run(db,row.data['director_id'])
-            if old:old.status='superseded'
-            queue_node(db,row,phase_for_saved_state(run.data['stage']))
-        else:schedule(db,row,row.data['stage'])
+        if row.data['stage'] not in NODES:
+            schedule(db,row,row.data['stage'])
+        else:
+            # Only stopped pictures and clips force that choice: they need a decision about whether
+            # to re-run or throw away. A node whose saved result can carry on is continued below.
+            if stopped_stage_media(db,row):
+                raise HTTPException(409,'当前节点还有停下的画面或片段：请用「重试本节点」带上错误重跑，'
+                                        '或用「重做本节点」删除本轮记录后重新开始。')
+            # Continuing a storyboard node only re-queues the coordinator: it picks up the next
+            # episode that still needs a board and reuses every episode already saved.
+            queue_node(db,row,row.data['stage'])
     return {'queued':True}
 
 
@@ -325,12 +460,179 @@ class NodeRetry(BaseModel):
 
 @router.post('/projects/{pid}/retry-node')
 def retry_node(pid:str,body:NodeRetry):
-    creative.paid(body)
+    with Session() as db:
+        row=get_work(db,pid)
+    # A retry re-runs the node that failed, so only that node's providers are required.
+    phase=row.data.get('stage')
+    creative.paid(body,*(('video',) if phase=='rendering' else ('llm',)))
     with attempt_lock,Session.begin() as db:
         row=get_work(db,pid)
-        task=retry_current_node(db,row)
+        task=retry_stage_node(db,row)
         db.flush()
         return {'queued':True,'task':task_dict(task)}
+
+
+@router.post('/projects/{pid}/redo-node')
+def redo(pid:str,body:NodeRetry):
+    """Delete this node's work and everything after it, then run the node again from scratch."""
+    with Session() as db:
+        row=get_work(db,pid)
+    phase=row.data.get('stage')
+    creative.paid(body,*(('video',) if phase=='rendering' else ('llm',)))
+    with attempt_lock,Session.begin() as db:
+        row=get_work(db,pid)
+        task=redo_stage_node(db,row)
+        db.flush()
+        return {'queued':True,'task':task_dict(task)}
+
+
+class StageRedo(BaseModel):
+    stage: str
+    confirm_paid: bool = False
+
+
+REDO_STAGES = ('segments_review','preparing','assets_review','storyboarding','rendering','film_review','published')
+
+
+def _drop_asset(db,asset_id):
+    from .production_nodes import DATA as MEDIA_ROOT
+    row=db.get(Record,asset_id)
+    if not row:return
+    media=(row.data or {}).get('media')
+    if isinstance(media,str) and media.startswith('/media/'):
+        path=(MEDIA_ROOT/'media'/media.removeprefix('/media/')).resolve()
+        if path.is_relative_to((MEDIA_ROOT/'media').resolve()):path.unlink(missing_ok=True)
+    db.delete(row)
+
+
+def _drop_run(db,run):
+    """Delete the design run with the pictures it produced; the author is starting this step over."""
+    from .production_nodes import delete_task_outputs
+    if not run:return []
+    removed=[]
+    for item in run.data.get('items') or []:
+        task=db.get(Task,item.get('task_id',''))
+        if not task:continue
+        delete_task_outputs(db,task)
+        asset_id=(task.result or {}).get('asset_id')
+        if asset_id:_drop_asset(db,asset_id)
+        removed.append(task.id)
+        db.delete(task)
+    db.delete(run)
+    return removed
+
+
+def _drop_downstream(db,sid,keep=()):
+    """Delete every task of this run except the ones the new attempt still needs."""
+    from .production_nodes import delete_task_outputs
+    removed=[]
+    for task in list(db.scalars(select(Task))):
+        if task.id in keep:continue
+        if not any(task.payload.get(key)==sid for key in ('creative_id','director_id','preproduction_id','project_id')):
+            continue
+        delete_task_outputs(db,task)
+        removed.append(task.id)
+        db.delete(task)
+    return removed
+
+
+def _reset_creative(db,sid,stage):
+    run=db.get(Record,'creative_'+sid)
+    if not run:return
+    run.data={**{key:value for key,value in run.data.items()
+                 if key in ('art','tone','run_id','production_split','direct_reference_inputs')},
+              'stage':stage,'items':[]}
+    run.version+=1
+
+
+@router.post('/projects/{pid}/redo')
+def redo_any(pid:str,body:StageRedo):
+    """Redo one completed step: its work and everything after it is deleted, then it runs again.
+
+    Redoing an early step therefore redoes the whole branch below it, and redoing the last finished
+    step redoes only that step — the same button, and the scope is whatever depends on it.
+    """
+    target=body.stage
+    if target not in REDO_STAGES:raise HTTPException(409,'这一步不能重做。')
+    creative.paid(body,*(('video',) if target in ('rendering','film_review','published') else ('llm',)))
+    with attempt_lock,Session.begin() as db:
+        row=get_work(db,pid)
+        order=list(REDO_STAGES)
+        current=row.data.get('stage')
+        if current not in REDO_STAGES:raise HTTPException(409,'当前制作还没有可重做的步骤。')
+        if order.index(target)>order.index(current):raise HTTPException(409,'这一步还没有开始，不能重做。')
+        sid=row.data.get('director_id')
+        project=db.get(Record,sid) if sid else None
+        if not project:raise HTTPException(409,'导演项目不存在，不能重做。')
+        old=db.get(Task,row.data.get('supervisor',''))
+        if old and old.status in creative.BUSY:raise HTTPException(409,'后台任务正在运行，请等待结束后重做。')
+        removed=[]
+        if target in ('storyboarding','rendering'):
+            # These two stages are the production nodes; the node redo already deletes its own work
+            # and the work of the nodes after it.
+            row.data={**row.data,'stage':target}
+            db.flush()
+            task=redo_stage_node(db,row)
+            db.flush()
+            return {'queued':True,'stage':target,'task':task_dict(task),'removed':[]}
+        if target=='segments_review':
+            # The cut is remade from the same treatment; everything drawn or planned from the old
+            # cut disappears with it, including the pictures that were made for those episodes.
+            keep=set()
+            origin=db.get(Task,project.data.get('task_id',''))
+            if origin:keep.add(origin.id)
+            removed=_drop_downstream(db,sid,keep)
+            _drop_run(db,db.get(Record,'creative_'+sid))
+            project.data={key:value for key,value in project.data.items()
+                          if key not in ('segments','units','board','review','board_diagnostics',
+                                         'board_chunk_diagnostics','board_progress','board_repairs',
+                                         'preproduction_stamp','status','requires_preproduction')}
+            project.data={**project.data,'status':'awaiting_preproduction'}
+            project.version+=1
+            row.data={**{key:value for key,value in row.data.items()
+                         if key not in ('segments_approved_at','assets_confirmed_at','production_nodes')},
+                      'stage':'segments_review'}
+            if origin:
+                origin.status='queued';origin.lease=0;origin.owner=''
+                origin.message='正在按你的要求重新分析原文并切割情节'
+                row.data={**row.data,'recut_task':origin.id,'supervisor':origin.id}
+            db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'stage_redone',
+                'stage':target,'discarded_task_ids':removed}))
+            db.flush()
+            return {'queued':True,'stage':'segments_review','recut':bool(origin),'removed':removed}
+        if target in ('preparing','assets_review'):
+            # Artwork is remade from the same treatment and the same cut.
+            keep={db.get(Record,sid).data.get('task_id')}
+            removed=_drop_downstream(db,sid,keep)
+            _drop_run(db,db.get(Record,'creative_'+sid))
+            project.data={**project.data,'status':'awaiting_preproduction','requires_preproduction':True}
+            project.version+=1
+            row.data={**{key:value for key,value in row.data.items()
+                         if key not in ('segments_approved_at','assets_confirmed_at','production_nodes')},
+                      'stage':'preparing'}
+            creative.design(sid,creative.Style(art=row.data.get('art') or '沿用当前风格',
+                tone=row.data.get('tone') or '沿用当前气质',confirm_paid=True))
+            db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'stage_redone',
+                'stage':target,'discarded_task_ids':removed}))
+            db.flush()
+            return {'queued':True,'stage':'preparing','removed':removed}
+        # 审片与发布：删掉片段与已发布的版本，从漫剧生成重新做一次。
+        removed=_drop_downstream(db,sid,keep={db.get(Record,sid).data.get('task_id')})
+        _reset_creative(db,sid,'storyboard_ready')
+        if target=='published':
+            release=db.get(Record,f'release_{sid}')
+            if release:db.delete(release)
+        project.data={**project.data,'status':'approved'}
+        project.version+=1
+        row.data={**{key:value for key,value in row.data.items()
+                     if key not in ('assets_confirmed_at','production_nodes','release_id')},
+                  'stage':'rendering'}
+        db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'stage_redone',
+            'stage':target,'discarded_task_ids':removed}))
+        db.flush()
+        task=queue_node(db,row,'rendering',reopen=True)
+        db.flush()
+        return {'queued':True,'stage':'rendering','task':task_dict(task),'removed':removed}
 
 def schedule(db, row, phase):
     old = db.get(Task, row.data.get('supervisor', ''))
@@ -340,7 +642,7 @@ def schedule(db, row, phase):
 
 @router.post('/projects/{pid}/start')
 def start(pid: str, body: Start):
-    creative.paid(body)
+    creative.paid(body,'llm','image')
     with attempt_lock,Session.begin() as db:
         row = get_work(db, pid)
         if row.data['stage'] != 'style' and not body.restart: raise HTTPException(409, '制作已开始')
@@ -352,6 +654,7 @@ def start(pid: str, body: Start):
         previous_id=row.data.get('director_id')
         if row.data.get('director_id') or row.data.get('supervisor'):
             history.append({k:row.data.get(k) for k in ('run_id','stage','art','tone','director_id','supervisor','release_id','production_nodes') }|{'saved_at':time.time(),'invalidated_from':body.restart_from,'superseded_by_run':run_id})
+            history=history[-HISTORY_LIMIT:]
         if previous_id:
             previous=db.get(Record,previous_id)
             if previous:
@@ -361,7 +664,7 @@ def start(pid: str, body: Start):
                 if release.data.get('director_id')==previous_id or release.id==row.data.get('release_id'):
                     release.data={**release.data,'status':'superseded','superseded_by_run':run_id};release.version+=1
         data={k:v for k,v in row.data.items() if k not in ('director_id','supervisor','release_id','assets_confirmed_at','production_nodes')}
-        row.data = {**data,'attempt_history':history,'run_id':run_id, 'art': body.art, 'tone': body.tone, 'workflow':'author-brainstorm-v6'}
+        row.data = {**data,'attempt_history':history,'run_id':run_id, 'art': body.art, 'tone': body.tone, 'workflow':'author-brainstorm-v7'}
         schedule(db, row, 'preparing')
     return {'queued': True}
 
@@ -369,9 +672,38 @@ class Confirm(BaseModel):
     confirm: bool = False
     confirm_paid: bool = False
 
+
+class SegmentReview(BaseModel):
+    confirm: bool = False
+    """The author read the cut and accepts it as the episode list for this film."""
+
+
+@router.post('/projects/{pid}/segments/approve')
+def approve_segments(pid: str, body: SegmentReview):
+    """Accept the cut, then let the flow continue into artwork.
+
+    The cut decides both the episodes and which characters and places are worth drawing, so it is
+    reviewed before any picture is generated instead of after.
+    """
+    if not body.confirm: raise HTTPException(422, '请确认已查看全部情节')
+    with attempt_lock, Session.begin() as db:
+        row = get_work(db, pid)
+        if row.data.get('stage') != 'segments_review': raise HTTPException(409, '当前不在情节确认阶段。')
+        sid = row.data.get('director_id')
+        project = db.get(Record, sid) if sid else None
+        segments = ((project.data.get('segments') or {}).get('segments') or []) if project else []
+        if not segments: raise HTTPException(409, '还没有可确认的情节切割结果。')
+        db.add(Record(id=uid('audit'), kind='audit', data={'target': pid, 'action': 'segments_approved',
+            'episodes': [segment['id'] for segment in segments]}))
+        row.data = {**row.data, 'segments_approved_at': time.time(), 'stage': 'preparing'}
+        row.version += 1
+        schedule(db, row, 'preparing')
+    return {'queued': True, 'episodes': [segment['id'] for segment in segments]}
+
+
 @router.post('/projects/{pid}/generate')
 def generate(pid: str, body: Confirm):
-    creative.paid(body)
+    creative.paid(body,'llm')
     if not body.confirm: raise HTTPException(422, '请确认人物和场景图片满意')
     with attempt_lock,Session.begin() as db:
         row = get_work(db, pid)
@@ -382,7 +714,9 @@ def generate(pid: str, body: Confirm):
         row.data = {**row.data, 'assets_confirmed_at': time.time()}
         from .skill_runtime import public,snapshot
         db.add(Record(id=uid('audit'),kind='audit',data={'target':row.id,'action':'author_asset_review','node_skill':public(snapshot('asset_review'))}))
-        queue_node(db, row, 'storyboarding')
+        # The first episode is produced first: the rest follow one at a time from 继续.
+        first=creative.next_storyboard_unit(row.data['director_id'])
+        queue_node(db, row, 'storyboarding', segment_id=first)
     return {'queued': True}
 
 @router.post('/projects/{pid}/feedback')
@@ -401,15 +735,89 @@ def feedback(pid: str, body: creative.Feedback):
     return result
 
 @router.post('/projects/{pid}/publish')
-def publish(pid: str, body: creative.Publish):
+def publish(pid: str, request: Request, body: creative.Publish):
+    # A release is public, so keep a small, explicit creator snapshot on it. Never copy the
+    # account uid, OAuth token, payer identity, or private project id into public release data.
+    from .zhihu_oauth import current_account
+    account = current_account(request)
+    creator = None
+    if account:
+        name = str(account.get('fullname') or '').strip()[:80] or '知乎创作者'
+        avatar = account.get('avatar_path')
+        creator = {
+            'name': name,
+            'avatar_path': avatar.strip() if isinstance(avatar, str) and avatar.strip().startswith('https://') else None,
+        }
     with Session() as db:
         row = get_work(db, pid)
-        if row.data['stage'] not in ('film_review','published'): raise HTTPException(409, '成片尚未完成')
+        # A finished episode can go out before the rest of the film exists.
+        if row.data['stage'] not in ('film_review','published','episode_review'): raise HTTPException(409, '成片尚未完成')
         sid = row.data['director_id']
     result = creative.publish(sid, body)
+    annotated = None
     with Session.begin() as db:
         row=get_work(db,pid);row.data={**row.data,'stage':'published','release_id':result['id']}
+        release=db.get(Record,result['id'])
+        if release and release.kind=='reader_release' and creator and release.data.get('creator') != creator:
+            release.data={**release.data,'creator':creator};release.version+=1;db.flush()
+            result=record_dict(release);annotated=release
+    if annotated:
+        # Release manifests are immutable by version. Public creator attribution therefore becomes
+        # a new manifest revision instead of mutating the already exported v1 file.
+        from .video_storage import export_manifest
+        export_manifest(annotated)
     return result
+
+
+class EpisodeContinue(BaseModel):
+    confirm_paid: bool = False
+
+
+@router.post('/projects/{pid}/episodes/continue')
+def continue_episodes(pid: str, body: EpisodeContinue):
+    """Produce the next episode after the author has seen the finished one.
+
+    The next episode may need either of two things, and it is the film's own state that decides
+    which: an episode that has no board yet is planned first, and an episode that already has its
+    board is rendered. Choosing the phase here also keeps the step reachable after a release, since
+    publishing one episode is not the end of the film.
+    """
+    with attempt_lock, Session.begin() as db:
+        row = get_work(db, pid)
+        if row.data.get('stage') not in ('episode_review', 'film_review', 'published'):
+            raise HTTPException(409, '当前不在情节确认阶段。')
+        sid = row.data['director_id']
+        project = db.get(Record, sid) if sid else None
+        if not project: raise HTTPException(409, '导演项目不存在，不能继续下一个情节。')
+        # The run is fetched and written inside this session. Reading it through a helper that
+        # closes its own session left the stage change on a detached object, so the save was lost
+        # and the queued node still believed the film was waiting at the episode decision.
+        run = db.get(Record, 'creative_' + sid)
+        if not run: raise HTTPException(409, '先选择画风和剧情风格。')
+        order = [segment['id'] for segment in ((project.data.get('segments') or {}).get('segments') or [])]
+        planned = dict(project.data.get('units') or {})
+        rendered = dict(creative.rendering_state(sid))
+        pending = phase = None
+        for gid in order:
+            state = rendered.get(gid) or {'shots': 0, 'finished': 0}
+            if gid not in planned:
+                pending, phase = gid, 'storyboarding'
+                break
+            if not (state['shots'] and state['finished'] >= state['shots']):
+                pending, phase = gid, 'rendering'
+                break
+        if pending is None:
+            raise HTTPException(409, '全部情节都已生成，可以直接发布。')
+        # Only the providers this step will actually spend matter here: planning a board calls the
+        # text model, rendering the next episode calls the video model.
+        creative.paid(body, 'llm' if phase == 'storyboarding' else 'video')
+        run.data = {**run.data, 'stage': 'references_ready' if phase == 'storyboarding' else 'storyboard_ready',
+                    'episode_review_pending': None}
+        run.version += 1
+        db.add(Record(id=uid('audit'), kind='audit', data={'target': pid, 'action': 'episode_continued',
+            'segment_id': pending, 'phase': phase}))
+        queue_node(db, row, phase, segment_id=pending, reopen=True)
+    return {'queued': True, 'segment_id': pending, 'phase': phase}
 
 def flow(task_id, payload):
     """One persisted scheduling transition per worker invocation; no browser polling dependency."""
@@ -418,7 +826,8 @@ def flow(task_id, payload):
         if payload.get('run_id')!=data.get('run_id'):raise HTTPException(409,'此任务属于已失效的旧轮次，不会更新当前制作。')
         sid=data.get('director_id')
     from .workflows import WORKFLOWS
-    if data.get('workflow','author-brainstorm-v1') not in WORKFLOWS:
+    # A record without a pinned version is pre-versioning work; the only live line applies to it.
+    if data.get('workflow','author-brainstorm-v7') not in WORKFLOWS:
         raise HTTPException(409,'制作工作流版本不可用，请由后台处理')
     if not sid:
         # Recover a director created before a supervisor interruption, rather than enqueue a duplicate.
@@ -434,6 +843,12 @@ def flow(task_id, payload):
         if any(t.status in creative.BUSY for t in tasks): return False
     if not run:
         if origin.status!='completed': raise HTTPException(409,'原文分析未完成，请在后台处理任务后继续')
+        # The cut is reviewed before any artwork is drawn: the author confirms which episodes exist,
+        # and the design stage then only draws the characters and places those episodes need.
+        if (project.data.get('segments') or {}).get('segments') and not data.get('segments_approved_at'):
+            with Session.begin() as db:
+                row=db.get(Record,payload['work_id']);row.data={**row.data,'stage':'segments_review'}
+            return True
         creative.design(sid,creative.Style(art=data['art'],tone=data['tone'],confirm_paid=True));return False
     status=run.data['stage']
     if status=='designing':
@@ -446,23 +861,5 @@ def flow(task_id, payload):
         with Session.begin() as db:
             row=db.get(Record,payload['work_id']);row.data={**row.data,'stage':'assets_review'}
         return True
-    if payload['phase']!='producing': raise HTTPException(409,'流程阶段不匹配')
-    with Session.begin() as db:
-        legacy=db.get(Task,task_id);work=get_work(db,payload['work_id'])
-        if legacy and legacy.kind=='author_flow' and legacy.status=='running' and work.data.get('supervisor')==task_id:
-            phase=phase_for_saved_state(status)
-            legacy.status='completed';legacy.progress=100;legacy.message='已将保存的制作进度移交独立节点'
-            replacement=queue_node(db,work,phase)
-            legacy.result={**legacy.result,'handed_off_to':replacement.id}
-            return True
-    if status in ('assets_review','fittings_review','trials_review','samples_review','frames_review'):
-        creative.advance(sid,creative.Continue(stage=status,confirm_review=True,confirm_paid=True),automatic=status!='assets_review')
-        return False
-    if status=='videos_review':
-        result=creative.production.workspace(sid)
-        if not result['shots'] or any(not s['video_task'] or s['video_task']['status']!='completed' or not s['clip'] for s in result['shots']):
-            raise HTTPException(409,'部分镜头未完成，已保留结果，请在后台处理失败任务')
-        with Session.begin() as db:
-            row=db.get(Record,payload['work_id']);row.data={**row.data,'stage':'film_review'}
-        return True
+    # 基础素材之后的步骤由分镜、漫剧两个独立制作节点推进，作者流程只负责走到素材确认。
     raise HTTPException(409,'制作阶段未完成，请查看后台任务诊断')

@@ -1,19 +1,101 @@
 from fastapi import HTTPException
 import os
+import re
 import time
 import threading
 import httpx
 from sqlalchemy import select, update, or_, and_
-from .db import Record,Task,Session,TaskCapacityError,uid,init_db,DATA
+from .db import DATA, EVENT_LIMIT, Record, Session, Task, TaskCapacityError, bounded, init_db, uid
 from .providers import submit_video,poll_video,ProviderError
 from .image_provider import generate_image,generate_from_references,save_image,local_frame_data
 from .video_storage import register_artifact, attach_artifact, verify_file
 from .task_activity import media_activity
 from .production_nodes import KINDS as PRODUCTION_KINDS
+from .diagnostics import record_failure
 
 def _lane_matches(task, lane):
     branch_video=task.kind=='video' and bool(task.payload.get('reader_branch_id'))
     return lane=='any' or (lane=='branch' and branch_video) or (lane=='general' and not branch_video)
+
+# A failed node gets one automatic recovery attempt so a demo recovers on its own; a second
+# failure stops for a person instead of silently spending more model calls.
+AUTO_RETRY_LIMIT=1
+
+
+def repair_message(value):
+    """Name what was repaired so an inferred fix is visible instead of silent."""
+    changes=(value or {}).get('changes') or []
+    labels={
+        'remove_duplicate_assets':'去重参考图',
+        'bind_named_character':'按画面文字补绑人物',
+        'bind_unique_character_costume':'补绑对应服装',
+        'bind_unique_named_scene':'补绑场景',
+        'pack_identity_costume_reference':'用本地图像工具拼接人物与服装参考',
+        'expand_identity_costume_reference':'展开历史拼接参考为依据原图',
+        'bind_explicit_setup_reference':'按承接文字补上铺垫镜号',
+    }
+    if not changes:return '分镜参考已按确定映射校正'
+    parts=[]
+    for change in changes:
+        label=labels.get(change.get('action'),change.get('action') or '校正')
+        detail=change.get('asset_id') or '、'.join(change.get('asset_ids') or []) or '、'.join(change.get('source_asset_ids') or [])
+        parts.append(label+('（'+detail+'）' if detail else ''))
+    return '模型原稿经代码校正：'+'；'.join(dict.fromkeys(parts))[:600]
+
+
+# Automatic recovery cannot help when the operator still has to act: no budget, no configuration,
+# a blocked provider key, or denied model access. Matching must stay precise — a bare word like
+# 「暂停」also appears in recoverable messages such as「分镜生成暂停」.
+NO_AUTO_RETRY_MARKERS=('额度','未配置','未开启','权限','供应商今日已暂停','HTTP 401','HTTP 402','HTTP 403','Key')
+
+
+def is_retryable_failure(message):
+    """Whether an automatic retry could plausibly succeed without a person changing something."""
+    text=message or ''
+    return not any(marker in text for marker in NO_AUTO_RETRY_MARKERS)
+
+
+_FAILURE_CODE=re.compile(r'（错误编号 E-[0-9A-F]{6}）')
+
+
+def with_failure_code(message, code):
+    """Attach one failure code. A message that already carries one refers to an earlier attempt,
+    so the stale code is replaced instead of stacking a second code into the same line."""
+    text=_FAILURE_CODE.sub('',message or '').strip()
+    return f'{text}（错误编号 {code}）'
+
+
+def auto_retry_node(task_id):
+    """Requeue the current production node once after a failure, reusing saved results.
+
+    The recovery runs under the failed task's payer. It used to run outside the request scope, so
+    the replacement node was created with no payer at all and refused every call with "请先用知乎
+    账号登录领取算力豆" — even for a browser that had already attached its own key.
+    """
+    with Session() as db:
+        task=db.get(Task,task_id)
+        if not task or task.kind not in PRODUCTION_KINDS:return False
+        if task.payload.get('auto_retry_count',0)>=AUTO_RETRY_LIMIT:return False
+        if not is_retryable_failure(task.message):return False
+        work=db.get(Record,task.payload.get('work_id',''))
+        if not work:return False
+        attempt=int(task.payload.get('auto_retry_count',0))+1
+        payer=task.session_id
+    from .production_nodes import retry_node
+    from .model_access import access_scope
+    try:
+        with access_scope(payer):
+            with Session.begin() as db:
+                work=db.get(Record,task.payload.get('work_id',''))
+                replacement=retry_node(db,work)
+                replacement.payload={**replacement.payload,'auto_retry_count':attempt,'auto_retry':True}
+                replacement.message='上一个节点失败一次，系统已自动重试并复用已通过校验的结果'
+                db.add(Record(id=uid('audit'),kind='audit',data={'target':work.id,'action':'node_auto_retry',
+                    'attempt':attempt,'previous_node_id':task_id,'replacement_node_id':replacement.id}))
+    except HTTPException:
+        return False
+    return True
+
 
 def claim(owner,lane='any'):
     if lane not in ('any','branch','general'):raise ValueError('未知任务通道。')
@@ -21,7 +103,10 @@ def claim(owner,lane='any'):
     with Session.begin() as db:
         candidates=db.scalars(select(Task).where(or_(Task.status=='queued',and_(Task.status.in_(['running','waiting']),Task.lease<now)))
                               .order_by(Task.created).limit(256)).all()
-        row=next((candidate for candidate in candidates if _lane_matches(candidate,lane)),None)
+        row=None
+        for candidate in candidates:
+            if not _lane_matches(candidate,lane):continue
+            row=candidate;break
         if not row:return None
         if row.status=='running' and (row.kind=='author_flow' or row.kind in PRODUCTION_KINDS or (row.kind in ['video','image','director','art_design','creative_revision','creative_watch','author_styles'] and row.payload.get('mode')=='live' and not row.result.get('provider_id'))):
             # Paid submission may have succeeded before its response was recorded.
@@ -36,6 +121,18 @@ def claim(owner,lane='any'):
 def patch(task_id,owner,**values):
     with Session.begin() as db:
         return db.execute(update(Task).where(Task.id==task_id,Task.owner==owner,Task.status=='running').values(**values)).rowcount
+
+
+def patch_failure(task_id,owner,status,message,code):
+    """Mark a task as failed while keeping its existing result, provider id and evidence."""
+    with Session.begin() as db:
+        row=db.get(Task,task_id)
+        if not row or row.owner!=owner:return False
+        row.status=status
+        row.message=message
+        row.result={**row.result,'failure_code':code}
+        return True
+
 
 def heartbeat(task_id,owner,stop):
     while not stop.wait(20):
@@ -52,7 +149,7 @@ def save_video_result(task_id,owner,p,result,source):
         if current.owner!=owner or current.status!='running':return
         artifact=register_artifact(db,clip_id,source,{
             'origin':'generation','task_id':task_id,'provider_id':result['provider_id'],
-            'generation':result.get('generation',{'snapshot_status':'legacy_unverified'}),
+            'generation':result.get('generation',{}),
             'input_snapshot':p.get('input_snapshot'),
         })
         clip=db.get(Record,clip_id)
@@ -117,8 +214,22 @@ def run_task(task_id,owner):
                 if current.status!='running' or current.owner!=owner:raise ProviderError('导演任务已停止。')
                 project=db.get(Record,p['project_id'])
                 project.data={**project.data,key:value};project.version+=1
-                message=value if key=='phase' else {'treatment':'导演阐述已保存','treatment_diagnostics':'导演阐述输出问题已保存，正在自动重试','board':'分镜已保存','board_plan':'专业镜头计划已保存，正在编写生成提示词','prompt_diagnostics':'生成提示词问题已保存，正在自动重试','board_diagnostics':'分镜输出问题已保存，正在自动重试','board_repairs':'分镜参考已按确定映射去重、补场景或条件拼接'}[key]
-                project.data={**project.data,'events':[*project.data.get('events',[]),{'at':time.time(),'message':message}]}
+                message=value if key=='phase' else {
+                    'treatment':'导演阐述已保存',
+                    'treatment_diagnostics':'导演阐述输出问题已保存，正在自动重试',
+                    'segments':'微小说已切割为有序片段，正在逐片段规划镜头',
+                    'segment_diagnostics':'片段切割输出问题已保存，正在自动重试',
+                    'board':'分镜已保存',
+                    'board_plan':'专业镜头计划已保存，正在编写生成提示词',
+                    'prompt_diagnostics':'生成提示词问题已保存，正在自动重试',
+                    'board_diagnostics':'分镜输出问题已保存，正在自动重试',
+                    'board_chunk_diagnostics':'该片段的分镜输出问题已保存，正在片段内自动重试',
+                    'board_progress':'已保存通过校验的片段分镜，正在继续其它片段',
+                    'board_chunk_reuse':'部分片段沿用已通过校验的分镜，未重复调用模型',
+                    'units':'本情节分镜已保存，正在继续下一个情节',
+                }.get(key,'分镜制作进度已保存')
+                if key=='board_repairs':message=repair_message(value)
+                project.data={**project.data,'events':bounded(project.data.get('events'),{'at':time.time(),'message':message},EVENT_LIMIT)}
                 current.progress=progress;current.message=message
         review=run_director(p,task_id,save_stage)
         with Session.begin() as db:
@@ -166,10 +277,13 @@ def run_task(task_id,owner):
         if not result.get('provider_id'):
             if p.get('director_id'):
                 from .consistency import ready
+                from .production import validate_references
                 with Session() as db:
                     _,token,_=ready(db,p['director_id'],batch=True)
-                    a=db.get(Record,p.get('asset_id',''))
-                    if token!=p.get('consistency_stamp') or not a or a.version!=p.get('asset_version') or a.data.get('status')!='approved':raise ProviderError('视觉设定或镜头参考图已变化，请重新审核。')
+                    current=db.get(Task,task_id)
+                    if token!=p.get('consistency_stamp') or current is None:raise ProviderError('视觉设定或镜头参考图已变化，请重新审核。')
+                    try:validate_references(db,current)
+                    except HTTPException as exc:raise ProviderError(str(exc.detail)) from None
             for binding in (p.get('input_snapshot') or {}).get('asset_bindings',[]):
                 if binding.get('file'):verify_file(binding['file'])
             from .providers import model_config, endpoint
@@ -261,11 +375,20 @@ def process_one(owner,lane='any'):
         with access_scope(access_id):run_task(task_id,owner)
     except TaskCapacityError as exc:
         patch(task_id,owner,status='waiting',lease=time.time()+30,message=str(exc)[:900])
-    except HTTPException as exc:patch(task_id,owner,status='needs_review',message=str(exc.detail)[:900])
-    except ProviderError as exc:patch(task_id,owner,status='needs_review',message=str(exc)[:900])
+    except HTTPException as exc:
+        code=record_failure(task_id,exc)
+        patch_failure(task_id,owner,'needs_review',with_failure_code(str(exc.detail)[:820],code),code)
+        auto_retry_node(task_id)
+    except ProviderError as exc:
+        code=record_failure(task_id,exc)
+        patch_failure(task_id,owner,'needs_review',with_failure_code(str(exc)[:820],code),code)
+        auto_retry_node(task_id)
     except Exception as exc:
         # Do not leak provider response bodies, signed URLs, credentials, or local paths.
-        patch(task_id,owner,status='failed',message=f'任务未完成（{type(exc).__name__}）。已保留已有结果，可查看配置与重新创建任务。')
+        code=record_failure(task_id,exc)
+        patch_failure(task_id,owner,'failed',
+            with_failure_code(f'任务未完成（{type(exc).__name__}）。已保留已有结果，可重新运行当前节点。',code),code)
+        auto_retry_node(task_id)
     finally:stop.set();thread.join(timeout=1)
     return True
 

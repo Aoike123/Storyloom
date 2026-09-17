@@ -1,27 +1,113 @@
 .reader-entry-links {
   display: flex;
-  gap: 16px;
   align-items: center;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  gap: 0;
+  padding: 3px;
+  border: 1px solid #ffffff17;
+  border-radius: 999px;
+  background: #ffffff04;
+  box-shadow: 0 8px 24px #0309071f;
+  transition: border-color .16s ease, background .16s ease;
 }
 
-.reader-entry-links a {
+.reader-entry-links > a {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 15px;
+  border-radius: 999px;
   color: inherit;
   text-decoration: none;
-  font-size: 14px;
+  font-size: 12px;
+  white-space: nowrap;
+  transition: color .16s ease, background .16s ease;
 }
 
-.reader-entry-links a:hover {
-  text-decoration: underline;
+.reader-entry-links > a svg {
+  color: #b9d59c;
+  transition: transform .16s ease;
+}
+
+.reader-entry-links > a:hover {
+  background: #ffffff08;
+  color: #f0f4ea;
+  text-decoration: none;
+}
+
+.reader-entry-links > a:hover svg {
+  transform: translateX(2px);
+}
+
+.reader-entry-links > .account-dock {
+  display: flex;
+  align-items: center;
+}
+
+.reader-entry-links > .account-dock::before {
+  content: '';
+  width: 1px;
+  height: 20px;
+  flex: 0 0 1px;
+  background: #ffffff17;
+}
+
+.reader-entry-links .account-dock-trigger {
+  min-height: 40px;
+  padding: 6px 11px 6px 9px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.reader-entry-links .account-dock-trigger:hover,
+.reader-entry-links .account-dock-trigger[aria-expanded=true] {
+  border-color: transparent;
+  background: #c9dfab12;
+}
+
+.reader-entry-links:focus-within {
+  border-color: #9db98780;
+  background: #ffffff06;
 }
 
 @media (max-width: 600px) {
   .reader-nav {
-    gap: 16px;
-    flex-wrap: wrap;
+    gap: 10px;
+    flex-wrap: nowrap;
+    padding-inline: 18px;
   }
 
   .reader-entry-links {
-    gap: 12px;
+    padding: 2px;
+  }
+
+  .reader-entry-links > a {
+    min-height: 42px;
+    padding-inline: 12px;
+  }
+
+  .reader-entry-links .account-dock-trigger {
+    min-height: 42px;
+    padding-inline: 9px;
+  }
+}
+
+@media (max-width: 360px) {
+  .reader-nav {
+    padding-inline: 14px;
+  }
+
+  .reader-brand {
+    font-size: 23px !important;
+    letter-spacing: 3px;
+  }
+
+  .reader-entry-links > a {
+    padding-inline: 10px;
+    font-size: 11px;
   }
 }

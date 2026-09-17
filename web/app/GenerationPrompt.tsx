@@ -18,7 +18,7 @@ export type GenerationInfo = {
 export default function GenerationPrompt({generation, pending = false, group}: {generation?: GenerationInfo | null; pending?: boolean; group?:string}) {
   const [copied, setCopied] = useState('');
   if (!generation?.prompt) return null;
-  const kind = ({character_sheet:'人物身份图',costume_sheet:'独立服装图',scene_sheet:'场景设定图',dressed_character:'定装合成图'} as Record<string,string>)[generation.asset_kind || ''] || '';
+  const kind = ({character_sheet:'人物身份图',costume_sheet:'独立服装图',scene_sheet:'场景设定图',character_costume_reference:'人物服装拼接参考图'} as Record<string,string>)[generation.asset_kind || ''] || '';
   return <details className="generation-prompt" name={group}>
     <summary>{generation.source === 'request' ? '实际请求提示词' : pending ? '待发送提示词' : '任务保存的提示词'}</summary>
     <div className="generation-prompt-body">

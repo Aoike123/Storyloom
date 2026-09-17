@@ -17,9 +17,8 @@
 
 | 接口 | 用途 |
 | --- | --- |
-| `GET /api/clips/{clip_id}/storage` | 读取素材登记与当前选用区间，不触发迁移 |
-| `POST /api/clips/{clip_id}/register-storage` | 按需登记旧片段；已发布片段保持原路径和原秒数 |
-| `GET /api/reader/releases/{release_id}/manifest` | 读取发布清单；旧发布返回 schema_version=0 |
+| `GET /api/clips/{clip_id}/storage` | 读取素材登记与当前选用区间 |
+| `GET /api/reader/releases/{release_id}/manifest` | 读取发布清单 |
 
 发布 JSON 快照写入 `data/manifests/releases/{release_id}/v{revision}.json`，缺失时可通过同一发布请求从已提交数据库记录恢复。动态分支、pending 槽位以及实时播放通知尚未接入，本轮不会因此开始生成读者改写视频。
 

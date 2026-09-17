@@ -74,14 +74,17 @@ test('earlier steps can be revisited without unlocking future steps',()=>{
   assert.equal(viewedAuthorStage('assets_review','preparing'),'preparing');
   assert.equal(viewedAuthorStage('assets_review','published'),'assets_review');
   assert.equal(viewedAuthorStage('assets_review','unknown'),'assets_review');
+  // 本集发布是真实存在的步骤：可以回到它之前的步骤查看，但不能跳到它之后。
+  assert.equal(viewedAuthorStage('episode_review','rendering'),'rendering');
+  assert.equal(viewedAuthorStage('episode_review','episode_review'),'episode_review');
+  assert.equal(viewedAuthorStage('episode_review','published'),'episode_review');
 });
 
-test('legacy producing records display the saved responsibility without replaying work',()=>{
-  assert.equal(authorDisplayStage({stage:'producing',creative:{stage:'fittings_review'}}),'storyboarding');
-  assert.equal(authorDisplayStage({stage:'producing',creative:{stage:'storyboarding'}}),'storyboarding');
-  assert.equal(authorDisplayStage({stage:'producing',creative:{stage:'videos_review'}}),'rendering');
+test('the displayed stage is the saved stage and a future step stays locked',()=>{
+  assert.equal(authorDisplayStage({stage:'rendering',display_stage:'rendering'}),'rendering');
+  assert.equal(authorDisplayStage({stage:'storyboarding'}),'storyboarding');
   assert.equal(viewedAuthorStage('storyboarding','rendering'),'storyboarding');
-  assert.equal(viewedAuthorStage('rendering','compositing'),'storyboarding');
+  assert.equal(viewedAuthorStage('rendering','rendering'),'rendering');
 });
 
 test('a delayed old-round snapshot cannot restore invalidated progress or assets',()=>{
