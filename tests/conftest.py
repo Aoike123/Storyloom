@@ -1,5 +1,6 @@
 import os
 import shutil
+import time
 import uuid
 from pathlib import Path
 
@@ -12,13 +13,23 @@ os.environ['STORYLOOM_ENV_FILE']=str(TEST_DATA/'.env')
 import pytest
 from fastapi.testclient import TestClient
 from backend.app import app
-from backend.db import Base,engine,init_db
+from backend.db import Base,Record,Session,engine,init_db
 
 @pytest.fixture(autouse=True)
 def database():
     Base.metadata.drop_all(engine)
     init_db()
     yield
+
+
+@pytest.fixture(autouse=True)
+def reset_request_limits():
+    """The per-IP limiter keeps module-level counters; each test starts with empty buckets."""
+    from backend.public_limits import clear_request_limit_state
+
+    clear_request_limit_state()
+    yield
+    clear_request_limit_state()
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -36,6 +47,38 @@ def tmp_path():
     path = TEST_DATA / 'tmp' / uuid.uuid4().hex
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+@pytest.fixture
+def payer():
+    """A bean-backed account session for the duration of one test.
+
+    Every paid call needs a payer in every deployment, a developer's local run included, so a test
+    that drives a provider adapter directly signs in the same way a visitor does.
+    """
+    from backend import model_access
+
+    created = model_access.create_account_session('test-login-' + uuid.uuid4().hex[:16], 'test-account')
+    with model_access.access_scope(created['access_id']), model_access.signed_in_scope('test-account'):
+        yield created
+
+
+@pytest.fixture
+def sign_in(client):
+    """Return a callable that signs this browser in, so its requests carry a payer session."""
+    import backend.zhihu_oauth as zhihu_oauth
+    from backend import model_access
+
+    def sign(uid='test-account'):
+        session_id = 'test-login-' + uuid.uuid4().hex[:16]
+        model_access.create_account_session(session_id, uid)
+        with Session.begin() as db:
+            db.add(Record(id=zhihu_oauth._session_record_id(session_id), kind=zhihu_oauth.SESSION_KIND,
+                          data={'uid': str(uid), 'token': 'stored-server-side', 'expires_at': time.time() + 3600}))
+        client.cookies.set(zhihu_oauth.COOKIE_NAME, session_id)
+        return session_id
+
+    return sign
 
 
 @pytest.fixture(scope='session')

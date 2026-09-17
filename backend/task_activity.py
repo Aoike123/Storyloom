@@ -5,7 +5,7 @@ from .db import Session, Record, Task
 from .style_progress import partial_json
 
 MODEL_KINDS={'director','art_design','creative_revision','plan'}
-CALL_TITLES={'Treatment':'梳理故事与改编方向','Board':'设计分镜与镜头衔接','Review':'检查故事与镜头连续性','AssetSheetPlan':'检查身份与服装绑定',
+CALL_TITLES={'Treatment':'梳理故事与改编方向','SegmentPlan':'切割微小说片段','Board':'设计分镜与镜头衔接','Review':'检查故事与镜头连续性','AssetSheetPlan':'检查身份与服装绑定',
              'IdentityPlan':'锁定专业画风与唯一人物身份','WardrobeScenePlan':'设计独立服装与物理场景',
              'StylePlan':'基础美术渲染参数','CharacterPlan':'锁定跨物种角色身份','CostumePlan':'设计独立服装','ScenePlan':'设计物理场景',
              'AssetPromptBatch':'编写资产生图提示词','ShotPromptBatch':'编写分镜图像与视频提示词',
@@ -33,7 +33,7 @@ def preview(content):
         if text:items.append({'title':label,'text':text})
     for key,label,title_key,text_keys in [('rules','故事规则','rule',('consequence',)),
         ('characters','人物身份','name',()),('costumes','独立服装','name',()),('scenes','物理场景','name',()),('items','素材规格','name',()),('shots','镜头','id',('scene','dramatic_action','camera','first_frame','motion_prompt')),
-        ('beats','剧情片段','title',('narration','reason'))]:
+        ('beats','剧情片段','title',('narration','reason')),('segments','剧情片段','title',('summary','purpose'))]:
         values=parsed.get(key)
         if not isinstance(values,list):continue
         for index,item in enumerate(values[:18 if key in ('characters','costumes','scenes','items') else 8]):

@@ -28,9 +28,10 @@
 .activity-progress .style-thinking{margin-top:16px}
 .activity-draft-heading{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:14px 0 10px;font-size:11px;color:#6b8558}
 .activity-draft-heading small{font-size:10px;color:#94a184}
-.activity-drafts{display:grid;gap:8px;min-height:86px;max-height:242px;overflow:auto;scrollbar-width:thin;scrollbar-color:#b9cba9 transparent}
-.activity-progress>.activity-drafts{height:224px;min-height:224px;align-content:start}
-.activity-drafts:empty{border:1px dashed #dce6d1;border-radius:7px;background:#ffffff44}
+.activity-drafts{min-height:86px;max-height:242px;overflow:auto;scrollbar-width:thin;scrollbar-color:#b9cba9 transparent}
+.activity-draft-list{display:grid;gap:8px;align-content:start}
+.activity-progress>.activity-drafts{height:224px;min-height:224px}
+.activity-drafts.is-empty{border:1px dashed #dce6d1;border-radius:7px;background:#ffffff44}
 .activity-drafts article{background:#fcfdf9;border:1px solid #dfe8d5;border-radius:7px;padding:12px 14px}
 .activity-drafts strong{font-size:11px;font-weight:500;color:#637f50}
 .activity-drafts p{font-size:11px!important;white-space:pre-wrap;color:#869777;line-height:1.8!important;margin:6px 0 0!important}

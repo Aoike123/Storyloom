@@ -18,6 +18,13 @@ def costume(cid='W001',color='#9A2438'):
             'cut':'收腰，及膝，直筒长袖','details':['左侧衣领圆形胸针']}]}
 
 
+def bare_costume(costume_id='W001',character_ref='C002'):
+    """The empty-clothing mode: the character keeps the costume stage but wears nothing."""
+    return {'role':'costume','costume_id':costume_id,'character_ref':character_ref,'name':'天然体表'+costume_id,
+        'source_ref':'P001','facts':'原文说明该角色为天然体表、不着衣物','mode':'bare',
+        'bare_surface':'自然体表与形体特征完全来自人物身份图，不添加任何衣物、盔甲、法器或饰品'}
+
+
 def scene():
     return {'role':'scene','name':'客厅','source_ref':'P001','facts':'原文中的房间','space_type':'公寓客厅',
         'dimensions':{'width_m':6,'depth_m':4,'height_m':3},

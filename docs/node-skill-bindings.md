@@ -1,6 +1,6 @@
 # 专业 Skill 节点绑定
 
-流程版本：`author-brainstorm-v6`。项目节点适配版本：`1.7.0`。
+流程版本：`author-brainstorm-v7`。项目节点适配版本：`1.8.0`。
 
 ## 实际调用路径
 
@@ -17,10 +17,12 @@ flowchart TD
     E --> F2
     F1 --> G[基础图片生成与人工确认]
     F2 --> G
-    G --> J[完整绑定身份图＋服装图＋场景图；超三张才本地拼接]
-    J --> K[分镜图像与视频 Prompt 编译]
+    G --> J[完整绑定身份图＋服装图＋场景图；超过九张时由本地图像工具拼接]
+    J --> CUT[微小说片段切割：按原文 P 编号连续切段]
+    CUT --> K2[逐片段分块规划镜头：一个片段一次调用]
+    K2 --> K[分镜图像与视频 Prompt 编译]
     K --> L[文字分镜预审]
-    L --> M[镜头参考图与参考视频生成]
+    L --> M[参考图直接生视频]
     M --> N[成片人工验收]
 ```
 
@@ -28,9 +30,11 @@ flowchart TD
 
 非人角色使用显式头身分区：`body_plan` 与 `body_nature` 先区分人身、兽身、妖身和混合身体，再分别锁定头部、躯干、臂手、腿足的类别、解剖、体表和固有色。“兽首人身”会额外生成禁止完整兽身、全身兽毛和兽爪兽腿的硬约束。“写实影视摄影”和两种三维渲染是不同媒介；没有明确 3D/三维/CG 的写实输入不能落入三维枚举。
 
-分镜规划和提示词编译也分别调用：`storyboard` 产出镜头计划，`shot_prompts` 只能更新对应镜号的镜头参考图与单镜运动文字，不能改写事件、资产、身份或时长。随后由 `storyboard_review` 做文字预审；真实画面由作者验收。
+分镜规划和提示词编译也分别调用：`storyboard` 产出镜头计划，`shot_prompts` 只能更新对应镜号的静态构图说明与单镜运动文字，不能改写事件、资产、身份或时长，也不重复程序单独附加的统一画风。随后由 `storyboard_review` 做文字预审；真实画面由作者验收。
 
-`storyboard` 接收调用方生成的人物—服装权威映射并输出完整语义素材 ID。每镜不超过三张时保持独立参考图；只有超限时，调用方才将该镜所需的同一人物身份图与服装图进行非 AI 双栏拼接。拼接仍超限会把具体镜号、数量和映射错误反馈给下一次模型重试，要求拆镜。
+分镜之前先执行一次 `story_segments`：把选定的微小说按原文 P 编号切成连续、有序、互不重叠的片段，并给出每个片段的剧情功能、出场人物、主要场景、镜头上限和结尾状态。`storyboard` 随后一个片段调用一次，每次只看本片段原文并只输出本片段的镜头（片段内从 S01 编号）。调用方按片段顺序合并、统一重编为整片镜号，把「承接上一片段」写进首镜并补齐跨片段的 setup_ids，最后整篇再做一次结构与素材校验。这样单次输出体积受片段约束，局部失败只在对应片段重试，已通过校验的片段会被复用而不会重复付费。
+
+`storyboard` 接收调用方生成的人物—服装权威映射并输出完整语义素材 ID。参考图优先使用独立原图；只有完整绑定超过每镜九张上限时，调用方才用本地图像工具（不调用生图或改图接口）拼接同一角色的身份与服装参考板。拼接后仍超限会把具体镜号、数量和映射错误反馈给下一次模型重试，要求拆镜。
 
 ## 节点及专业来源
 
@@ -47,11 +51,12 @@ flowchart TD
 | identity_revision / costume_revision / scene_revision | design-production-assets + prompt-images | 按意见修订完整静态规格，再按角色或非角色类型交给对应提示词节点重新生图 |
 | shot_revision / video_revision | compile-generation-prompts | 把意见整合进完整镜头图或视频 Prompt，创建新的生成任务 |
 | fitting | prompt-images 的参考图一致性方法 | 仅供历史流程兼容；新流程不调用 AI 定装或 scene_trial |
-| storyboard | plan-camera-shots | 机位、动作、连续性、时长和资产绑定 |
-| shot_prompts | compile-generation-prompts + prompt-images | 镜头参考图 Prompt、视频运动 Prompt |
+| story_segments | shape-story-blueprint + structure-screenplay | 按原文编号连续切分的片段、剧情功能、镜头上限与结尾状态 |
+| storyboard | plan-camera-shots | 单个片段的机位、动作、连续性、时长和资产绑定 |
+| shot_prompts | compile-generation-prompts + prompt-images | 单镜构图说明、视频运动 Prompt |
 | storyboard_review | plan-camera-shots 的预检规则 | 文字预审结论和具体问题 |
 | reader_branch_plan | shape-story-blueprint + plan-camera-shots | 锁定视觉资产内的一至三镜因果分支与可用回归点 |
-| frame_render / video_render | compile-generation-prompts | 生成请求编排模板 |
+| video_render | compile-generation-prompts | 图片参考视频请求编排模板 |
 | asset_review / film_review | 资产检查与 review-and-assemble | 作者查看真实素材后执行的验收清单 |
 
 人物、服装和场景修订另有各自的绑定，不共用一个全能角色。

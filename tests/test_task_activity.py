@@ -44,7 +44,7 @@ def model_stream(monkeypatch):
     ('creative_revision','Revision',{'prompt':'保留身份与场景，仅调整衣服颜色'}),
     ('plan','Plan',{'beats':[{'title':'新的选择','narration':'人物停下脚步','reason':'回应用户修改'}]}),
 ])
-def test_all_text_steps_stream_display_summary_and_keep_original_contract(model_stream,kind,schema,values):
+def test_all_text_steps_stream_display_summary_and_keep_original_contract(model_stream,payer,kind,schema,values):
     install,calls=model_stream
     with Session.begin() as db:db.add(Task(id='activity-test',kind=kind,status='running',owner='owner',payload={'mode':'live'},result={'preserved':'result-state'}))
     def observe():
@@ -67,7 +67,7 @@ def test_all_text_steps_stream_display_summary_and_keep_original_contract(model_
     assert len(calls)==1
 
 
-def test_multiple_model_calls_keep_previous_summaries_after_result_replacement(model_stream):
+def test_multiple_model_calls_keep_previous_summaries_after_result_replacement(model_stream,payer):
     install,calls=model_stream
     with Session.begin() as db:db.add(Task(id='multi',kind='director',status='running',owner='owner',payload={'mode':'live'}))
     install({'premise':'第一阶段设定'})
@@ -85,7 +85,7 @@ def test_multiple_model_calls_keep_previous_summaries_after_result_replacement(m
     assert len(calls)==2
 
 
-def test_interrupted_text_generation_keeps_summary_without_publishing(model_stream):
+def test_interrupted_text_generation_keeps_summary_without_publishing(model_stream,payer):
     install,calls=model_stream
     with Session.begin() as db:db.add(Task(id='broken',kind='art_design',status='running',owner='owner',payload={'mode':'live'}))
     install({},broken=True)

@@ -16,10 +16,13 @@ from .local_config import save_config
 from .model_access import (
     ACCESS_HEADER,
     ModelAccessError,
+    PAYER_MODES,
+    access_mode_for,
     access_scope,
     public_demo_mode,
     resolve_access_token,
     router as model_access_router,
+    signed_in_scope,
 )
 from .preproduction import router as preproduction_router
 from .production import reader as reader_router
@@ -30,6 +33,7 @@ from .public_limits import request_retry_after
 from .video_files import StorageError
 from .video_storage import router as storage_router
 from .zhihu_stories import router as story_router
+from .zhihu_oauth import public_router as zhihu_callback_router, router as zhihu_login_router
 
 
 @asynccontextmanager
@@ -46,6 +50,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(story_router)
+app.include_router(zhihu_login_router)
+app.include_router(zhihu_callback_router)
 app.include_router(director_router)
 app.include_router(production_router)
 app.include_router(reader_router)
@@ -89,8 +95,22 @@ async def local_only(request: Request, call_next):
     try:
         access_id = resolve_access_token(request.headers[ACCESS_HEADER]) if ACCESS_HEADER in request.headers else ""
     except ModelAccessError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=401, headers={"Cache-Control": "no-store"})
-    with access_scope(access_id):
+        # A token the server no longer recognises must not lock the visitor out of a signed-in
+        # account, so it is treated as "no explicit choice" instead of a hard failure.
+        access_id = ""
+    if access_id and access_mode_for(access_id) not in PAYER_MODES:
+        # An explicit header only wins when it can actually pay. A leftover session from the
+        # retired shared pool used to shadow the account login and fail every call.
+        access_id = ""
+    if not access_id:
+        # A signed-in Zhihu account pays from its bean wallet. An explicit access header still wins,
+        # so an account whose beans ran out can switch to its own keys and keep working.
+        from .zhihu_oauth import signed_in_access_id
+
+        access_id = signed_in_access_id(request) or ""
+    from .zhihu_oauth import signed_in_uid
+
+    with access_scope(access_id), signed_in_scope(signed_in_uid(request)):
         if request.method not in ["GET", "HEAD", "OPTIONS"]:
             origin = request.headers.get("origin")
             if origin and origin not in [
@@ -123,6 +143,20 @@ def health():
             "worker_online": bool(worker and time.time() - worker.data["at"] < 120),
             "database": "PostgreSQL" if db.bind.dialect.name == "postgresql" else "SQLite 本地模式",
         }
+
+
+@app.get("/api/diagnostics/{code}")
+def failure_detail(code: str):
+    """Full server-side failure detail. Visitors only ever see the short code, not the stack."""
+    from .diagnostics import failure_report
+    from .model_access import public_demo_mode
+
+    if public_demo_mode():
+        raise HTTPException(404, "公开演示模式不提供错误详情，请在本地工作台查看。")
+    report = failure_report(code)
+    if not report:
+        raise HTTPException(404, "没有这条错误记录。")
+    return report
 
 
 @app.get("/api/node-skills")

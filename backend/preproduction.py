@@ -4,12 +4,13 @@ from fastapi import APIRouter,HTTPException
 from pydantic import BaseModel,Field
 from typing import Literal
 from sqlalchemy import select
-from .db import Session,Record,Task,uid,record_dict,task_dict
+from .db import HISTORY_LIMIT, Session, Record, Task, bounded, record_dict, uid
 from .image_provider import local_frame_data
-from .providers import settings
-from .reference_image_model import REFERENCE_IMAGE_MODEL, REFERENCE_IMAGE_STEPS
-from .skill_runtime import render_node
 router=APIRouter(prefix='/api/preproduction',tags=['preproduction'])
+
+# The reference-video provider accepts up to nine reference images per request; shots are
+# planned against this limit because no intermediate shot picture is generated any more.
+MAX_REFERENCE_IMAGES=9
 
 def project(db,pid):
     p=db.get(Record,pid)
@@ -37,8 +38,8 @@ def current_base_asset_versions(db,pid):
 def _invalidate_record(row,reason,replacement_task_id,at):
     if not row:return False
     snapshot={k:v for k,v in row.data.items() if k!='history'}
-    history=[*row.data.get('history',[]),{'version':row.version,'data':snapshot,
-        'invalidated_at':at,'reason':reason,'replacement_task_id':replacement_task_id}]
+    history=bounded(row.data.get('history'),{'version':row.version,'data':snapshot,
+        'invalidated_at':at,'reason':reason,'replacement_task_id':replacement_task_id},HISTORY_LIMIT)
     row.data={**row.data,'history':history,'invalidated_at':at,'invalidated_reason':reason,
         'replacement_task_id':replacement_task_id}
     if 'approved' in row.data:row.data={**row.data,'approved':False}
@@ -46,17 +47,72 @@ def _invalidate_record(row,reason,replacement_task_id,at):
     return True
 
 
-def invalidate_downstream_references(db,pid,reason,replacement_task_id):
-    """Invalidate every current pointer derived from replaced base artwork without deleting history."""
+def units_using_assets(project,asset_ids):
+    """Episodes whose storyboard binds one of these assets, in cut order.
+
+    The binding is what the episode's own shots recorded, so the answer is exact instead of a guess
+    about which episode "probably" uses a picture.
+    """
+    wanted=set(asset_ids or ())
+    if not wanted:return []
+    units=project.data.get('units') or {}
+    order=[segment['id'] for segment in ((project.data.get('segments') or {}).get('segments') or [])]
+    used=[]
+    for gid in order or list(units):
+        board=(units.get(gid) or {}).get('board') or {}
+        for shot in board.get('shots',[]):
+            if wanted & set(shot.get('assets') or []):
+                used.append(gid);break
+    return used
+
+
+def invalidate_units(db,pid,gids,reason,replacement_task_id):
+    """Drop the storyboards of the named episodes and stop their video tasks.
+
+    Replacing one picture used to invalidate the whole film. Now the episodes that actually bound
+    that picture are the ones that lose their storyboard, and the episodes beside them keep
+    everything they already paid for.
+    """
+    current=project(db,pid);units=dict(current.data.get('units') or {})
+    dropped=[gid for gid in gids if gid in units]
+    if not dropped:return []
+    for gid in dropped:units.pop(gid,None)
+    current.data={**current.data,'units':units,'requires_preproduction':True,'status':'awaiting_preproduction',
+        'downstream_invalidated_at':time.time(),'downstream_invalidation_reason':reason,
+        'replacement_task_id':replacement_task_id}
+    current.version+=1
+    for task in db.scalars(select(Task).where(Task.kind=='video')):
+        if task.payload.get('director_id')!=pid or task.status not in ('queued','running','waiting','completed','needs_review'):
+            continue
+        if task.payload.get('shot_id','').split('-')[0] in dropped:
+            task.status='superseded'
+            task.message='该情节的参考素材已更新，本片段需要重新生成'
+    db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'episode_references_invalidated',
+        'episodes':dropped,'reason':reason,'replacement_task_id':replacement_task_id,'at':time.time()}))
+    return dropped
+
+
+def invalidate_downstream_references(db,pid,reason,replacement_task_id,changed_asset_ids=None):
+    """Invalidate the current pointers derived from replaced base artwork.
+
+    With ``changed_asset_ids`` and an episode-based run, only the episodes that bound those assets
+    lose their work; everything else is kept. Without it — a full redesign, where no picture of the
+    previous plan is trustworthy — the whole film is invalidated as before.
+    """
+    current=project(db,pid)
+    if changed_asset_ids and current.data.get('units'):
+        affected=units_using_assets(current,changed_asset_ids)
+        if affected:
+            return invalidate_units(db,pid,affected,reason,replacement_task_id)
+        return []
     at=time.time();invalidated=[]
     for rid in ('prep_'+pid,'prep_gate_'+pid,'visual_'+pid,'visual_gate_'+pid):
         if _invalidate_record(db.get(Record,rid),reason,replacement_task_id,at):invalidated.append(rid)
-    current=project(db,pid)
     board_keys=('board','review','board_diagnostics','preproduction_stamp','board_recovery')
     if any(key in current.data for key in board_keys):
         saved={key:current.data.get(key) for key in board_keys if key in current.data}
-        history=[*current.data.get('board_history',[]),{**saved,'version':current.version,
-            'invalidated_at':at,'reason':reason,'replacement_task_id':replacement_task_id}]
+        history=bounded(current.data.get('board_history'),{**saved,'version':current.version,
+            'invalidated_at':at,'reason':reason,'replacement_task_id':replacement_task_id},HISTORY_LIMIT)
         data={key:value for key,value in current.data.items() if key not in board_keys}
         current.data={**data,'board_history':history,'requires_preproduction':True,
             'status':'awaiting_preproduction','downstream_invalidated_at':at,
@@ -102,25 +158,34 @@ def storyboard_asset_contract(prep):
         choices=costumes if character.get('requires_costume') else [(None,None),*costumes]
         for costume_id,costume in choices:
             ids=[character_id,*([costume_id] if costume_id else [])]
-            if len(ids)<3:
+            if len(ids)<MAX_REFERENCE_IMAGES:
                 character_sets.append({'character':character.get('name') or character_id,
                     'costume':costume.get('name') if costume else None,'asset_ids':ids})
     scenes=[{'name':spec.get('name') or asset_id,'asset_id':asset_id}
             for asset_id,spec in assets.items() if spec.get('role')=='scene']
     props=[{'name':spec.get('name') or asset_id,'asset_id':asset_id}
            for asset_id,spec in assets.items() if spec.get('role')=='prop']
+    # Characters whose costume stage answered with the empty-clothing mode: they keep the same
+    # identity+scene binding as any other character and must not be given a garment reference.
+    bare=[{'character':spec.get('name') or asset_id,'asset_id':asset_id,
+           'note':(spec.get('clothing_note') or '该角色为天然体表，不添加任何衣物')[:400]}
+          for asset_id,spec in assets.items()
+          if spec.get('role')=='character' and spec.get('clothing_mode')=='bare']
     return {
         'max_semantic_assets_per_shot':12,
-        'max_reference_files_after_packing':3,
+        'max_reference_images_per_shot':MAX_REFERENCE_IMAGES,
         'scene_required':True,
         'scene_count_per_shot':1,
         'character_reference_sets':character_sets,
         'scene_references':scenes,
         'prop_references':props,
+        'bare_characters':bare,
         'selection_rule':('assets 必须使用真实 ID。每个入镜角色完整复制一组 character_reference_sets.asset_ids，'
-                          '再追加一张 scene_references.asset_id；不要为了三图上限省略身份或服装。'
-                          '调用方仅在完整列表超过三张时，才会把同一角色的身份与服装确定性拼成一张参考板；'
-                          '若拼接后仍超过三张，校验会要求拆成反打或空场景镜头。'),
+                          '再追加一张 scene_references.asset_id；不要为了数量上限省略身份或服装。'
+                          f'程序把完整列表原样附给视频模型，每镜最多 {MAX_REFERENCE_IMAGES} 张；'
+                          '超过上限的多人内容请拆成反打、近景或空场景镜头。'
+                          'bare_characters 里的角色已经由空衣服模式确认不着衣物：只绑定身份图与场景图，'
+                          '不要为它们选择服装，也不要在画面里添加衣物、盔甲、法器或饰品。'),
     }
 
 
@@ -133,7 +198,15 @@ def storyboard_preproduction(prep):
 
 def shot_prompt_preproduction(prep):
     """Prompt compilation must see any physical stitched references selected by the caller."""
-    return {**prep,'asset_binding_contract':storyboard_asset_contract(prep)}
+    assets={asset_id:({**spec,'notes':CONDENSED_REFERENCE_NOTE}
+                      if _is_condensed_character_reference(spec,prep.get('assets',{})) else spec)
+            for asset_id,spec in prep.get('assets',{}).items()}
+    return {**prep,'assets':assets,'asset_binding_contract':storyboard_asset_contract(prep)}
+
+
+# Reviewed identity-plus-costume boards are stitched by the local image tool. Models only need to
+# know they show one character wearing one set of clothes; the board layout stays out of prompts.
+CONDENSED_REFERENCE_NOTE='同一角色的已确认人物参考：输出为这个人物穿着他的这套服装。'
 
 
 def _is_condensed_character_reference(spec,assets):
@@ -177,7 +250,7 @@ def plan_board_asset_packing(board,prep):
     assets=prep['assets'];result={}
     for shot in board.shots:
         ids=list(dict.fromkeys(shot.assets))
-        needed=max(0,len(ids)-3)
+        needed=max(0,len(ids)-MAX_REFERENCE_IMAGES)
         if not needed:continue
         pairs=[]
         for character_id in ids:
@@ -200,10 +273,10 @@ def validate_board(board,prep,packing=None):
             issues.append(f'{shot.id} 的 assets 为空，必须按 asset_binding_contract 绑定参考图。')
             continue
         packed_count=len(ids)-len(packing.get(shot.id,[]))
-        if packed_count>3:
+        if packed_count>MAX_REFERENCE_IMAGES:
             labels='、'.join(_asset_label(asset_id,assets) for asset_id in ids)
-            issues.append(f'{shot.id} 的 assets 完整绑定为 {len(ids)} 张（{labels}），人物服装条件拼接后仍需 {packed_count} 张，'
-                          '当前模型每镜最多接收 3 张；多人内容必须拆成单人反打或空场景镜头。')
+            issues.append(f'{shot.id} 的 assets 完整绑定为 {len(ids)} 张（{labels}），仍需 {packed_count} 张，'
+                          f'视频模型每镜最多接收 {MAX_REFERENCE_IMAGES} 张参考图；多人内容必须拆成单人反打、近景或空场景镜头。')
         duplicates=list(dict.fromkeys(asset_id for index,asset_id in enumerate(ids) if asset_id in ids[:index]))
         if duplicates:
             issues.append(f'{shot.id} 的 assets 重复绑定：'+ '、'.join(duplicates)+'。每个 ID 只能出现一次。')
@@ -235,14 +308,6 @@ def validate_board(board,prep,packing=None):
                 choices='、'.join(costumes) or '当前没有可用服装图'
                 issues.append(f'{shot.id} 已绑定角色“{spec.get("name") or character_id}”但缺少对应服装；'
                               f'请从该角色服装中选择一张：{choices}。')
-        for asset_id in selected:
-            spec=assets[asset_id]
-            if not _is_condensed_character_reference(spec,assets):continue
-            expanded=list(dict.fromkeys([*(item for item in selected if item!=asset_id),
-                spec['identity_asset_id'],spec['costume_asset_id']]))
-            if len(expanded)<=3:
-                issues.append(f'{shot.id} 未达到三图上限却使用了人物服装拼接参考板 {asset_id}；'
-                              '请直接绑定原人物身份图与服装图，只有超限时才允许拼接。')
         if not unknown:
             try:validate_shot_identities(selected,assets)
             except HTTPException as exc:issues.append(f'{shot.id} 人物与服装映射错误：{exc.detail}')
@@ -250,7 +315,7 @@ def validate_board(board,prep,packing=None):
 
 
 def add_condensed_reference_alternatives(db,pid,pairs):
-    """Materialize only the identity+costume pairs selected by an over-limit shot plan."""
+    """Stitch over-limit identity+costume pairs with the local image tool, never with a model."""
     config=db.get(Record,'prep_'+pid)
     if not config:raise HTTPException(409,'前期素材配置不存在，不能制作条件拼接参考。')
     assets=dict(config.data['assets']);versions=dict(config.data['versions'])
@@ -277,7 +342,7 @@ def add_condensed_reference_alternatives(db,pid,pairs):
     _,token=snapshot(db,pid)
     gate=db.get(Record,'prep_gate_'+pid)
     data={'stamp':token,'assets':dict(versions),'mode':'reference_images',
-          'note':'保留已确认原图；仅为实际超过三图上限的镜头添加本地人物服装拼接参考板。'}
+          'note':f'保留已确认原图；仅为实际超过每镜 {MAX_REFERENCE_IMAGES} 图上限的镜头，用本地图像工具拼接人物身份与服装参考板，不调用任何生图或改图接口。'}
     if gate and gate.data.get('history'):data['history']=gate.data['history']
     if gate:gate.data=data;gate.version+=1
     else:db.add(Record(id='prep_gate_'+pid,kind='preproduction_gate',data=data))
@@ -306,8 +371,6 @@ def repair_board_assets(board,prep):
     """Repair only unambiguous reference-list mistakes; never infer creative content."""
     repaired=board.model_copy(deep=True);changes=[]
     assets=prep['assets']
-    condensed={(spec.get('identity_asset_id'),spec.get('costume_asset_id')):asset_id
-               for asset_id,spec in assets.items() if _is_condensed_character_reference(spec,assets)}
     for shot in repaired.shots:
         unique=list(dict.fromkeys(shot.assets))
         if unique!=shot.assets:
@@ -333,7 +396,7 @@ def repair_board_assets(board,prep):
                 changes.append({'shot_id':shot.id,'action':'bind_unique_character_costume',
                                 'asset_id':costumes[0],'identity_asset_id':character_id})
         has_scene=any(aid in prep['assets'] and prep['assets'][aid]['role']=='scene' for aid in unique)
-        if not has_scene and len(unique)<3:
+        if not has_scene and len(unique)<MAX_REFERENCE_IMAGES:
             location=shot.scene.strip();matches=[]
             for aid,spec in prep['assets'].items():
                 name=spec.get('name','').strip()
@@ -341,22 +404,40 @@ def repair_board_assets(board,prep):
                 if spec.get('role')=='scene' and name and (location==name or suffix and suffix in '，,、；;：:（( '):matches.append(aid)
             if len(matches)==1:
                 unique.append(matches[0]);changes.append({'shot_id':shot.id,'action':'bind_unique_named_scene','asset_id':matches[0]})
-        if len(unique)>3:
-            pairs=[]
+        # Reference images are attached as reviewed project assets; a locally stitched character
+        # board is expanded back into its identity and costume sources instead of being merged again.
+        expanded=[]
+        for asset_id in unique:
+            spec=assets.get(asset_id,{})
+            if _is_condensed_character_reference(spec,assets):
+                sources=[spec['identity_asset_id'],spec['costume_asset_id']]
+                expanded.extend(source for source in sources if source not in expanded and source in assets)
+                changes.append({'shot_id':shot.id,'action':'expand_identity_costume_reference',
+                                'asset_id':asset_id,'source_asset_ids':sources})
+            elif asset_id not in expanded:
+                expanded.append(asset_id)
+        unique=expanded
+        # Only when the reviewed list exceeds one request's image capacity does the caller
+        # stitch a character's identity and costume with the local image tool; the image
+        # generation API is never asked to merge, and no picture is regenerated.
+        condensed={(spec.get('identity_asset_id'),spec.get('costume_asset_id')):asset_id
+                   for asset_id,spec in assets.items() if _is_condensed_character_reference(spec,assets)}
+        if len(unique)>MAX_REFERENCE_IMAGES:
+            candidates=[]
             for character_id in unique:
                 spec=assets.get(character_id,{})
                 if spec.get('role')!='character' or spec.get('costume_asset_id'):continue
                 costumes=[costume_id for costume_id in unique if assets.get(costume_id,{}).get('role')=='costume'
                           and assets[costume_id].get('identity_asset_id')==character_id]
                 if len(costumes)==1 and (character_id,costumes[0]) in condensed:
-                    pairs.append((min(unique.index(character_id),unique.index(costumes[0])),character_id,costumes[0],condensed[(character_id,costumes[0])]))
-            for _,character_id,costume_id,reference_id in sorted(pairs):
-                if len(unique)<=3:break
+                    candidates.append((min(unique.index(character_id),unique.index(costumes[0])),character_id,costumes[0],condensed[(character_id,costumes[0])]))
+            for _,character_id,costume_id,reference_id in sorted(candidates):
+                if len(unique)<=MAX_REFERENCE_IMAGES:break
                 position=min(unique.index(character_id),unique.index(costume_id))
                 unique=[asset_id for asset_id in unique if asset_id not in (character_id,costume_id)]
                 unique.insert(position,reference_id)
                 changes.append({'shot_id':shot.id,'action':'pack_identity_costume_reference','asset_id':reference_id,
-                    'source_asset_ids':[character_id,costume_id]})
+                    'source_asset_ids':[character_id,costume_id],'stitched_by':'local_image_tool'})
         shot.assets=unique
     return repaired,changes
 
@@ -367,6 +448,10 @@ class AssetSpec(BaseModel):
     identity_asset_id:str|None=None
     costume_asset_id:str|None=None
     requires_costume:bool=False
+    # Character -> costume -> set always runs: a character either owns a garment sheet or was
+    # explicitly answered with the empty-clothing mode.
+    clothing_mode:Literal['garment','bare']|None=None
+    clothing_note:str|None=Field(default=None,max_length=800)
 class Setup(BaseModel):
     expected_version:int=0
     style:str=Field(min_length=10,max_length=2000)
@@ -381,11 +466,9 @@ def get(pid:str):
         try:
             _,token=snapshot(db,pid);ready(db,pid);passed=True;reason='参考图已确认，可编写组合分镜'
         except HTTPException as e:reason=e.detail
-        jobs=[t for t in db.scalars(select(Task).where(Task.kind=='image').order_by(Task.created.desc())) if t.payload.get('preproduction_id')==pid and t.payload.get('preproduction_stamp')==token]
         previous=db.get(Record,'prep_'+p.data.get('restart_of','')) if p.data.get('restart_of') else None
         return {'previous_config':previous.data if previous else None,'config':record_dict(r) if r else None,'stamp':token,'approved':passed,'reason':reason,
-            'assets':[record_dict(a) for a in db.scalars(select(Record).where(Record.kind=='asset')) if a.data.get('media') and a.data.get('status')=='approved'],
-            'trials':[{'task':task_dict(t),'asset':record_dict(a) if (a:=db.get(Record,t.result.get('asset_id',''))) else None} for t in jobs]}
+            'assets':[record_dict(a) for a in db.scalars(select(Record).where(Record.kind=='asset')) if a.data.get('media') and a.data.get('status')=='approved']}
 
 @router.post('/{pid}')
 def save(pid:str,body:Setup):
@@ -412,7 +495,8 @@ def save(pid:str,body:Setup):
                 identity_spec=body.assets.get(spec.identity_asset_id or '')
                 if spec.role!='costume' or not identity or not identity_spec or identity_spec.role!='character' or a.data.get('asset_spec',{}).get('character_ref')!=identity.data.get('asset_spec',{}).get('character_id'):
                     raise HTTPException(422,'独立服装必须绑定本次选定的正确人物身份图。')
-            if a.data.get('asset_kind') in ('dressed_character','character_costume_reference'):
+            # 局部拼接参考（人物身份＋独立服装）是当前流程的产物，必须保留真实的依赖关系。
+            if a.data.get('asset_kind')=='character_costume_reference':
                 spec=body.assets[aid]
                 if spec.role!='character' or spec.identity_asset_id!=a.data.get('identity_asset_id') or spec.costume_asset_id!=a.data.get('costume_asset_id'):
                     raise HTTPException(422,'人物服装组合参考必须保留真实的身份和服装依赖，不能重新绑定。')
@@ -423,6 +507,11 @@ def save(pid:str,body:Setup):
             asset=db.get(Record,aid)
             if spec.role!='character' or not asset or asset.data.get('asset_kind')!='character_sheet':continue
             has_costume=any(item.role=='costume' and item.identity_asset_id==aid for item in body.assets.values())
+            if spec.clothing_mode=='bare':
+                # The empty-clothing mode already answered the costume stage for this character.
+                if has_costume:raise HTTPException(422,f'「{spec.name}」已确认为空衣服模式，不能同时绑定服装图。')
+                spec.requires_costume=False
+                continue
             costume_mode=asset.data.get('asset_spec',{}).get('costume_mode','required')
             if costume_mode=='required' and not has_costume:
                 raise HTTPException(422,'人物身份参考缺少对应的独立服装图。')
@@ -438,41 +527,8 @@ def save(pid:str,body:Setup):
         else:r=Record(id='prep_'+pid,kind='preproduction',data=data);db.add(r)
         db.flush();return record_dict(r)
 
-class Trial(BaseModel):
-    stamp:str
-    assets:list[str]=Field(min_length=2,max_length=3)
-    prompt:str=Field(min_length=5,max_length=1500)
-    confirm_paid:bool=False
-
-@router.post('/{pid}/trial')
-def trial(pid:str,body:Trial):
-    with Session() as db:
-        run=db.get(Record,'creative_'+pid)
-        if run and run.data.get('direct_reference_inputs'):raise HTTPException(409,'当前流程不再创建试拍，直接使用基础参考图生成分镜。')
-    if not body.confirm_paid:raise HTTPException(422,'请确认试拍生图费用。')
-    cfg=settings()
-    if not cfg.get('image_paid_enabled',cfg['paid_enabled']) or not cfg['image_configured']:raise HTTPException(422,'请配置生图接口。')
-    with Session.begin() as db:
-        project(db,pid);r,token=snapshot(db,pid)
-        if token!=body.stamp:raise HTTPException(409,'设定已变更。')
-        if len(set(body.assets))!=len(body.assets) or not set(body.assets)<=set(r.data['assets']):raise HTTPException(422,'参考图必须来自本次选角与影棚。')
-        if not {'character','scene'}<={r.data['assets'][a]['role'] for a in body.assets}:raise HTTPException(422,'试拍必须同时包含演员与影棚。')
-        refs=[db.get(Record,a) for a in body.assets]
-        t=Task(id=uid('image'),kind='image',payload={'mode':'live','preproduction_id':pid,'preproduction_stamp':token,'reference_ids':body.assets,
-            'reference_media':[a.data['media'] for a in refs],'image_model':REFERENCE_IMAGE_MODEL,
-            'image_inference_steps':REFERENCE_IMAGE_STEPS,'title':'定装与影棚试拍',
-            **render_node('scene_trial',{'style':r.data['style'],'references':json.dumps([r.data['assets'][a] for a in body.assets],ensure_ascii=False),'requirements':body.prompt})})
-        db.add(t);db.flush();return task_dict(t)
-
-class Approve(BaseModel):
-    stamp:str
-    asset_ids:list[str]=Field(min_length=1,max_length=30)
-    note:str=Field(min_length=10,max_length=1000)
-    confirm:bool=False
-
-
 def approve_references(pid,stamp):
-    """Lock already confirmed character/scene references without generating trial images."""
+    """Lock the confirmed character and scene references that the storyboard will use."""
     with Session.begin() as db:
         project(db,pid);references,token=snapshot(db,pid)
         if stamp!=token:raise HTTPException(409,'参考图已变化，请重新确认。')
@@ -486,21 +542,3 @@ def approve_references(pid,stamp):
         else:db.add(Record(id='prep_gate_'+pid,kind='preproduction_gate',data=data))
         db.add(Record(id=uid('audit'),kind='audit',data={'target':pid,'action':'reference_inputs_locked','asset_ids':list(data['assets']),'stamp':token}))
     return {'approved':True,'mode':'reference_images'}
-
-@router.post('/{pid}/approve')
-def approve(pid:str,body:Approve):
-    if not body.confirm:raise HTTPException(422,'请确认角色、服装、比例、空间和画风。')
-    with Session.begin() as db:
-        project(db,pid);r,token=snapshot(db,pid)
-        if token!=body.stamp:raise HTTPException(409,'设定已变更。')
-        versions={};covered=set()
-        for aid in body.asset_ids:
-            a=db.get(Record,aid);t=db.get(Task,a.data.get('source_task','')) if a else None
-            if not a or a.data.get('status')!='approved' or not t or t.payload.get('preproduction_id')!=pid or t.payload.get('preproduction_stamp')!=token:raise HTTPException(422,'试拍必须来自当前设定，并先审核图片。')
-            versions[aid]=a.version;covered.update(t.payload['reference_ids'])
-        if not set(r.data['assets'])<=covered:raise HTTPException(422,'试拍需要覆盖所有选定演员、影棚及道具；可分组生成。')
-        gate=db.get(Record,'prep_gate_'+pid);data={'stamp':token,'assets':versions,'note':body.note}
-        if gate and gate.data.get('history'):data['history']=gate.data['history']
-        if gate:gate.data=data;gate.version+=1
-        else:db.add(Record(id='prep_gate_'+pid,kind='preproduction_gate',data=data))
-        return {'approved':True}

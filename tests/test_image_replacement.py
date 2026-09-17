@@ -39,7 +39,7 @@ def test_consecutive_edits_replace_current_card_and_reference_latest_image(creat
     assert creative.post('/api/author/projects/back-work/feedback',json={'task_id':first['task']['id'],'text':'修改旧版本','confirm_paid':True}).status_code==409
 
 
-@pytest.mark.parametrize('kind,label',[('character_sheet','人物身份参考图'),('costume_sheet','服装参考图'),('scene_sheet','场景参考图'),('dressed_character','定装参考图')])
+@pytest.mark.parametrize('kind,label',[('character_sheet','人物身份参考图'),('costume_sheet','服装参考图'),('scene_sheet','场景参考图')])
 def test_existing_image_completion_messages_describe_reference_purpose(kind,label):
     with Session.begin() as db:
         task=Task(id='old-completion',kind='image',status='completed',payload={'asset_kind':kind},message='关键帧已保存，请审核后用作视频首帧')

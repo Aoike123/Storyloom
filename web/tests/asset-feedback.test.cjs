@@ -43,6 +43,18 @@ test('unavailable feedback actions explain the specific blocking condition',()=>
   }
 });
 
+test('the studio page owns the single permission control for every asset card',()=>{
+  const props={...base,showPermission:false};
+  const tree=AssetFeedback(props);
+  assert.equal(tree.props.children.some(child=>child?.props?.className?.includes('asset-feedback-permission')),false);
+  const html=renderToStaticMarkup(React.createElement(AssetFeedback,props));
+  assert.doesNotMatch(html,/type="checkbox"/);
+  assert.doesNotMatch(html,/本卡片的模型调用许可/);
+  assert.match(html,/请先开启本页的模型调用许可/);
+  assert.equal(button(tree).props.disabled,true);
+  assert.equal(button(AssetFeedback({...props,paid:true})).props.disabled,false);
+});
+
 test('explicit permission survives reload in the same tab and stays scoped to the work',()=>{
   const values=new Map();const sessionStorage={getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value)};
   const first=load('useModelPermission.ts',{sessionStorage});

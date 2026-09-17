@@ -18,7 +18,7 @@ def image_call(monkeypatch):
     return cfg
 
 
-@pytest.mark.parametrize('status,category,summary',[(402,'balance','余额'),(451,'rejected','不能判定'),(429,'rate_limit','等待')])
+@pytest.mark.parametrize('status,category,summary',[(402,'balance','余额'),(451,'content_policy','不能判定'),(429,'rate_limit','等待')])
 def test_rejection_is_recorded_once_with_diagnostics_and_terminal_activity(image_call,monkeypatch,client,status,category,summary):
     calls=[]
     def post(*args,**kwargs):
@@ -42,6 +42,21 @@ def test_rejection_is_recorded_once_with_diagnostics_and_terminal_activity(image
     assert public['provider_error']==error
 
 
+def test_a_content_policy_rejection_says_the_prompt_is_the_problem():
+    """HTTP 451 is a content decision, not a balance problem: the prompt has to change."""
+    from backend.image_errors import describe,error_message,needs_prompt_edit
+    error={**describe(451),'source':'response','provider_message':'It appears to contain prohibited or sensitive content.'}
+    assert error['category']=='content_policy'
+    assert '提示词' in error['summary'] and '违规' in error['summary']
+    message=error_message(error)
+    assert '修改提示词' in message and '不能判定余额不足' in message
+    # Only this failure repeats until the author rewrites the text.
+    assert needs_prompt_edit(error) is True
+    for other in (describe(402),describe(429),describe(503)):
+        assert needs_prompt_edit(other) is False
+    assert needs_prompt_edit(None) is False
+
+
 def test_only_safe_message_fields_are_persisted_and_exposed(image_call,monkeypatch,client):
     key=image_call['IMAGE_API_KEY']
     response=httpx.Response(451,json={'error':{'code':'policy_rejection','message':
@@ -63,11 +78,38 @@ def test_non_json_errors_and_empty_messages_have_safe_fallbacks():
     assert not response_error(httpx.Response(451,json={'error':{'message':{'unexpected':'shape'}}}),{})['provider_message']
 
 
-def test_legacy_diagnostics_do_not_invent_response_or_retry_uncertain_results():
+def test_a_failure_without_a_saved_response_is_reported_as_no_diagnosis():
+    """没有保存供应商响应的失败只显示任务自己的说明，不推断原因，也不提供重试入口。"""
     for status in (402,451,503):
         with Session.begin() as db:
-            task=Task(id='legacy-'+str(status),kind='image',status='needs_review',message=f'生图接口返回 HTTP {status}，未自动重新提交。',payload={},result={})
+            task=Task(id='bare-'+str(status),kind='image',status='needs_review',
+                      message=f'生图接口返回 HTTP {status}，未自动重新提交。',payload={},result={})
             db.add(task);db.flush()
-            error=task_dict(task)['provider_error']
-            assert error['source']=='legacy_status' and not error['provider_message'] and not error['request_id']
-            assert task.result=={} and can_retry(task)==(status in (402,451))
+            assert task_dict(task)['provider_error'] is None
+            assert task.result=={} and can_retry(task) is False
+
+
+def test_a_call_refused_before_submission_is_repairable_without_a_provider_response():
+    """A picture stopped before submission has no response, and must still be generatable again."""
+    from backend.image_errors import error_message,note_refusal
+    reason='运营方提供的该模型 Key 今日已被供应商暂停。请填写自己的 API Key 继续。'
+    with Session.begin() as db:
+        db.add(Task(id='refused-image',kind='image',status='running',payload={'title':'公司急救培训室'},result={}))
+        db.add(Task(id='refused-video',kind='video',status='running',payload={},result={}))
+    note_refusal('refused-image',reason)
+    note_refusal('refused-video',reason)
+    with Session.begin() as db:
+        image=db.get(Task,'refused-image');image.status='needs_review'
+        error=task_dict(image)['provider_error']
+        # Video diagnostics stay out of an image-only repair path.
+        assert db.get(Task,'refused-video').result=={}
+    assert error['source']=='not_submitted' and error['http_status'] is None
+    assert error['provider_message']=='' and error['provider_code']=='' and error['request_id']==''
+    assert error['advice']==reason
+    # The interface shows the reason without inventing an HTTP status or a provider answer.
+    assert error_message(error)==f'这次生图没有提交给供应商。{reason}'
+    with Session() as db:assert can_retry(db.get(Task,'refused-image')) is True
+    # A picture that already has its file is never generated again, refusal recorded or not.
+    with Session.begin() as db:
+        done=db.get(Task,'refused-image');done.status='completed';done.result={**done.result,'media':'/media/refused-image.png'}
+    with Session() as db:assert can_retry(db.get(Task,'refused-image')) is False

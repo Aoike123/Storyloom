@@ -25,4 +25,7 @@ USER storyloom
 EXPOSE 8000
 STOPSIGNAL SIGTERM
 
-CMD ["python", "-m", "uvicorn", "backend.production_app:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
+# Only the compose bridge may set X-Forwarded-For. Trusting "*" let any client spoof its own
+# address, which also defeated the per-IP request limits.
+ENV STORYLOOM_TRUSTED_PROXY="${STORYLOOM_TRUSTED_PROXY:-172.28.0.0/16}"
+CMD ["sh", "-c", "exec python -m uvicorn backend.production_app:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=\"${STORYLOOM_TRUSTED_PROXY}\""]

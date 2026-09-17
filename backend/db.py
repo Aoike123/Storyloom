@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 
 from .environment import load_bootstrap_environment
-from sqlalchemy import JSON, Float, Integer, String, create_engine, delete, event, func, inspect, select, text
+from sqlalchemy import JSON, Float, Integer, String, create_engine, event, func, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -110,6 +110,17 @@ def enforce_public_task_capacity(db, _flush_context, _instances):
 def uid(prefix):
     return f'{prefix}_{uuid.uuid4().hex[:16]}'
 
+
+# Append-only histories are capped so a long-running demo cannot grow one record without bound.
+HISTORY_LIMIT = 40
+EVENT_LIMIT = 200
+
+
+def bounded(items, item, limit):
+    """Keep the newest ``limit`` entries of a growing list."""
+    return [*list(items or []), item][-limit:]
+
+
 def record_dict(row):
     return {'id': row.id, 'version': row.version, **row.data}
 
@@ -152,19 +163,13 @@ def task_dict(row):
     preview=preview if isinstance(preview,str) and preview.startswith('/media/') else None
     return {'id': row.id, 'kind': row.kind, 'status': row.status, 'session_id': row.session_id,
             'production_phase':row.payload.get('production_phase') or row.payload.get('phase'),
+            'production_node':row.payload.get('production_node'),
             'revision': row.revision, 'progress': row.progress, 'message': completed_message(row.payload) if row.kind=='image' and row.status=='completed' else row.message,
             'result': row.result, 'created': row.created, 'attempts': row.attempts,
             'mode': row.payload.get('mode', 'demo'), 'label': row.payload.get('title') or row.payload.get('shot_id'),
             'generation':generation_debug(row),'provider_error':task_error(row),'skill_calls':trace.data['calls'] if trace else [],
-            'activity': activity_data(row),'preview':preview,'revision_of':row.payload.get('revision_of')}
+            'activity': activity_data(row),'preview':preview,'revision_of':row.payload.get('revision_of'),
+            'failure_code':row.result.get('failure_code') if isinstance(row.result,dict) else None}
 
 def init_db():
     Base.metadata.create_all(engine)
-    # Retire old sign-in data while preserving stories, media, jobs, and attribution.
-    with Session.begin() as db:
-        db.execute(delete(Record).where(Record.kind.in_(['author_account', 'author_session'])))
-        for row in db.scalars(select(Record).where(Record.kind.in_(['author_project', 'story_source', 'asset']))):
-            field = 'scope' if row.kind == 'asset' else 'owner'
-            if field in row.data:
-                row.data = {k: v for k, v in row.data.items() if k != field}
-    (DATA / 'admin-access.txt').unlink(missing_ok=True)
