@@ -31,3 +31,5 @@
 .catalog-import.is-open .catalog-import-icon{transform:rotate(45deg)}
 .reader-story-card[data-enter]{animation:card-enter var(--motion-soft) var(--ease-out)}
 @keyframes card-enter{from{opacity:0;transform:translateY(4px)}}
+.reader-exit-clip{min-width:0;pointer-events:none;animation:card-exit var(--motion-hover) var(--ease-out) forwards}
+@keyframes card-exit{to{opacity:0}}
