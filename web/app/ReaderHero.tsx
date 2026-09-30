@@ -109,7 +109,7 @@ export default function ReaderHero({items, loading, activeId, onActiveChange, on
                   onOpen(item, focusKey);
                 }
               }}>
-              <div className="reader-cover-visual">
+              <div className="reader-cover-visual"><i className="reader-cover-halo" aria-hidden="true"/>
                 <ReaderArtwork src={visible ? artwork : undefined} order={index} eager={distance <= 1} priority={offset === 0} showNumber={false}/>
                 {playable && <ReaderCreatorAvatar creator={item.release?.creator} className="reader-cover-creator"/>}
                 <span className="reader-cover-status">{playable ? '公开放映' : '等待创作'}</span>

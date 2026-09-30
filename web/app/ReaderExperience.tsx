@@ -10,6 +10,7 @@ import ReaderHero from './ReaderHero';
 import ReaderStoryGrid from './ReaderStoryGrid';
 import StoryImport from './StoryImport';
 import {canWatch, groupProductionsByStory, productionLink, reducedMotion} from './reader-types';
+import {useReveal} from './useReveal';
 import {rankByProduction} from './reader-carousel';
 import type {Catalog, CatalogItem, ReaderBranch, Release, ReleaseEntry} from './reader-types';
 import './reader-catalog.css';
@@ -41,6 +42,7 @@ export default function ReaderExperience() {
   const preloadRef = useRef<HTMLVideoElement>(null), preloadReady = useRef(new Set<string>()), bridgeTimer = useRef(0);
   const [bridgeEntry, setBridgeEntry] = useState<ReleaseEntry | null>(null);
   const [hintPulse, setHintPulse] = useState(false), hintedFor = useRef('');
+  const [shelfRef, shelfRevealed] = useReveal<HTMLElement>();
   const catalogRef = useRef<Catalog | null>(null), currentStory = useRef<string | null>(null);
   const requestVersion = useRef(0);
   const readerSession = useRef(''), manifestBranch = useRef(''), playbackIndex = useRef(0);
@@ -464,7 +466,7 @@ export default function ReaderExperience() {
     </nav>
     {!story ? <div className="reader-catalog-page">
       <ReaderHero items={carouselItems} loading={loading || (!!catalog?.items.length && !carouselItems.length)} activeId={activeId} onActiveChange={setActiveId} onOpen={openItem} inviting={firstRun} onImport={openImport}/>
-      <section id="reader-shelf" className="reader-shelf">
+      <section id="reader-shelf" ref={shelfRef} className={"reader-shelf reveal" + (shelfRevealed ? ' is-revealed' : '')}>
         <div className="reader-section-title catalog-market-head">
           <div className="catalog-market-copy"><span className="reader-kicker">STORY MARKET</span><h2>故事市场</h2>
             <p>观看公开版本并临时改写，或从同一篇原作开始，制作你的完整漫剧。</p>
