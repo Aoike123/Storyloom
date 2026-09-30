@@ -3,6 +3,11 @@ import {useEffect, useRef, useState} from 'react';
 import {FileUp, PenLine, X} from 'lucide-react';
 import './story-import.css';
 
+// The title field promises 「不填则用正文首行」 — keep that promise here.
+export function firstLineTitle(text: string) {
+  return text.split('\n').map(line => line.trim()).find(Boolean)?.slice(0, 200);
+}
+
 export default function StoryImport({onImported, open, onClosed}:{onImported?:(storyId?:string)=>void; open:boolean; onClosed?:()=>void}) {
   const [tab, setTab] = useState<'paste' | 'file'>('paste');
   const [title, setTitle] = useState('');
@@ -36,7 +41,7 @@ export default function StoryImport({onImported, open, onClosed}:{onImported?:(s
       let d: any;
       if (tab === 'paste') {
         if (!content.trim()) { setError('请粘贴故事正文。'); setBusy(false); return; }
-        const r = await fetch('/api/stories/import', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({title: title.trim() || undefined, content})});
+        const r = await fetch('/api/stories/import', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({title: title.trim() || firstLineTitle(content) || undefined, content})});
         d = await r.json();
         if (!r.ok) throw Error(typeof d.detail === 'string' ? d.detail : '导入失败，请重试。');
         after(d.story?.id, d.story?.title || title.trim() || '这个故事');
