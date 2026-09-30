@@ -48,18 +48,22 @@ export function TaskProgress({task, detailed = false}: {task: ProgressTask; deta
   const active = activeStatuses.includes(task.status);
   const problem = problemStatuses.includes(task.status);
   const done = task.status === 'completed';
-  const value = done ? 100 : !active || task.status === 'queued' ? 0 : (task.progress || undefined);
-  return <div className={'task-progress' + (problem ? ' has-problem' : '')}>
-    <div className="feedback-title"><span>{active ? <LoaderCircle size={15} className="feedback-spin" /> : problem ? <CircleAlert size={15} /> : done ? <Check size={15} /> : <Sparkles size={15} />}{taskNames[task.kind] || '制作任务'}</span><small>{statusNames[task.status] || task.status}</small></div>
-    {task.message && <p>{task.message}</p>}
+  // One waiting mode at a time: the bar when the model reports a value, the stage text when it
+  // does not. The card itself breathes while active; the check plays once when work completes.
+  const hasValue = active && typeof task.progress === 'number';
+  const bar = <ProgressBar value={done ? 100 : task.progress} label={(taskNames[task.kind] || '任务') + '阶段进度'} />;
+  const waitingMode = active ? (hasValue ? bar : <p>{task.message || (task.status === 'queued' ? '已在队列中，等待开始处理。' : '正在处理…')}</p>) : task.message ? <p>{task.message}</p> : null;
+  return <div className={'task-progress' + (active ? ' is-active' : '') + (problem ? ' has-problem' : '')}>
+    <div className="feedback-title"><span key={task.status}>{active ? null : problem ? <CircleAlert size={15} /> : done ? <Check size={15} className="check-in" /> : <Sparkles size={15} />}{taskNames[task.kind] || '制作任务'}</span><small>{statusNames[task.status] || task.status}</small></div>
+    {waitingMode}
+    {done ? bar : null}
     <ProviderError error={task.provider_error}/>
-    <ProgressBar value={value} label={(taskNames[task.kind] || '任务') + '阶段进度'} />
   </div>;
 }
 
 export function InteractionFeedback({busy, text, title = '创作助手', error = false}: {busy?: boolean; text: string; title?: string; error?: boolean}) {
   if (!busy && !text) return null;
-  return <div className={'interaction-feedback' + (error ? ' has-problem' : '')} role={error ? 'alert' : 'status'} aria-live="polite" aria-atomic="true" aria-busy={busy || undefined}>
+  return <div className={'interaction-feedback' + (busy ? ' is-busy' : '') + (error ? ' has-problem' : '')} role={error ? 'alert' : 'status'} aria-live="polite" aria-atomic="true" aria-busy={busy || undefined}>
     <div className="feedback-title"><span>{busy ? <LoaderCircle size={16} className="feedback-spin" /> : error ? <CircleAlert size={16} /> : <Sparkles size={16} />}{title}</span><small>{busy ? '进行中' : error ? '需要处理' : '已回复'}</small></div>
     <p>{text}</p>
   </div>;

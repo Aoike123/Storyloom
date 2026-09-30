@@ -1,6 +1,6 @@
 'use client';
 import {useEffect, useState} from 'react';
-import {Check, CircleAlert, LoaderCircle, Sparkles} from 'lucide-react';
+import {Check, CircleAlert, Sparkles} from 'lucide-react';
 import type {ProgressTask} from './ProgressFeedback';
 import GenerationPrompt from './GenerationPrompt';
 import {SkillCallTrace} from './NodeSkills';
@@ -43,8 +43,8 @@ export default function TaskActivity({task, detailed = false}: {task: ProgressTa
   const streamKey = task.id + ':' + (activity.call_started_at || activity.started_at);
   const drafts = <StreamRegion active={active&&detailed} streamKey={streamKey+':drafts'} className={'activity-drafts'+(!activity.items?.length?' is-empty':'')} aria-label="逐步返回的创作内容"><div className="activity-draft-list">{activity.items?.map((item, index) => <article key={index}><strong>{item.title}</strong><p>{item.text || emptyDraft}</p></article>)}</div></StreamRegion>;
 
-  return <section className={'task-progress activity-progress' + (problem ? ' has-problem' : '')} aria-label={activity.title + '进展'}>
-    <div className="feedback-title"><span>{active ? <LoaderCircle size={15} className="feedback-spin"/> : done ? <Check size={15}/> : retired ? <Sparkles size={15}/> : <CircleAlert size={15}/>}<strong>{activity.title}</strong></span><small>{active ? (task.status === 'queued' ? '已等待 ' : '已用时 ') + elapsed : done ? '已完成' : superseded ? '已失效 · 历史记录' : cancelled ? '已停止' : '需处理'}</small></div>
+  return <section className={'task-progress activity-progress' + (active ? ' is-active' : '') + (problem ? ' has-problem' : '')} aria-label={activity.title + '进展'}>
+    <div className="feedback-title"><span key={task.status}>{active ? null : done ? <Check size={15} className="check-in"/> : retired ? <Sparkles size={15}/> : <CircleAlert size={15}/>}<strong>{activity.title}</strong></span><small>{active ? (task.status === 'queued' ? '已等待 ' : '已用时 ') + elapsed : done ? '已完成' : superseded ? '已失效 · 历史记录' : cancelled ? '已停止' : '需处理'}</small></div>
     <p className="activity-status" role="status">{task.message || activity.message}</p>
     <ProviderError error={task.provider_error}/>
     <SkillCallTrace calls={task.skill_calls}/>
