@@ -12,11 +12,13 @@ const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.Comm
 const context={exports:{},require:name=>name.startsWith('./')?{default:()=>null}:require(name)};
 vm.runInNewContext(code,context);
 const {WorkProgress}=context.exports;
+// The rail also carries a decorative sliding marker; the step list is its <li> children only.
+const stepsOf=tree=>(Array.isArray(tree.props.children)?tree.props.children:[tree.props.children]).flat(1).filter(c=>c&&c.type==='li');
 
 test('completed steps are real buttons and navigate to the selected earlier step',()=>{
   const selected=[];
   const tree=WorkProgress({stage:'assets_review',viewedStage:'style',onStepSelect:step=>selected.push(step)});
-  const steps=tree.props.children;
+  const steps=stepsOf(tree);
   const first=steps[0].props.children,second=steps[1].props.children;
   assert.equal(first.type,'button');assert.equal(first.props.disabled,false);
   assert.equal(second.props.disabled,false);
@@ -32,12 +34,12 @@ test('completed steps are real buttons and navigate to the selected earlier step
 test('static displays remain static and navigation is disabled during a submission',()=>{
   assert.doesNotMatch(renderToStaticMarkup(React.createElement(WorkProgress,{stage:'assets_review'})),/<button/);
   const tree=WorkProgress({stage:'assets_review',disabled:true,onStepSelect:()=>{}});
-  assert.ok(tree.props.children.every(step=>step.props.children.props.disabled));
+  assert.ok(stepsOf(tree).every(step=>step.props.children.props.disabled));
 });
 
 test('production responsibilities are separate steps and later nodes stay locked',()=>{
   const tree=WorkProgress({stage:'storyboarding',onStepSelect:()=>{}});
-  const steps=tree.props.children;
+  const steps=stepsOf(tree);
   assert.equal(steps.length,9);
   const labels=context.exports.workStages.map(stage=>stage.name);
   // 确认情节发生在绘制任何参考图之前，所以它排在准备形象之前。
@@ -52,7 +54,7 @@ test('production responsibilities are separate steps and later nodes stay locked
 
 test('the episode decision is a step of its own, so the rail still shows where the author is',()=>{
   const tree=WorkProgress({stage:'episode_review',onStepSelect:()=>{}});
-  const steps=tree.props.children;
+  const steps=stepsOf(tree);
   assert.equal(steps[6].props.className,'is-current');
   assert.equal(steps[6].props['aria-current'],'step');
   // 已经有片段做完了，所以前面的步骤可以返回查看，后面的仍然锁着。
