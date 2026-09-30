@@ -1,5 +1,7 @@
+import ipaddress
 import time
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -55,16 +57,28 @@ async def storage_error(_request: Request, exc: StorageError):
     return JSONResponse({"detail": str(exc)}, status_code=422)
 
 
+def _loopback_origin(origin: str) -> bool:
+    """The workbench guard cares about *where* the page runs, not which port the
+    developer happened to pick: any loopback host is the local workbench."""
+    try:
+        host = urlsplit(origin).hostname
+    except ValueError:
+        return False
+    if not host:
+        return False
+    if host == 'localhost' or host.endswith('.localhost'):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 @app.middleware("http")
 async def local_only(request: Request, call_next):
     if request.method not in ["GET", "HEAD", "OPTIONS"]:
         origin = request.headers.get("origin")
-        if origin and origin not in [
-            "http://127.0.0.1:3000",
-            "http://localhost:3000",
-            "http://127.0.0.1:8000",
-            "http://localhost:8000",
-        ]:
+        if origin and not _loopback_origin(origin):
             return JSONResponse({"detail": "仅允许本地工作台发起操作"}, status_code=403)
     path = request.url.path
     response = await call_next(request)
