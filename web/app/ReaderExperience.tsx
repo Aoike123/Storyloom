@@ -38,6 +38,8 @@ export default function ReaderExperience() {
   const [versionChoice, setVersionChoice] = useState<Record<string, number>>({});
   const video = useRef<HTMLVideoElement>(null), input = useRef<HTMLTextAreaElement>(null);
   const continuePlay = useRef(false), openedLink = useRef(false), composing = useRef(false);
+  const preloadRef = useRef<HTMLVideoElement>(null), preloadReady = useRef(new Set<string>()), bridgeTimer = useRef(0);
+  const [bridgeEntry, setBridgeEntry] = useState<ReleaseEntry | null>(null);
   const catalogRef = useRef<Catalog | null>(null), currentStory = useRef<string | null>(null);
   const requestVersion = useRef(0);
   const readerSession = useRef(''), manifestBranch = useRef(''), playbackIndex = useRef(0);
@@ -71,6 +73,8 @@ export default function ReaderExperience() {
 
   function showStory(release: Release) {
     video.current?.pause();
+    window.clearTimeout(bridgeTimer.current); preloadRef.current?.pause();
+    setBridgeEntry(null); preloadReady.current.clear();
     readerSession.current = '';
     currentStory.current = release.id;
     requestVersion.current++;
@@ -86,6 +90,8 @@ export default function ReaderExperience() {
 
   function returnToCatalog() {
     video.current?.pause();
+    window.clearTimeout(bridgeTimer.current); preloadRef.current?.pause();
+    setBridgeEntry(null); preloadReady.current.clear();
     readerSession.current = '';
     currentStory.current = null;
     requestVersion.current++;
@@ -338,8 +344,8 @@ export default function ReaderExperience() {
     finishedEntry.current = finished;
     const following = playbackEntries[index + 1];
     if (following?.status === 'ready' || (following && !following.status)) {
-      continuePlay.current = true; waitingForNext.current = false;
-      safeTime.current = following.start || 0; setIndex(index + 1); setMoment(following.start || 0);
+      safeTime.current = following.start || 0;
+      handoffTo(index + 1, following, true);
     } else if (following?.status === 'pending') {
       waitingForNext.current = true; setPaused(true);
       setReply('下一段还在后台生成，准备好后会自动接着播放。'); setReplyError(false);
@@ -368,14 +374,48 @@ export default function ReaderExperience() {
     }
   }
 
+  function handoffTo(target: number, selected: ReleaseEntry, autoplay = false) {
+    const key = entryKey(selected, target);
+    const currentVideo = video.current;
+    const wasPlaying = autoplay || (!!currentVideo && !currentVideo.paused);
+    if (reducedMotion() || !preloadReady.current.has(key) || !preloadRef.current) {
+      pause(false); continuePlay.current = wasPlaying; waitingForNext.current = false;
+      setIndex(target); setMoment(selected.start || 0); return;
+    }
+    // Keep the current frame, blend the already-decoded next segment in over 180ms, then swap
+    // players underneath: exactly one element is ever producing sound (the old one is paused first).
+    pause(false);
+    const bridge = preloadRef.current, version = requestVersion.current;
+    bridge.muted = false; bridge.volume = currentVideo ? currentVideo.volume : 1;
+    bridge.currentTime = selected.start || 0;
+    setBridgeEntry(selected); bridge.play().catch(() => {});
+    window.clearTimeout(bridgeTimer.current);
+    bridgeTimer.current = window.setTimeout(() => {
+      bridge.pause();
+      const reached = bridge.currentTime;
+      setBridgeEntry(null);
+      if (requestVersion.current !== version) return;
+      resumeAt.current = reached; continuePlay.current = wasPlaying; waitingForNext.current = false;
+      setIndex(target); setMoment(selected.start || 0);
+    }, 180);
+  }
+
+  // A stale ready-mark (for a segment the preload no longer holds) must never promote the wrong video.
+  useEffect(() => {preloadReady.current.clear();}, [story?.id, manifestBranchId, entryKey(nextEntry, index + 1)]);
+
   function chooseEntry(target: number) {
     const selected = playbackEntries[target];
-    if (!selected || selected.status === 'pending' || selected.status === 'failed') return;
+    if (!selected || selected.status === 'pending' || selected.status === 'failed') {
+      if (selected && selected.status === 'pending' && target === index + 1) {
+        waitingForNext.current = true;
+        setSeekNotice('下一段还在后台生成，就绪后会自动衔接播放。');
+      }
+      return;
+    }
     if (forwardLocked && target > index) {
       setSeekNotice('分支生成后不能向前跳看，请按顺序观看。'); return;
     }
-    pause(false); continuePlay.current = false; waitingForNext.current = false;
-    setIndex(target); setMoment(selected.start || 0);
+    handoffTo(target, selected);
   }
 
   const visible = (catalog?.items || []).filter(item =>
@@ -515,12 +555,13 @@ export default function ReaderExperience() {
         </div>
       </header>
       <div className="reader-view-grid"><div>
-        <div className="reader-cinema"><video key={story.id + ':' + manifestBranchId + ':' + entryKey(entry)} ref={video}
+        <div className={'reader-cinema' + (bridgeEntry ? ' is-handoff' : '')}><video key={story.id + ':' + manifestBranchId + ':' + entryKey(entry)} ref={video}
           src={entry && entry.status !== 'pending' && entry.status !== 'failed' ? entry.media : undefined} controls playsInline preload="auto"
           onLoadedMetadata={loadedEntry} onSeeking={preventForwardSeek} onSeeked={() => {internalSeek.current = false;}}
           onPlay={startPlayback} onPause={() => {setPaused(true); setMoment(video.current?.currentTime ?? 0);}}
           onTimeUpdate={updatePlaybackTime} onEnded={finishEntry}/>
-          {nextEntry?.status === 'ready' && nextEntry.media && <video className="reader-video-preload" src={nextEntry.media} preload="auto" muted playsInline aria-hidden="true"/>}
+          {nextEntry?.status === 'ready' && nextEntry.media && <video ref={preloadRef} className={'reader-video-preload' + (bridgeEntry ? ' reader-video-bridge' : '')} src={nextEntry.media} preload="auto" muted playsInline aria-hidden="true"
+            onLoadedData={() => {if (nextEntry) preloadReady.current.add(entryKey(nextEntry, index + 1));}}/>}
         </div>
         {branch && <div className={'reader-branch-status is-' + branch.status} role="status" aria-live="polite">
           <span>{branchWorking && <LoaderCircle size={13} className="feedback-spin"/>}<strong>你的分支 · v{branch.branch_version}</strong></span>
