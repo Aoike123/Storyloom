@@ -2,7 +2,7 @@
 
 import Link from './ReaderLink';
 import {useEffect, useRef, useState} from 'react';
-import {ArrowRight, Clapperboard, LoaderCircle, Plus, Search, Sparkles} from 'lucide-react';
+import {ArrowRight, Check, Clapperboard, LoaderCircle, Plus, Search, Sparkles} from 'lucide-react';
 import {InteractionFeedback, workStages} from './ProgressFeedback';
 import ReaderArtwork from './ReaderArtwork';
 import ReaderCreatorAvatar from './ReaderCreatorAvatar';
@@ -40,6 +40,7 @@ export default function ReaderExperience() {
   const continuePlay = useRef(false), openedLink = useRef(false), composing = useRef(false);
   const preloadRef = useRef<HTMLVideoElement>(null), preloadReady = useRef(new Set<string>()), bridgeTimer = useRef(0);
   const [bridgeEntry, setBridgeEntry] = useState<ReleaseEntry | null>(null);
+  const [hintPulse, setHintPulse] = useState(false), hintedFor = useRef('');
   const catalogRef = useRef<Catalog | null>(null), currentStory = useRef<string | null>(null);
   const requestVersion = useRef(0);
   const readerSession = useRef(''), manifestBranch = useRef(''), playbackIndex = useRef(0);
@@ -74,7 +75,7 @@ export default function ReaderExperience() {
   function showStory(release: Release) {
     video.current?.pause();
     window.clearTimeout(bridgeTimer.current); preloadRef.current?.pause();
-    setBridgeEntry(null); preloadReady.current.clear();
+    setBridgeEntry(null); preloadReady.current.clear(); hintedFor.current = '';
     readerSession.current = '';
     currentStory.current = release.id;
     requestVersion.current++;
@@ -91,7 +92,7 @@ export default function ReaderExperience() {
   function returnToCatalog() {
     video.current?.pause();
     window.clearTimeout(bridgeTimer.current); preloadRef.current?.pause();
-    setBridgeEntry(null); preloadReady.current.clear();
+    setBridgeEntry(null); preloadReady.current.clear(); hintedFor.current = '';
     readerSession.current = '';
     currentStory.current = null;
     requestVersion.current++;
@@ -403,6 +404,18 @@ export default function ReaderExperience() {
   // A stale ready-mark (for a segment the preload no longer holds) must never promote the wrong video.
   useEffect(() => {preloadReady.current.clear();}, [story?.id, manifestBranchId, entryKey(nextEntry, index + 1)]);
 
+  // Once per watch: when the story first pauses, give the idea field a single gentle ring to
+  // invite a rewrite, then stop asking.
+  useEffect(() => {
+    if (!paused || !story) return;
+    const scope = story.id + ':' + manifestBranchId;
+    if (hintedFor.current === scope) return;
+    hintedFor.current = scope;
+    setHintPulse(true);
+    const timer = window.setTimeout(() => setHintPulse(false), 2400);
+    return () => window.clearTimeout(timer);
+  }, [paused, story?.id, manifestBranchId]);
+
   function chooseEntry(target: number) {
     const selected = playbackEntries[target];
     if (!selected || selected.status === 'pending' || selected.status === 'failed') {
@@ -563,8 +576,8 @@ export default function ReaderExperience() {
           {nextEntry?.status === 'ready' && nextEntry.media && <video ref={preloadRef} className={'reader-video-preload' + (bridgeEntry ? ' reader-video-bridge' : '')} src={nextEntry.media} preload="auto" muted playsInline aria-hidden="true"
             onLoadedData={() => {if (nextEntry) preloadReady.current.add(entryKey(nextEntry, index + 1));}}/>}
         </div>
-        {branch && <div className={'reader-branch-status is-' + branch.status} role="status" aria-live="polite">
-          <span>{branchWorking && <LoaderCircle size={13} className="feedback-spin"/>}<strong>你的分支 · v{branch.branch_version}</strong></span>
+        {branch && <div className={'reader-branch-status is-' + branch.status + (branch.status === 'ready' && manifestBranchId === branch.id ? ' is-settled' : '')} role="status" aria-live="polite">
+          <span>{branchWorking && <LoaderCircle size={13} className="feedback-spin"/>}{branch.status === 'ready' && <Check size={13} className="branch-check"/>}<strong>你的分支 · v{branch.branch_version}</strong></span>
           <p>{branch.message}</p>{branch.generated_count > 0 && <small>{branch.ready_count} / {branch.generated_count} 段已就绪 · 仅复用当前场景、人物和着装</small>}
         </div>}
         {seekNotice && <p className="reader-seek-notice" role="status">{seekNotice}</p>}
@@ -575,7 +588,7 @@ export default function ReaderExperience() {
           onClick={() => chooseEntry(i)} aria-label={(segment.label || '第 ' + (i + 1) + ' 段') + (segment.status === 'pending' ? '，生成中' : '')} aria-pressed={index === i}/>)}</div>
         <p className="reader-credit">画面为 AI 改编。当前作品为短场景，不代表原作完整结局。</p>
       </div>
-      <aside className={'reader-interact' + (paused ? ' is-paused' : '')}>
+      <aside className={'reader-interact' + (paused ? ' is-paused' : '') + (hintPulse ? ' is-hinting' : '')}>
         <span className="reader-kicker">TEMPORARY REWRITE</span><h2>这一刻，你会怎么选？</h2>
         <p className="reader-pause-hint">{paused ? '故事停在这里。写下另一种选择，看看这一幕会怎样发生。' : '随时暂停，不必等故事给你选项。'}</p>
         <textarea ref={input} aria-label="你的剧情想法" value={text} onChange={event => setText(event.target.value)} placeholder="如果换我来演，这一刻我会……"/>

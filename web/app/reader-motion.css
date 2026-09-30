@@ -114,6 +114,8 @@
 .reader-cover-link:focus-visible .reader-cover-visual{outline:2px solid #d7efb4;outline-offset:3px}
 .reader-interact{transition:border-color .18s ease-out}
 .reader-interact.is-paused{border-color:#748f5d}
+.reader-interact.is-hinting textarea{animation:hint-ring 2.2s var(--ease-settle)}
+@keyframes hint-ring{0%{box-shadow:0 0 0 0 transparent}25%{box-shadow:0 0 0 3px #b5d79555}55%{box-shadow:0 0 0 2px #b5d79544}100%{box-shadow:0 0 0 0 transparent}}
 .reader-interact textarea:focus{outline:2px solid #b5d795;outline-offset:2px}
 .reader-pause-hint{min-height:50px}
 .reader-save-wish{width:100%;min-height:52px;padding-left:10px;padding-right:10px}
