@@ -1,0 +1,25 @@
+/* Local story import: paste a micro-fiction or upload a text file into the market. */
+.story-import{margin:0 0 30px;padding:22px 24px;border:1px solid #ffffff1a;border-radius:12px;background:#17211e;box-shadow:0 18px 48px #08110ccc}
+.story-import-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
+.story-import-head strong{display:block;font-size:18px;font-weight:600;color:#e1e8d5}
+.story-import-head span{display:block;margin-top:5px;font-size:12px;line-height:1.8;color:#9aaa97}
+.story-import-close{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;flex:0 0 32px;border:1px solid #ffffff17;border-radius:7px;background:transparent;color:#94a18f;cursor:pointer}
+.story-import-close:hover{border-color:#a0bc7d77;color:#dcecc4}
+.story-import-tabs{display:flex;gap:6px;margin-bottom:16px}
+.story-import-tabs button{display:inline-flex;align-items:center;gap:7px;padding:9px 15px;border:1px solid #ffffff14;border-radius:7px;background:transparent;color:#96a391;font:inherit;font-size:12px;cursor:pointer}
+.story-import-tabs button.selected{border-color:#a0bc7d;background:#22301f;color:#dcecc4}
+.story-import-field{display:grid;gap:14px}
+.story-import-field label{display:grid;gap:7px;font-size:12px;color:#c0c9b5}
+.story-import-field label>span{color:#7d8a72}
+.story-import-field input{padding:11px 13px;border:1px solid #ffffff1a;border-radius:7px;background:#0f1814;color:#e1e8d5;font:inherit;font-size:13px;outline:none}
+.story-import-field input:focus{border-color:#a0bc7d}
+.story-import-field textarea{padding:12px 13px;border:1px solid #ffffff1a;border-radius:7px;background:#0f1814;color:#e1e8d5;font:inherit;font-size:13px;line-height:1.8;resize:vertical;outline:none}
+.story-import-field textarea:focus{border-color:#a0bc7d}
+.story-import-field input[type=file]{padding:8px;border:1px dashed #ffffff24;border-radius:7px;background:transparent;color:#94a18f;font:inherit;font-size:12px}
+.story-import-field small{color:#8f9e8a;font-size:11px}
+.story-import-error{margin-top:14px;padding:11px 14px;border:1px solid #a4675c75;border-radius:7px;background:#4b272445;color:#e3b0a4;font-size:12px;line-height:1.7}
+.story-import-done{margin-top:14px;padding:11px 14px;border:1px solid #6f875a66;border-radius:7px;background:#26382b80;color:#bdccaf;font-size:12px;line-height:1.7}
+.story-import-actions{display:flex;gap:10px;margin-top:18px}
+.story-import-actions .button.primary{background:#c9dfab;color:#1c3022;border:0;padding:12px 22px;border-radius:8px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.story-import-actions .button.primary:disabled{opacity:.5;cursor:wait}
+@media(max-width:620px){.story-import{padding:18px}.story-import-head{flex-direction:column}.story-import-head .story-import-close{position:absolute}}

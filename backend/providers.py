@@ -3,14 +3,6 @@ import re
 from urllib.parse import urlparse
 import httpx
 from .environment import model_config, env_file
-from .model_access import (
-    ModelAccessError,
-    access_paid_states,
-    authorize_call,
-    note_operator_key_rejection,
-    payer_requirement_message,
-    public_demo_mode,
-)
 
 class ProviderError(Exception):
     pass
@@ -21,58 +13,38 @@ class ModelOutputError(ProviderError):
     pass
 
 def settings():
+    """Local model availability. With no accounts and no shared pool, "enabled" simply means
+    "this operator's own keys are configured for that kind"."""
     cfg=model_config()
-    # Payability is decided by the payer session, not by the configuration file: a deployment whose
-    # keys are configured still refuses every call until the browser signs in or attaches its own.
-    scoped=access_paid_states()
-    paid=scoped['all']
-    result={'llm_configured':all(cfg.get(k) for k in ['LLM_BASE_URL','LLM_MODEL','LLM_API_KEY']),
-            'image_configured':cfg.get('IMAGE_PROVIDER')=='siliconflow' and all(cfg.get(k) for k in ['IMAGE_ENDPOINT','IMAGE_MODEL','IMAGE_API_KEY']),
+    llm_configured=all(cfg.get(k) for k in ['LLM_BASE_URL','LLM_MODEL','LLM_API_KEY'])
+    image_configured=cfg.get('IMAGE_PROVIDER')=='siliconflow' and all(cfg.get(k) for k in ['IMAGE_ENDPOINT','IMAGE_MODEL','IMAGE_API_KEY'])
+    video_configured=all(cfg.get(k) for k in ['VIDEO_ENDPOINT','VIDEO_MODEL','VIDEO_API_KEY'])
+    return {'llm_configured':llm_configured,'image_configured':image_configured,'video_configured':video_configured,
             'image_model':cfg.get('IMAGE_MODEL',''),
-            'video_configured':all(cfg.get(k) for k in ['VIDEO_ENDPOINT','VIDEO_MODEL','VIDEO_API_KEY']),
             'llm_model':cfg.get('LLM_MODEL',''), 'video_model':cfg.get('VIDEO_MODEL',''),
-            'paid_enabled':paid,
-            **{f'{kind}_paid_enabled':scoped[kind] for kind in ('llm','image','video')},
+            'paid_enabled':llm_configured and image_configured and video_configured,
+            'llm_paid_enabled':llm_configured,'image_paid_enabled':image_configured,'video_paid_enabled':video_configured,
             'config_file':env_file().name,'llm_fast_model':cfg.get('LLM_FAST_MODEL') or cfg.get('LLM_MODEL',''),
+            'editable':{k:v for k,v in cfg.items() if not k.endswith('_API_KEY')},
             'image_adapter':'硅基流动文生图',
             'video_adapter':('MiniMax H3 V2' if cfg.get('VIDEO_PROVIDER','ark')=='minimax' else '火山方舟 Tasks（待真实验证）')}
-    if not public_demo_mode():result['editable']={k:v for k,v in cfg.items() if not k.endswith('_API_KEY')}
-    if (state := _account_bean_balance()) is not None:
-        result['account_beans']=state
-    return result
-
-
-def _account_bean_balance():
-    """Balance for the signed-in account, so the interface can show and gate on it."""
-    from .model_access import current_account_uid
-    uid=current_account_uid()
-    if not uid:return None
-    from . import beans
-    return f'{beans.balance(uid):.2f}'
 
 def reserve_call(kind, task_id, model=None, duration_seconds=None):
     cfg=settings()
-    if not cfg.get(f'{kind}_paid_enabled',cfg['paid_enabled']):
-        message=payment_message(kind,cfg=cfg) or '该模型的付费调用未开启或共享额度不足，请在模型连接页检查后再尝试。'
+    if not cfg[f'{kind}_configured']:
+        message=payment_message(kind,cfg=cfg) or '尚未配置该模型的完整 API 信息。'
         note_refusal(kind,task_id,message)
         raise ProviderError(message)
-    if not cfg[f'{kind}_configured']:
-        note_refusal(kind,task_id,'尚未配置该模型的完整 API 信息。')
-        raise ProviderError('尚未配置该模型的完整 API 信息。')
-    try:access=authorize_call(kind,duration_seconds,task_id)
-    except ModelAccessError as exc:
-        note_refusal(kind,task_id,str(exc))
-        raise ProviderError(str(exc)) from None
     from .provider_usage import begin
-    return begin(kind,model or cfg.get(kind+'_model',''),task_id,access)
+    return begin(kind,model or cfg.get(kind+'_model',''),task_id)
 
 
 def note_refusal(kind,task_id,message):
     """Record a call that was stopped before submission, so the step can be attempted again.
 
-    Everything refused here never reached a provider, so re-running it cannot repeat a paid call.
-    Without the record, a picture stopped by a paused operator key looked unrepairable and the run
-    could not continue on the visitor's own key.
+    Everything refused here never reached a provider, so re-running it cannot repeat a billable
+    call. Without the record, an image stopped while its key was missing would look unrepairable
+    and the run could not continue once the key was configured.
     """
     if kind!='image':return
     from .image_errors import note_refusal as record
@@ -82,51 +54,20 @@ def note_refusal(kind,task_id,message):
 PROVIDER_LABELS={'llm':'DeepSeek 文本','image':'硅基流动 生图','video':'MiniMax 视频'}
 
 
-def unpaid_kinds(*kinds, cfg=None):
-    """Which of the required providers cannot be paid for right now."""
-    resolved=cfg if cfg is not None else settings()
-    return [kind for kind in kinds if not resolved.get(f'{kind}_paid_enabled',resolved['paid_enabled'])]
-
-
-SESSION_EXPIRED_HINT='模型使用方式已失效或过期。请回到模型使用方式页面重新选择；已完成的素材和进度都会保留。'
-
-
-def session_prerequisite_message() -> str | None:
-    """Explain a stalled task whose model session expired or was never usable.
-
-    Tasks store only an opaque session id, so a session that expires or is invalidated while a task
-    waits in the queue used to fail with no actionable explanation.
-    """
-    from .model_access import current_access_mode, public_demo_mode
-    if current_access_mode() is not None:
-        return None
-    return SESSION_EXPIRED_HINT if public_demo_mode() else None
-
 def payment_message(*kinds, cfg=None):
-    """Explain exactly which provider blocks this step, instead of an all-or-nothing prompt."""
-    missing=unpaid_kinds(*kinds,cfg=cfg)
+    """Explain exactly which required model is not configured yet, instead of a catch-all prompt."""
+    resolved=cfg if cfg is not None else settings()
+    missing=[kind for kind in kinds if not resolved.get(f'{kind}_configured')]
     if not missing:return None
-    from .model_access import current_access_mode
-    if current_access_mode() is None:
-        return payer_requirement_message() or SESSION_EXPIRED_HINT
-    if current_access_mode()=='account':
-        # The account is signed in, so a missing kind means its bean wallet cannot cover it.
-        return '算力豆不足：这一步需要 '+'、'.join(PROVIDER_LABELS.get(kind,kind) for kind in missing)+'。请填写自己的 API Key 继续。'
-    return '这一步需要的模型调用未开启或额度不足：'+'、'.join(PROVIDER_LABELS.get(kind,kind) for kind in missing)+'。'
+    return '这一步需要的模型尚未配置：'+'、'.join(PROVIDER_LABELS.get(kind,kind) for kind in missing)+'。请在本地设置文件里补齐对应的 API Key 后再试。'
 
 
 def paid_gate(cfg, *kinds):
-    """Why this step may not spend anything, or None when it may.
+    """Why this step may not run, or None when it may.
 
-    Kept in one place so every paid endpoint refuses with the real reason — no payer, own key
-    missing, or the operator's model not configured — instead of a single catch-all sentence.
+    Everything is local now, so the only gate is whether the required models are configured.
     """
-    message=payment_message(*kinds,cfg=cfg)
-    if message:return message
-    missing=[kind for kind in kinds if not cfg.get(f'{kind}_configured')]
-    if missing:
-        return '这一步需要的模型尚未配置：'+'、'.join(PROVIDER_LABELS.get(kind,kind) for kind in missing)+'。'
-    return None
+    return payment_message(*kinds,cfg=cfg)
 
 
 def endpoint(kind,config=None):
@@ -178,7 +119,6 @@ def chat_json(system,payload,task_id,profile='default',*,on_event=None):
             with httpx.stream('POST',target,**request) as response:
                 if response.status_code>=300:
                     finish(entry,status='rejected')
-                    note_operator_key_rejection('llm',response.status_code)
                     raise ProviderError(f'语言模型返回 HTTP {response.status_code}；请核对模型权限与流式接口支持情况。')
                 on_event('connected','')
                 data=read_completion(response,on_event,timeout)
@@ -186,7 +126,6 @@ def chat_json(system,payload,task_id,profile='default',*,on_event=None):
             response=httpx.post(target,**request)
             if response.status_code>=300:
                 finish(entry,status='rejected')
-                note_operator_key_rejection('llm',response.status_code)
                 raise ProviderError(f'语言模型返回 HTTP {response.status_code}；请核对模型权限与接口格式。')
             data=response.json()
         finish(entry,data.get('usage',{}))
@@ -242,7 +181,6 @@ def submit_video(prompt,task_id,image_url=None,*,local_frame=False,reference_ima
                      json=body,timeout=60)
         if r.status_code>=400:
             finish(entry,status='rejected')
-            note_operator_key_rejection('video',r.status_code)
             raise ProviderError(f'视频接口返回 HTTP {r.status_code}；本任务不自动重新提交。')
         task=r.json().get('task_id' if minimax else 'id')
         if not task: raise ProviderError('视频接口未返回任务编号，请核对供应商记录。')
@@ -263,7 +201,6 @@ def poll_video(provider_id):
         r=httpx.get(target,
                     headers={'Authorization':f'Bearer {cfg.get("VIDEO_API_KEY")}'},timeout=30)
         if r.status_code>=400:
-            note_operator_key_rejection('video',r.status_code)
             raise ProviderError(f'查询视频任务返回 HTTP {r.status_code}。')
         data=r.json()
         if minimax:

@@ -22,23 +22,6 @@ def is_node_task(task, work):
     return task.kind in KINDS and task.payload.get('work_id') == work.id and task.payload.get('run_id') == work.data.get('run_id')
 
 
-def adopt_current_payer(task):
-    """Let unfinished work change who pays for it.
-
-    A task records the payer it was created with, and the worker bills that payer. Without this, a
-    visitor who switched to their own API keys after a wallet or shared-key problem kept being
-    billed by the old payer and saw the same refusal forever.
-    """
-    from .model_access import current_access_id
-
-    access_id=current_access_id()
-    if not access_id or task.session_id==access_id:return False
-    # Never move work that already reached a provider: its submission is tied to the old account.
-    if (task.result or {}).get('provider_id'):return False
-    task.session_id=access_id
-    return True
-
-
 def saved_task_phase(task):
     if task.payload.get('production_phase'):return task.payload['production_phase']
     if task.kind=='image':return None  # 人物身份图、服装图与场景图属于基础素材，不属于任何制作节点。
@@ -58,7 +41,6 @@ def queue_node(db, work, phase, predecessor=None, segment_id=None, reopen=False)
     mapping=dict(work.data.get('production_nodes',{}))
     prior=db.get(Task,mapping.get(phase,''))
     if prior and prior.status in (*BUSY,'completed') and not (reopen and prior.status=='completed'):
-        if prior.status!='completed':adopt_current_payer(prior)
         return prior
     run=db.get(Record,'creative_'+work.data.get('director_id',''))
     if not run or run.data.get('stage') not in PHASE_STATES[phase]:
@@ -118,26 +100,6 @@ def failure_summary(failed,limit=800,listed=6):
             for task in shown]
     if len(failed)>len(shown):labels.append(f'另有 {len(failed)-len(shown)} 项未列出')
     return '；'.join(dict.fromkeys(labels))[:limit]
-
-
-def stage_payer(db,work):
-    """The payer this run is spending, so a requeue never loses it.
-
-    A node queued from a browser request carries the access session that request used. A node
-    requeued by the worker has no browser in scope: without this the replacement was created with
-    an empty payer and refused every call with "请先用知乎账号登录领取算力豆", even for a browser
-    that had already attached its own key.
-    """
-    from .model_access import current_access_id
-
-    scoped=current_access_id()
-    if scoped:return scoped
-    for phase in NODES:
-        node=db.get(Task,work.data.get('production_nodes',{}).get(phase,'') or '')
-        if node and node.session_id:return node.session_id
-    for task in _related(db,work.data.get('director_id','')):
-        if task.session_id:return task.session_id
-    return ''
 
 
 def blocking_feedback(db,work,project=None,problems=()):
@@ -231,7 +193,6 @@ def retry_node(db,work):
     else:
         replacement=queue_node(db,work,phase)
         replacements=[]
-        payer=stage_payer(db,work)
         for task in problems:
             if task.kind not in ('image','video'):
                 task.status='superseded';task.message='已由重新运行的漫剧节点接替；原错误与输出保留。'
@@ -244,8 +205,6 @@ def retry_node(db,work):
             new_task=Task(id=uid(task.kind),kind=task.kind,
                 message='失败任务已重新排队',payload={**task.payload,'production_phase':phase,
                     'production_node':replacement.id,'revision_of':task.id})
-            # The rerun is billed to the same payer as the node it replaces, never to nobody.
-            if payer:new_task.session_id=payer
             db.add(new_task);task.status='superseded';task.message='已由新的重试任务接替；原错误与输出保留。'
             replacements.append(new_task.id)
     db.add(Record(id=uid('audit'),kind='audit',data={'target':work.id,'action':'current_production_node_retried',

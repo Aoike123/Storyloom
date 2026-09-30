@@ -37,7 +37,7 @@ export default function ReaderHero({items, loading, activeId, onActiveChange, on
 
   return <section className="reader-hero catalog-hero reader-browse-hero" aria-labelledby="reader-welcome">
     <div className="reader-hero-copy">
-      <div className="reader-kicker">知乎脑洞 · AI 漫剧</div>
+      <div className="reader-kicker">微小说 · AI 漫剧</div>
       <h1 id="reader-welcome">这段脑洞，<br/>换你会怎么演？</h1>
       <p>看别人的版本，随时改写一刻；也可以从同一篇原作开始，完成属于你的漫剧。</p>
       {selected && <div className="reader-hero-paths">
@@ -48,7 +48,7 @@ export default function ReaderHero({items, loading, activeId, onActiveChange, on
           <Sparkles size={14}/> {selected.project_id ? '继续我的版本' : canWatch(selected) ? '制作我的完整版本' : '制作第一版'}
         </Link>}
       </div>}
-      <small className="reader-hero-boundary">临时改写不进入个人作品；完整制作会在登录后归入你的账号。</small>
+      <small className="reader-hero-boundary">临时改写不进入你的作品；完整制作会保存在你的本地工作台。</small>
       <a href="#reader-shelf" className="reader-browse-all" onClick={event => {
         event.preventDefault();
         document.getElementById('reader-shelf')?.scrollIntoView({behavior: reducedMotion() ? 'instant' : 'smooth', block: 'start'});

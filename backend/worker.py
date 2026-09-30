@@ -5,7 +5,7 @@ import time
 import threading
 import httpx
 from sqlalchemy import select, update, or_, and_
-from .db import DATA, EVENT_LIMIT, Record, Session, Task, TaskCapacityError, bounded, init_db, uid
+from .db import DATA, EVENT_LIMIT, Record, Session, Task, bounded, init_db, uid
 from .providers import submit_video,poll_video,ProviderError
 from .image_provider import generate_image,generate_from_references,save_image,local_frame_data
 from .video_storage import register_artifact, attach_artifact, verify_file
@@ -66,12 +66,7 @@ def with_failure_code(message, code):
 
 
 def auto_retry_node(task_id):
-    """Requeue the current production node once after a failure, reusing saved results.
-
-    The recovery runs under the failed task's payer. It used to run outside the request scope, so
-    the replacement node was created with no payer at all and refused every call with "请先用知乎
-    账号登录领取算力豆" — even for a browser that had already attached its own key.
-    """
+    """Requeue the current production node once after a failure, reusing saved results."""
     with Session() as db:
         task=db.get(Task,task_id)
         if not task or task.kind not in PRODUCTION_KINDS:return False
@@ -80,18 +75,15 @@ def auto_retry_node(task_id):
         work=db.get(Record,task.payload.get('work_id',''))
         if not work:return False
         attempt=int(task.payload.get('auto_retry_count',0))+1
-        payer=task.session_id
     from .production_nodes import retry_node
-    from .model_access import access_scope
     try:
-        with access_scope(payer):
-            with Session.begin() as db:
-                work=db.get(Record,task.payload.get('work_id',''))
-                replacement=retry_node(db,work)
-                replacement.payload={**replacement.payload,'auto_retry_count':attempt,'auto_retry':True}
-                replacement.message='上一个节点失败一次，系统已自动重试并复用已通过校验的结果'
-                db.add(Record(id=uid('audit'),kind='audit',data={'target':work.id,'action':'node_auto_retry',
-                    'attempt':attempt,'previous_node_id':task_id,'replacement_node_id':replacement.id}))
+        with Session.begin() as db:
+            work=db.get(Record,task.payload.get('work_id',''))
+            replacement=retry_node(db,work)
+            replacement.payload={**replacement.payload,'auto_retry_count':attempt,'auto_retry':True}
+            replacement.message='上一个节点失败一次，系统已自动重试并复用已通过校验的结果'
+            db.add(Record(id=uid('audit'),kind='audit',data={'target':work.id,'action':'node_auto_retry',
+                'attempt':attempt,'previous_node_id':task_id,'replacement_node_id':replacement.id}))
     except HTTPException:
         return False
     return True
@@ -368,13 +360,9 @@ def run_task(task_id,owner):
 def process_one(owner,lane='any'):
     task_id=claim(owner,lane)
     if not task_id:return False
-    with Session() as db:access_id=db.get(Task,task_id).session_id
     stop=threading.Event();thread=threading.Thread(target=heartbeat,args=(task_id,owner,stop),daemon=True);thread.start()
     try:
-        from .model_access import access_scope
-        with access_scope(access_id):run_task(task_id,owner)
-    except TaskCapacityError as exc:
-        patch(task_id,owner,status='waiting',lease=time.time()+30,message=str(exc)[:900])
+        run_task(task_id,owner)
     except HTTPException as exc:
         code=record_failure(task_id,exc)
         patch_failure(task_id,owner,'needs_review',with_failure_code(str(exc.detail)[:820],code),code)

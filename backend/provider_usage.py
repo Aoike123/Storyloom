@@ -1,8 +1,8 @@
-"""Record actual provider submissions and reported usage for audit/recovery.
+"""Record actual provider submissions and reported usage for audit and recovery.
 
-Budget reservations are only refunded here when the provider rejected the request, which is the
-one case where nothing could have been charged. Uncertain outcomes (timeouts, 5xx) keep the
-reservation because the call may still be billed.
+A submission that the provider rejects is stamped ``released_at`` so a later recovery knows it
+never became a charge; uncertain outcomes (timeouts, 5xx) are left open because the call may
+still have been billed.
 """
 
 import time
@@ -36,24 +36,14 @@ def begin(kind, model, task, access=None):
 def finish(entry, usage=None, status="completed"):
     if not entry:
         return
-    beans_refund = None
     with Session.begin() as db:
         row = db.get(Record, entry)
         if row:
             data = {**row.data, "usage": usage or {}, "status": status}
             if status == "rejected" and not row.data.get("released_at"):
-                # The provider refused the request, so this reservation never became a charge.
+                # The provider refused the request, so this submission never became a charge.
                 data["released_at"] = time.time()
-                if data.get("mode") == "account":
-                    beans_refund = (data.get("uid"), data.get("kind"), data.get("task"),
-                                    data.get("beans_cost"))
             row.data = data
-    if beans_refund:
-        uid, kind, task, amount = beans_refund
-        if uid and kind and amount:
-            from . import beans
-
-            beans.refund(uid, kind, task, amount)
 
 
 def finish_video(task, usage):

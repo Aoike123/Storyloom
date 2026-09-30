@@ -1,9 +1,8 @@
-"""Reader catalog: all returned brainstorm stories, joined to real local releases."""
+"""Reader catalog: all local story sources, joined to the real local releases built from them."""
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 from .db import DATA, Session, Record
-from . import zhihu_stories
-from .model_access import current_actor_id, public_demo_mode
+from . import story_sources
 
 router = APIRouter(prefix='/api/reader', tags=['reader'])
 
@@ -54,24 +53,21 @@ def playable(entries):
 @router.get('/catalog')
 def catalog(refresh: bool = False):
     try:
-        listing = zhihu_stories.stories(refresh=refresh)
-        official = [item for item in listing['items'] if '脑洞' in labels(item.get('labels'))]
+        listing = story_sources.stories(refresh=refresh)
+        official = list(listing['items'])
         available = True
     except HTTPException as exc:
         listing = {'items': [], 'cached': False, 'stale': False, 'fetched_at': None, 'warning': exc.detail}
         official, available = [], False
     with Session() as db:
         sources = {r.id: r.data for r in db.scalars(select(Record).where(Record.kind == 'story_source'))}
+        # A local workbench has a single maker, so every project is "mine" and may decorate its story.
         all_works = list(db.scalars(select(Record).where(Record.kind == 'author_project').order_by(Record.created.desc())))
-        actor = current_actor_id()
-        # The catalogue is public, but studio state is not. Only this account's project id and stage
-        # may decorate a public story; an anonymous visitor sees no private project metadata.
-        works = [work for work in all_works
-                 if not public_demo_mode() or work.data.get('owner') == actor]
+        works = all_works
         works_by_story, works_by_director, works_by_release = {}, {}, {}
         for work in works:
             source_id = work.data.get('source_id')
-            story_id = work.data.get('zhihu_work_id') or sources.get(source_id, {}).get('work_id')
+            story_id = work.data.get('source_work_id') or sources.get(source_id, {}).get('work_id')
             if story_id:
                 works_by_story.setdefault(story_id, work)
             if work.data.get('director_id'):
@@ -86,8 +82,7 @@ def catalog(refresh: bool = False):
                 continue
             source = sources.get(data.get('source_id'), {})
             story_id = source.get('work_id') or data.get('source_work_id')
-            # Link a release only to this account's exact publishing project. Falling back to any
-            # project for the same source lets one account enter another maker's workspace.
+            # Link a release to the publishing project of its exact director run.
             work = works_by_release.get(row.id) or works_by_director.get(data.get('director_id'))
             release = {'id': row.id, **{k: data.get(k) for k in ('title', 'source_title', 'author', 'description', 'entries')},
                        'source_work_id': story_id, 'project_id': work.id if work else None,
@@ -98,7 +93,7 @@ def catalog(refresh: bool = False):
             releases.append(release)
             if story_id:
                 by_story.setdefault(story_id, release)
-            elif not source or '脑洞' in labels(source.get('labels')):
+            elif not source:
                 standalone.append(release)
         items, seen = [], set()
         for item in official:

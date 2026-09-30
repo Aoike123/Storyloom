@@ -34,25 +34,9 @@
 .studio-header-right:focus-within{border-color:#91a982;background:#fbfcf8}
 .studio-header-right .studio-back{min-height:38px;padding:0 13px;border-radius:999px;transition:background .16s ease,color .16s ease;white-space:nowrap}
 .studio-header-right .studio-back:hover{background:#edf3e6;color:#38543b}
-.studio-header-right>.account-dock{display:flex;align-items:center}
-.studio-header-right>.account-dock::before{content:'';width:1px;height:20px;flex:0 0 1px;background:#dce4d4}
-.studio-header-right .account-dock-trigger{min-height:38px;padding:6px 10px 6px 8px;border:0;background:transparent;box-shadow:none;backdrop-filter:none}
-.studio-header-right .account-dock-trigger:hover,.studio-header-right .account-dock-trigger[aria-expanded=true]{border-color:transparent;background:#eaf1e2}
-.zhihu-account{margin:0 0 18px;padding:16px 18px;border:1px solid #d7e2ca;border-radius:10px;background:#f7faf1}
-.zhihu-account-heading{display:flex;align-items:center;gap:10px;color:#4c6440}
-.zhihu-account-heading strong{font-size:15px;font-weight:600}
-.zhihu-account-heading small{display:block;margin-top:2px;color:#7c8c6e;font-size:11px}
-.zhihu-account-avatar{width:34px;height:34px;border-radius:50%;object-fit:cover;background:#e4ecda}
-.zhihu-account-beans{margin-left:auto;padding:4px 10px;border-radius:999px;background:#e6efd8;color:#4c6440;font-size:12px;font-weight:600;white-space:nowrap}
-.zhihu-account-beans.is-low{background:#f6e3d5;color:#8a5a34}
-.zhihu-account-note{margin:10px 0 0;color:#7c8c6e;font-size:12px;line-height:1.8}
-.zhihu-account-warning{display:flex;align-items:flex-start;gap:6px;margin:10px 0 0;color:#8a5a34;font-size:12px;line-height:1.8}
-.zhihu-account-warning svg{flex-shrink:0;margin-top:3px}
-.zhihu-account-actions{display:flex;gap:10px;margin-top:12px}
-.zhihu-account .button{margin:0}
 .studio-notice{margin:0 0 14px;padding:10px 14px;border:1px solid #c9dcb4;border-left:4px solid #6f9a52;border-radius:8px;background:#f2f8e9;color:#4c6440;font-size:12px}
 @media(max-width:950px){.asset-redesign-heading{align-items:flex-start;flex-direction:column;gap:14px}.asset-redesign-action{max-width:none}.asset-redesign-action .button{min-height:44px}}
-@media(max-width:520px){.studio-header{padding:18px 0}.studio-header-right{padding:2px}.studio-header-right .studio-back,.studio-header-right .account-dock-trigger{min-height:40px}.studio-header-right .studio-back{padding-inline:10px;font-size:11px}.studio-header-right .studio-back svg{width:13px}.studio-header-right .account-dock-trigger{padding-inline:8px}}
+@media(max-width:520px){.studio-header{padding:18px 0}.studio-header-right{padding:2px}.studio-header-right .studio-back{min-height:40px;padding-inline:10px;font-size:11px}.studio-header-right .studio-back svg{width:13px}}
 
 .studio-asset-grid{align-items:start}
 

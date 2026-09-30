@@ -1,8 +1,8 @@
-"""Failure reports that keep diagnosis possible without exposing internals to visitors.
+"""Failure reports that keep diagnosis possible without exposing internals in the interface.
 
 A failed task shows a short code to whoever is watching. The full traceback stays on the server
-and is only served in local mode, so a public demo cannot leak paths, provider bodies or stack
-internals while the operator can still find the real cause.
+and is only served through the local diagnostics endpoint, so the interface never shows paths,
+provider bodies or stack internals while the operator can still find the real cause.
 """
 
 import re

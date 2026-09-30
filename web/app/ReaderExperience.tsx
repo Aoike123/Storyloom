@@ -2,15 +2,14 @@
 
 import Link from './ReaderLink';
 import {useEffect, useRef, useState} from 'react';
-import {ArrowRight, Clapperboard, LoaderCircle, Search, Sparkles} from 'lucide-react';
+import {ArrowRight, Clapperboard, LoaderCircle, Plus, Search, Sparkles} from 'lucide-react';
 import {InteractionFeedback, workStages} from './ProgressFeedback';
 import ReaderArtwork from './ReaderArtwork';
 import ReaderCreatorAvatar from './ReaderCreatorAvatar';
 import ReaderHero from './ReaderHero';
 import ReaderStoryGrid from './ReaderStoryGrid';
+import StoryImport from './StoryImport';
 import {canWatch, groupProductionsByStory, productionLink} from './reader-types';
-import {modelAccessHeaders} from './model-access';
-import AccountDock from './AccountDock';
 import {rankByProduction} from './reader-carousel';
 import type {Catalog, CatalogItem, ReaderBranch, Release, ReleaseEntry} from './reader-types';
 import './reader-catalog.css';
@@ -25,6 +24,7 @@ export default function ReaderExperience() {
   const [query, setQuery] = useState(''), [searchInput, setSearchInput] = useState('');
   const [filter, setFilter] = useState('ready'), [refresh, setRefresh] = useState(0);
   const [loading, setLoading] = useState(true), [carouselIds, setCarouselIds] = useState<string[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
   const [activeId, setActiveId] = useState('');
   const [story, setStory] = useState<Release | null>(null), [index, setIndex] = useState(0);
   const [playbackEntries, setPlaybackEntries] = useState<ReleaseEntry[]>([]);
@@ -158,7 +158,7 @@ export default function ReaderExperience() {
     async function load(force = false) {
       try {
         const response = await fetch('/api/reader/catalog' + (force ? '?refresh=true' : ''), {
-          signal: abort.signal, headers: modelAccessHeaders(),
+          signal: abort.signal,
         });
         if (!response.ok) throw Error('暂时无法读取故事市场，请稍后重试。');
         const data: Catalog = await response.json();
@@ -281,7 +281,7 @@ export default function ReaderExperience() {
     setBusy(true); setReply(''); setReplyError(false);
     try {
       const response = await fetch('/api/reader/branches', {method: 'POST', headers: {
-        'Content-Type': 'application/json', 'X-Reader-Session': sessionToken(), ...modelAccessHeaders(),
+        'Content-Type': 'application/json', 'X-Reader-Session': sessionToken(),
       }, body: JSON.stringify({
         release_id: releaseId, base_branch_id: manifestBranch.current || undefined,
         index, offset: Math.max(entry.start, Math.min(entry.end, at)), text: submittedText, confirm_generation: true,
@@ -391,7 +391,6 @@ export default function ReaderExperience() {
       <button className="reader-brand" onClick={() => {if (story) back(); else window.scrollTo({top: 0, behavior: 'instant'});}}>叙间<span>每个故事，都有另一种可能</span></button>
       <div className="reader-entry-links">
         <Link className="reader-work-link" href="/author" prefetch={false} onClick={() => {if (!story) remember('nav:author');}} data-reader-focus="nav:author">我的制作 <ArrowRight size={14}/></Link>
-        <AccountDock next={story ? '/?story=' + encodeURIComponent(story.id) : '/'}/>
       </div>
     </nav>
     {!story ? <div className="reader-catalog-page">
@@ -415,15 +414,17 @@ export default function ReaderExperience() {
           <button className="catalog-refresh" disabled={loading} onClick={() => setRefresh(value => value + 1)}>
             {loading && <LoaderCircle size={13} className="feedback-spin"/>}{loading ? '刷新中…' : '刷新'}
           </button>
+          <button type="button" className="catalog-import" onClick={() => setImportOpen(open => !open)}><Plus size={14}/>{importOpen ? '收起导入' : '导入故事'}</button>
         </div>
+        {importOpen && <StoryImport onImported={() => setRefresh(value => value + 1)}/>}
         {catalog?.warning && <div className="catalog-warning" role="status">{catalog.stale ? '故事服务暂不可用，正在显示已保存的市场内容。' : '故事市场暂时无法读取，当前仅展示本地可观看的作品。'}{catalog.fetched_at && <small>内容保存于 {new Date(catalog.fetched_at * 1000).toLocaleString('zh-CN')}</small>}</div>}
         {message && <div className="catalog-warning catalog-error" role="alert">{message}<button onClick={() => setRefresh(value => value + 1)} disabled={loading}>重试读取</button></div>}
         {loading && !catalog ? <div className="reader-story-grid catalog-skeleton-grid" role="status" aria-label="正在打开故事市场"><span className="feedback-sr-only">正在打开故事市场</span>{[0, 1, 2].map(id =>
           <div className="reader-story-card catalog-skeleton" key={id} aria-hidden="true"><div className="catalog-poster"/><div className="catalog-story-info"><i/><i/><i/></div></div>)}</div>
           : !visible.length ? <div className="reader-empty" role="status">
-            <span>{query ? '没有找到匹配的原作。' : filter === 'ready' ? '还没有公开放映的版本。' : '暂时没有可展示的原作。'}</span>
-            <p>{filter === 'ready' && !query ? '切到「等待创作」，从一篇原作制作第一个完整版本。' : '可以刷新内容或调整筛选条件。'}</p>
-            {(filter !== 'all' || query) && <button onClick={clearFilters}>浏览全部原作 →</button>}
+            <span>{query ? '没有找到匹配的原作。' : filter === 'ready' ? '还没有公开放映的版本。' : (!catalog?.items.length ? '还没有导入任何原作。' : '暂时没有可展示的原作。')}</span>
+            <p>{filter === 'ready' && !query ? '切到「等待创作」，从一篇原作制作第一个完整版本。' : (!query && filter === 'all' && !catalog?.items.length ? '导入一篇微小说，开始你的第一部漫剧。' : '可以刷新内容或调整筛选条件。')}</p>
+            {(!query && filter === 'all' && !catalog?.items.length) ? <button className="catalog-import" onClick={() => setImportOpen(true)}><Plus size={14}/>导入故事</button> : (filter !== 'all' || query) && <button onClick={clearFilters}>浏览全部原作 →</button>}
           </div> : <ReaderStoryGrid ids={shelfGroups.map(group => group.item.id)}>{shelfGroups.map(({item, productions, stacked, order}) => {
             const active = Math.min(versionChoice[item.id] ?? 0, Math.max(0, productions.length - 1));
             const release = productions[active] || item.release;
@@ -476,7 +477,7 @@ export default function ReaderExperience() {
               </div>
             </article>;
           })}</ReaderStoryGrid>}
-        {catalog?.catalog_available && <p className="catalog-footnote">观看入口打开别人已经发布的版本，改写不会被保存或公开；制作入口始终按当前登录账号创建或继续一个独立项目，不会进入发布者的项目。</p>}
+        {catalog?.catalog_available && <p className="catalog-footnote">观看入口打开已发布的版本，改写不会被保存或公开；制作入口会为这篇原作创建一个属于你自己的独立项目。</p>}
       </section>
     </div> : <section className="reader-screen">
       <button className="reader-back" onClick={back}>← 返回故事</button>
@@ -511,7 +512,7 @@ export default function ReaderExperience() {
         <textarea ref={input} aria-label="你的剧情想法" value={text} onChange={event => setText(event.target.value)} placeholder="如果换我来演，这一刻我会……"/>
         <button className="reader-cta reader-save-wish" disabled={!paused || text.trim().length < 2 || busy || awaitingFirstBranch} onClick={saveWish}>{busy ? '正在提交这一刻…' : awaitingFirstBranch ? '正在准备第一段分支…' : '生成这一种可能'}</button>
         <div className="reader-feedback-slot"><InteractionFeedback title="故事回应" busy={busy || !!branchWorking} text={busy ? '正在冻结暂停画面与当前剧情状态…' : reply} error={!busy && replyError}/></div>
-        {replyError && /模型|权限|配置|算力豆/.test(reply) && <span className="reader-model-link">请在右上角的账号面板里登录领取算力豆，或填写自己的 API Key <ArrowRight size={13}/></span>}
+        {replyError && /模型|权限|配置/.test(reply) && <span className="reader-model-link">这一步需要的模型尚未配置：请在项目根目录的 .env.local 里填写对应的 API Key，然后刷新重试 <ArrowRight size={13}/></span>}
         <p className="reader-temporary-note">这次改写仅在当前观看页面生效；离开或刷新后不会恢复，也不会出现在「我的制作」或公开版本中。</p>
         <small>改写只复用当前场景、人物与着装。分支开始后不能向前跳看；后续视频会逐段生成并提前加载。</small>
         {wishes.map((wish, i) => <blockquote key={i}><small>{Math.floor(wish.at)} 秒 · 你的另一种可能</small><p>{wish.text}</p></blockquote>)}

@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 
 from .environment import load_bootstrap_environment
-from sqlalchemy import JSON, Float, Integer, String, create_engine, event, func, inspect, select, text
+from sqlalchemy import JSON, Float, Integer, String, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,11 +25,6 @@ class Base(DeclarativeBase):
     pass
 
 
-def _current_model_access_id():
-    from .model_access import current_access_id
-
-    return current_access_id()
-
 class Record(Base):
     __tablename__ = 'records'
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
@@ -43,9 +38,9 @@ class Task(Base):
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
     kind: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(32), default='queued', index=True)
-    # New work inherits the anonymous model-access session active for this
-    # browser request or parent worker task. No API key is stored on the task.
-    session_id: Mapped[str] = mapped_column(String(80), default=_current_model_access_id)
+    # Legacy field kept for schema stability. A local workbench has no per-visitor payer, so this
+    # stays empty; it no longer gates or bills anything.
+    session_id: Mapped[str] = mapped_column(String(80), default='')
     revision: Mapped[int] = mapped_column(Integer, default=0)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     result: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -59,53 +54,6 @@ class Task(Base):
 
 ACTIVE_TASK_STATUSES = frozenset({'queued', 'running', 'waiting'})
 
-
-class TaskCapacityError(RuntimeError):
-    """Raised before an anonymous demo can grow its active queue past the limit."""
-
-
-def _public_task_limit():
-    if os.getenv('STORYLOOM_DEMO_MODE', 'local').strip().lower() != 'public':
-        return None
-    try:
-        value = int(os.getenv('PUBLIC_MAX_ACTIVE_TASKS', '32'))
-    except (TypeError, ValueError):
-        value = 32
-    return max(1, min(value, 1000))
-
-
-def _task_status(task):
-    return task.status or 'queued'
-
-
-@event.listens_for(Session, 'before_flush')
-def enforce_public_task_capacity(db, _flush_context, _instances):
-    limit = _public_task_limit()
-    if limit is None:
-        return
-
-    delta = sum(1 for task in db.new if isinstance(task, Task) and _task_status(task) in ACTIVE_TASK_STATUSES)
-    for task in db.dirty:
-        if not isinstance(task, Task):
-            continue
-        history = inspect(task).attrs.status.history
-        if not history.has_changes():
-            continue
-        old_status = history.deleted[-1] if history.deleted else None
-        delta += int(_task_status(task) in ACTIVE_TASK_STATUSES) - int(old_status in ACTIVE_TASK_STATUSES)
-    delta -= sum(1 for task in db.deleted if isinstance(task, Task) and _task_status(task) in ACTIVE_TASK_STATUSES)
-    if delta <= 0:
-        return
-
-    connection = db.connection()
-    if connection.dialect.name == 'postgresql':
-        # Serialize admissions across the API and worker without adding another service.
-        connection.execute(text('SELECT pg_advisory_xact_lock(782347190321)'))
-    active = connection.execute(
-        select(func.count()).select_from(Task.__table__).where(Task.__table__.c.status.in_(ACTIVE_TASK_STATUSES))
-    ).scalar_one()
-    if active + delta > limit:
-        raise TaskCapacityError(f'当前生成队列已满（最多 {limit} 个任务），请稍后再试。')
 
 def uid(prefix):
     return f'{prefix}_{uuid.uuid4().hex[:16]}'

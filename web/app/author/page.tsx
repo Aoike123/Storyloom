@@ -17,20 +17,13 @@ import ImageRecovery from './ImageRecovery';
 import SegmentReview from './SegmentReview';
 import AssetFeedback from './AssetFeedback';
 import useModelPermission from './useModelPermission';
-import AccountDock from '../AccountDock';
 import NodeSkillsPanel from '../NodeSkills';
-import {clearModelAccess,modelAccessHeaders,readModelAccess} from '../model-access';
-import {announceBeansProblem,isBeansProblem,onPayerChanged} from '../account-dock';
-import {emptyZhihuStatus,readZhihuStatus,zhihuLoginLink,zhihuNotice,type ZhihuStatus} from '../zhihu-account';
 import useProductionFollow from './useProductionFollow';
-async function api(path:string,body?:unknown,signal?:AbortSignal){const headers=modelAccessHeaders();const r=await fetch('/api/author'+path,body===undefined?{headers,signal}:{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body),signal});const d=await r.json();if(r.status===401&&typeof window!=='undefined')clearModelAccess();const detail=typeof d.detail==='string'?d.detail:'暂时无法完成操作，请稍后再试。';if(!r.ok){if(isBeansProblem(detail))announceBeansProblem(detail);throw Error(detail);}return d;}
+async function api(path:string,body?:unknown,signal?:AbortSignal){const r=await fetch('/api/author'+path,body===undefined?{signal}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal});const d=await r.json();const detail=typeof d.detail==='string'?d.detail:'暂时无法完成操作，请稍后再试。';if(!r.ok){throw Error(detail);}return d;}
 const stages:Record<string,string>={style:'先为这个故事，选择一种气质。',segments_review:'这段故事，切成几幕来讲？',preparing:'故事中的人物，正在走向画面。',assets_review:'这些形象，符合你的想象吗？',storyboarding:'这一段，拆成怎样的镜头？',rendering:'让分镜真正动起来。',episode_review:'这一集完成了，发布它，还是继续下一集？',film_review:'最后一次审片，让故事准备好登场。',published:'这段脑洞，已经有了画面。'};
 export default function Author(){
- const [accessReady,setAccessReady]=useState(false);
  const [works,setWorks]=useState<any[]>([]),[selected,setSelected]=useState(''),[work,setWork]=useState<any>(null),[opening,setOpening]=useState(true);
  const [art,setArt]=useState(''),[tone,setTone]=useState(''),[confirmed,setConfirmed]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[messageError,setMessageError]=useState(false),[syncError,setSyncError]=useState(''),[updated,setUpdated]=useState('');
- const [zhihu,setZhihu]=useState<ZhihuStatus|null>(emptyZhihuStatus);
- const [zhihuFlag,setZhihuFlag]=useState<string|null>(null);
  const [paid,setPaid]=useModelPermission(selected);
  const [notes,setNotes]=useState<Record<string,string>>({}),[promptDrafts,setPromptDrafts]=useState<Record<string,string>>({}),[index,setIndex]=useState(0),[filter,setFilter]=useState('all'),[expanded,setExpanded]=useState(false);
  const [viewedStep,setViewedStep]=useState<string|null>(null);
@@ -40,46 +33,13 @@ export default function Author(){
  const progressActive=hasActiveProgress(work);
  const streamConnection=useProjectProgress(work,progressActive,setWork,refreshWorkspace);
  useEffect(()=>{
-  let live=true;
-  readZhihuStatus().then(status=>{if(live)setZhihu(status);}).catch(()=>{if(live)setZhihu({...emptyZhihuStatus});});
-  return()=>{live=false;};
-},[]);
- useEffect(()=>{
-  // The visitor just attached their own keys. Work that stopped for lack of a payer can continue,
-  // and the dock's bean count is no longer the relevant budget.
-  return onPayerChanged(()=>{
-   readZhihuStatus().then(status=>setZhihu(status)).catch(()=>undefined);
-   setRefresh(n=>n+1);
-  });
- },[]);
- useEffect(()=>{
-  // The callback redirects back with `?zhihu=ok|error|denied`; show it once, then drop it from the
-  // address so a reload does not repeat the message.
-  const flag=new URLSearchParams(window.location.search).get('zhihu');
-  if(flag)window.history.replaceState(null,'',window.location.pathname+(window.location.search.replace(/[?&]zhihu=[^&]*/,'').replace(/^&/,'?')));
-  setZhihuFlag(flag);
- },[]);
- useEffect(()=>{
-  // Entering a story signs the account in: without a payer, send the visitor straight to Zhihu and
-  // come back to this exact page. A deployment without login configured just loads normally.
-  if(!zhihu)return;
-  // The server decides whether this browser can pay. Local storage is only a hint, so a leftover
-  // token from a retired mode cannot skip the sign-in.
-  if(!zhihu.can_generate&&zhihu.configured){
-    window.location.replace(zhihuLoginLink(window.location.pathname+window.location.search));
-    return;
-  }
-  setAccessReady(true);
-},[zhihu]);
- useEffect(()=>{
-  if(!accessReady)return;
   let live=true;const params=new URLSearchParams(window.location.search),id=params.get('work'),story=params.get('story');
   if(id){setSelected(id);setOpening(false);}
   else if(story){api('/stories/'+encodeURIComponent(story)+'/open',{}).then(d=>{if(live){setSelected(d.id);setWork(d);window.history.replaceState(null,'','/author?work='+encodeURIComponent(d.id));}}).catch(e=>{if(live){setMessage(e.message);setMessageError(true);}}).finally(()=>{if(live)setOpening(false);});}
   else setOpening(false);
   return()=>{live=false;};
- },[accessReady]);
- useEffect(()=>{if(!accessReady)return;let live=true;api('/projects').then(d=>{if(live){setWorks(d);const params=new URLSearchParams(window.location.search);if(!params.get('story')&&!params.get('work')&&d.length){setSelected(d[0].id);window.history.replaceState(null,'','/author?work='+encodeURIComponent(d[0].id));}}}).catch(e=>{if(live){setMessage(e.message);setMessageError(true);}});return()=>{live=false;};},[accessReady]);
+ },[]);
+ useEffect(()=>{let live=true;api('/projects').then(d=>{if(live){setWorks(d);const params=new URLSearchParams(window.location.search);if(!params.get('story')&&!params.get('work')&&d.length){setSelected(d[0].id);window.history.replaceState(null,'','/author?work='+encodeURIComponent(d[0].id));}}}).catch(e=>{if(live){setMessage(e.message);setMessageError(true);}});return()=>{live=false;};},[]);
  useEffect(()=>{
   if(!selected)return;
   let live=true,controller:AbortController|undefined;
@@ -141,11 +101,10 @@ export default function Author(){
   resetKey:selected+':'+(work?.run_id||''),
   targetKey:[stage,recommendation?.id||'',...active.map(task=>task.id+':'+task.status)].join('|')});
  return <main className="author-page">
-  <header className="studio-header"><Link href="/" className="studio-brand">叙间<span>STORYLOOM / STUDIO</span></Link><div className="studio-header-right"><Link className="studio-back" href="/"><ArrowLeft size={15}/><span>返回故事市场</span></Link><AccountDock next={'/author'+(selected?'?work='+encodeURIComponent(selected):'')}/></div></header>
+  <header className="studio-header"><Link href="/" className="studio-brand">叙间<span>STORYLOOM / STUDIO</span></Link><div className="studio-header-right"><Link className="studio-back" href="/"><ArrowLeft size={15}/><span>返回故事市场</span></Link></div></header>
   <div className="studio-heading"><div><span className="studio-eyebrow">MICROFICTION TO MOTION</span><h1>把一个脑洞，拍成一幕。</h1><p>阅读原文，选择风格，见证微小说成为漫剧的每一步。</p></div>{works.length>0&&<label className="studio-picker">继续已有制作<select aria-label="继续已有制作" value={selected} onChange={e=>{if(e.target.value)window.location.href='/author?work='+encodeURIComponent(e.target.value);}}><option value="">选择我的制作</option>{works.map(w=><option value={w.id} key={w.id}>{w.title}</option>)}</select></label>}</div>
   <InteractionFeedback busy={opening||busy} text={opening?'正在读取所选微小说原文与制作记录…':busy?actionLabel:message} error={!opening&&!busy&&messageError}/>
   {syncError&&<div className="studio-error" role="alert">{syncError}{work?' · 当前显示上次同步结果。':''}<button disabled={busy} onClick={()=>setRefresh(n=>n+1)}>重新同步</button></div>}
-  {zhihuFlag&&(()=>{const notice=zhihuNotice(zhihuFlag);return notice?<div className={notice.error?'studio-error':'studio-notice'} role="status">{notice.text}</div>:null;})()}
   {!opening&&!selected&&<section className="studio-empty"><BookOpen size={35}/><h2>从一篇原作开始</h2><p>前往故事市场选择一篇原作，阅读正文、确定画风，再把它制作成属于你的完整漫剧。</p><a className="button primary" href="/">去故事市场选原作 <ArrowRight size={15}/></a><WorkProgress/></section>}
   {!opening&&selected&&!work&&!syncError&&<InteractionFeedback busy text="正在同步这篇微小说的制作进度…"/>}
   {work&&<>
@@ -180,7 +139,7 @@ export default function Author(){
       </SegmentReview>}
       {stage!=='segments_review'&&(work.episodes||[]).length>0&&<SegmentReview episodes={work.episodes} collapsed/>}
       {problems.length>0&&<div className="studio-error">有 {problems.length} 项任务需要处理，已生成的结果会保留。<button onClick={()=>{setFilter('attention');setExpanded(true);document.getElementById('studio-activity')?.scrollIntoView({behavior:'smooth'});}}>查看具体提示 <ArrowRight size={13}/></button>{retryCurrentNode&&<button disabled={busy||!paid} title={!paid?'请先勾选本页的模型调用许可':'带上结构错误重跑，保留已通过校验的片段'} onClick={()=>act(async()=>{await api('/projects/'+selected+'/retry-node',{confirm_paid:true});},'正在带上结构错误重新运行当前节点，保留已通过的片段…')}>重试本节点</button>}</div>}
-      {stage!=='published'&&<label className="checkbox studio-paid"><input type="checkbox" checked={paid} onChange={e=>setPaid(e.target.checked)}/>允许本次操作调用付费模型；生成漫剧将继续执行后续制作步骤</label>}
+      {stage!=='published'&&<label className="checkbox studio-paid"><input type="checkbox" checked={paid} onChange={e=>setPaid(e.target.checked)}/>允许本次操作调用模型；生成漫剧将继续执行后续制作步骤</label>}
       {stage==='style'&&<><p>让 AI 根据原文推荐几种电影视觉语言，也可以直接写下你的想法。</p><button className="button secondary" disabled={busy||recommending||!paid} onClick={()=>act(async()=>{const task=await api('/projects/'+selected+'/recommend',{confirm:true});setWork((current:any)=>current?.id===selected?{...current,recommend_task_status:task}:current);})}>{recommending?'AI 正在构思电影视觉…':'让 AI 推荐电影风格'}</button>{recommendation&&<div ref={productionFollow.targetRef} className={'studio-live-module'+(followEnabled&&productionFollow.following?' is-following':'')}><StyleProgress task={recommendation} detailed connection={streamConnection}/></div>}<StyleOptions task={recommendation} options={work.recommendations||[]} art={art} tone={tone} onSelect={(nextArt,nextTone)=>{setArt(nextArt);setTone(nextTone);}}/><label>电影视觉提示词<textarea rows={4} maxLength={500} value={art} onChange={e=>setArt(e.target.value)} placeholder="选用方案会带入全片视觉规则，也可以编辑成像媒介、构图、焦段、运动、灯光与调色。"/></label><label>剧情气质<input maxLength={300} value={tone} onChange={e=>setTone(e.target.value)} placeholder="例如：悬疑中带一些荒诞幽默"/></label><button className="button primary" disabled={busy||inFlight||!paid||art.trim().length<2||tone.trim().length<2} onClick={()=>act(async()=>{await restartPreparation(art,tone);},'正在保存电影视觉方向，安排人物与场景制作…')}>{browsingEarlier?'确定电影风格，重新测试后续步骤':'确定电影风格，生成人物与场景'} <ArrowRight size={15}/></button><p className="studio-note">本次会选取原文制作一个 4–8 镜头的完整短场景，人物与场景图片完成后由你确认。</p></>}
       {stage==='assets_review'&&<p>分别检查角色身份三视图（含人类、类人及神话生物）、需要的独立服装和无人场景。确认后直接用这些参考图编写组合分镜。</p>}
       {stage==='assets_review'&&(creative?.bare_costumes?.length||0)>0&&<div className="studio-note studio-bare-costumes"><strong>空衣服模式 · {creative.bare_costumes.length} 个角色</strong><ul>{(creative.bare_costumes||[]).map((item:any)=><li key={item.costume_id}>{item.name} · {item.costume_id} · {item.character_ref} — {item.description}</li>)}</ul><p className="studio-note">这些角色天然体表、不着衣物：服装环节已按空衣服模式给出结论，因此不会为它们生成服装图，画面里也不会添加衣物。角色 → 服装 → 场景的顺序对所有角色都完整跑过。</p></div>}
@@ -192,7 +151,7 @@ export default function Author(){
       {['storyboarding','rendering','film_review','published'].includes(stage||'')&&work.storyboard_review&&<details className={'studio-note studio-review '+(work.storyboard_review.approved?'is-passed':'is-rejected')} open={!work.storyboard_review.approved}><summary>分镜专业预审 · {work.storyboard_review.approved?'通过':'有复核提示'}</summary><ul>{(work.storyboard_review.issues||[]).map((issue:string,index:number)=><li key={index}>{issue}</li>)}</ul>{!work.storyboard_review.issues?.length&&<p className="studio-note">预审没有给出具体问题。</p>}<p className="studio-note">这是文字预审，不是成片验收：连续性 {work.storyboard_review.continuity||'—'} · 戏剧逻辑 {work.storyboard_review.dramatic_logic||'—'} · 可剪辑性 {work.storyboard_review.editability||'—'} · 制作可行性 {work.storyboard_review.production_feasibility||'—'}</p></details>}
       {stage==='film_review'&&work.review_skill&&<aside className="studio-note"><strong>{work.review_skill.title}</strong><ul>{(work.review_skill.checklist||[]).map((item:string)=><li key={item}>{item}</li>)}</ul></aside>}
       {stage==='film_review'&&activeShot?.clip&&<div className="author-film"><h3>顺序观看 · {index+1} / {shots.length}</h3><video key={activeShot.clip.id} src={activeShot.clip.media} controls autoPlay={index>0} onEnded={()=>setIndex(i=>Math.min(i+1,shots.length-1))} onTimeUpdate={e=>{if(e.currentTarget.currentTime>=Math.min(activeShot.shot.edit_seconds,activeShot.clip.duration)){e.currentTarget.pause();if(index<shots.length-1)setIndex(index+1);}}}/><div>{shots.map((s:any,i:number)=><button className={'button '+(i===index?'primary':'secondary')} key={s.shot.id} onClick={()=>setIndex(i)}>{s.shot.id}</button>)}</div><p className="studio-note">按剪辑时长顺序播放视频。当前尚未提供独立配音、混音与单文件成片导出。</p></div>}
-      {!browsingEarlier&&stage==='episode_review'&&<div className="studio-confirm"><p className="studio-note">本集已经生成完成：现在可以把它发布给读者，或者继续做下一幕。已经生成的部分会保留，未开始的情节也不会提前产生费用。</p><button className="button secondary" disabled={busy} onClick={()=>act(async()=>{await api('/projects/'+selected+'/publish',{confirm:true,confirm_paid:true});},'正在把已完成的情节发布到读者目录…')}>发布已完成的情节</button><button className="button primary" disabled={busy||!paid} onClick={()=>act(async()=>{await api('/projects/'+selected+'/episodes/continue',{confirm_paid:true});followProduction();},'正在开始下一幕的分镜与视频…')}>继续下一个情节 <ArrowRight size={14}/></button></div>}
+      {!browsingEarlier&&stage==='episode_review'&&<div className="studio-confirm"><p className="studio-note">本集已经生成完成：现在可以把它发布给读者，或者继续做下一幕。已经生成的部分会保留，未开始的情节不会提前制作。</p><button className="button secondary" disabled={busy} onClick={()=>act(async()=>{await api('/projects/'+selected+'/publish',{confirm:true,confirm_paid:true});},'正在把已完成的情节发布到读者目录…')}>发布已完成的情节</button><button className="button primary" disabled={busy||!paid} onClick={()=>act(async()=>{await api('/projects/'+selected+'/episodes/continue',{confirm_paid:true});followProduction();},'正在开始下一幕的分镜与视频…')}>继续下一个情节 <ArrowRight size={14}/></button></div>}
       {!browsingEarlier&&['assets_review','film_review'].includes(stage||'')&&<div className="studio-confirm"><label className="checkbox"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/>我已查看本轮{stage==='assets_review'?'人物与场景图片':'完整视频'}，确认满意</label><button className="button primary" disabled={busy||!confirmed||!ready||(stage==='assets_review'&&!paid)} onClick={()=>act(async()=>{await api('/projects/'+selected+(stage==='assets_review'?'/generate':'/publish'),{confirm:true,confirm_paid:true});},stage==='assets_review'?'正在确认图片，安排分镜与视频制作…':'正在核对片段，保存发布结果…')}>{stage==='assets_review'?'确认基础素材，生成分镜':'确认成片，发布到读者目录'} <ArrowRight size={15}/></button></div>}
       <div className="studio-asset-grid">{cards.map((c:any)=><article className="studio-asset" key={c.task?.id||c.name}><h3>{c.name}</h3>{c.description&&<p>{c.description}</p>}{c.asset?(stage==='film_review'?<video controls src={c.asset.media}/>:<img src={c.asset.media} alt={c.name}/>):<InteractionFeedback busy={activeStatuses.includes(c.task?.status)} text={c.task?.message||'等待制作'} title={stage==='film_review'?'视频制作':'画面制作'}/>}<GenerationPrompt generation={c.task?.generation} pending={activeStatuses.includes(c.task?.status)} group="asset-review-prompts"/><AssetFeedback name={c.name} task={c.task} text={notes[c.task?.id]||''} paid={paid} busy={busy} inFlight={inFlight} browsingEarlier={browsingEarlier} showPermission={false} onTextChange={text=>setNotes(previous=>({...previous,[c.task?.id]:text}))} onPaidChange={setPaid} onSubmit={()=>act(async()=>{await api('/projects/'+selected+'/feedback',{task_id:c.task.id,text:notes[c.task.id],confirm_paid:true});setConfirmed(false);},'正在保存修改意见，安排重新制作…')}/></article>)}</div>
       {stage==='published'&&<div className="studio-published"><Clapperboard size={38}/><p>作品已进入读者目录，并前置展示为“已有漫剧”。{remainingEpisodes.length>0&&'这部作品还没做完：继续下一个情节，再次发布会把新的一集接在后面。'}</p><a className="button primary" href={work.release_id?'/?story='+encodeURIComponent(work.release_id):'/'}>观看这部漫剧 <ArrowRight size={15}/></a>{!browsingEarlier&&remainingEpisodes.length>0&&<button className="button secondary" disabled={busy||!paid} onClick={()=>act(async()=>{await api('/projects/'+selected+'/episodes/continue',{confirm_paid:true});followProduction();},'正在开始下一集的分镜与视频…')}>继续下一个情节（还有 {remainingEpisodes.length} 集） <ArrowRight size={14}/></button>}<a className="button secondary" href="/">选择下一个脑洞</a></div>}

@@ -1,4 +1,4 @@
-"""Account-owned author production workflow."""
+"""Local author production workflow: every project belongs to the single local maker."""
 import hashlib
 import asyncio
 import json
@@ -12,8 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from .db import HISTORY_LIMIT, Session, Record, Task, uid, record_dict, task_dict, generation_debug
 from . import creative, director
-from . import zhihu_stories
-from .catalog import labels
+from . import story_sources
 from .skill_runtime import call_node
 from .production_nodes import (NODES, queue_node, node_snapshots, is_node_task, stopped_node,
                                stopped_stage_media)
@@ -25,89 +24,49 @@ router = APIRouter(prefix='/api/author', tags=['author'])
 open_lock = Lock()
 attempt_lock = Lock()
 def get_work(db, pid):
-    """The project behind an HTTP request, refused when it belongs to somebody else."""
-    row = work_row(db, pid)
-    owner = row.data.get('owner')
-    actor = current_actor()
-    if owner and owner != actor:
-        # Another account's work is not this visitor's work: it must not appear, and it must not be
-        # resumable on someone else's bean wallet. Ownerless records are pre-account work.
-        raise HTTPException(404, '作品不存在')
-    if not owner:
-        from .model_access import public_demo_mode
-
-        # Pre-account work may only be claimed through ``open_story``. Hiding it here prevents a
-        # visitor who guessed an old id from editing it before the ownership transition is atomic.
-        if public_demo_mode():
-            raise HTTPException(404, '作品不存在')
-    return row
+    """The project row behind an HTTP request."""
+    return work_row(db, pid)
 
 
 def work_row(db, pid):
-    """The project row without an ownership test, for the worker that already holds a task.
-
-    A queued task was authorized when it was created; its stored payer session can expire or be
-    retired by the time the worker runs it, so the worker must not repeat the visitor check.
-    """
+    """The project row without any access test, for the worker that already holds a task."""
     row = db.get(Record, pid)
     if not row or row.kind != 'author_project':
         raise HTTPException(404, '作品不存在')
     return row
 
 
-def current_actor():
-    """Who this request acts as, for work ownership. None in a local run without accounts."""
-    from .model_access import current_actor_id
+def work_id_for(work_id):
+    """Stable project id for one story; a single local maker never shares a project record."""
+    return 'work_story_' + hashlib.sha256(work_id.encode()).hexdigest()[:32]
 
-    return current_actor_id()
-
-
-def work_id_for(work_id, actor):
-    """Stable per-owner id for one story, so two accounts never share one project record."""
-    return 'work_zhihu_' + hashlib.sha256(f'{work_id}|{actor}'.encode()).hexdigest()[:32]
 
 @router.post('/stories/{work_id}/open')
 def open_story(work_id: str):
-    if not zhihu_stories.valid_id(work_id):
+    if not story_sources.valid_id(work_id):
         raise HTTPException(422, '故事标识格式无效。')
-    actor = current_actor()
-    from .model_access import public_demo_mode
-    if public_demo_mode() and not actor:
-        raise HTTPException(401, '请先登录，再制作属于自己的漫剧版本。')
-    pid = work_id_for(work_id, actor)
+    pid = work_id_for(work_id)
     with open_lock:
         with Session() as db:
             existing = db.get(Record, pid)
             if existing is not None and existing.kind == 'author_project':
                 return workspace(pid)
         if existing is None:
-            listing = zhihu_stories.stories()
-            selected = next((x for x in listing['items'] if x['work_id'] == work_id), None)
-            if not selected:
-                raise HTTPException(404, '请从微小说目录选择作品。')
-            if '脑洞' not in labels(selected.get('labels')):
-                raise HTTPException(422, '当前制作流程仅支持脑洞类微小说。')
-            imported = zhihu_stories.import_story(work_id)
-            source = imported['story']
+            source = story_sources.detail(work_id)
             with Session.begin() as db:
                 db.add(Record(id=pid, kind='author_project', data={
-                    'title': selected.get('title') or source['title'], 'source_id': source['id'],
-                    'zhihu_work_id': work_id, 'stage': 'style', 'workflow': 'author-brainstorm-v7',
-                    'owner': actor,
-                    'source_warning': imported.get('warning') if imported.get('stale') else None,
+                    'title': source.get('title') or '未命名故事', 'source_id': source['id'],
+                    'source_work_id': work_id, 'stage': 'style', 'workflow': 'author-brainstorm-v7',
+                    'source_warning': source.get('warning'),
                 }))
     return workspace(pid)
+
 
 @router.get('/projects')
 def projects():
     with Session() as db:
-        actor = current_actor()
         rows = list(db.scalars(select(Record).where(Record.kind == 'author_project').order_by(Record.created.desc())))
-        from .model_access import public_demo_mode
-        # A public visitor sees only their work. Ownerless records remain available in local mode;
-        # online they are reached solely through the atomic one-time claim in ``open_story``.
-        return [record_dict(r) for r in rows
-                if r.data.get('owner') == actor or (not public_demo_mode() and not r.data.get('owner'))]
+        return [record_dict(r) for r in rows]
 
 @router.get('/projects/{pid}')
 def workspace(pid: str):
@@ -735,19 +694,10 @@ def feedback(pid: str, body: creative.Feedback):
     return result
 
 @router.post('/projects/{pid}/publish')
-def publish(pid: str, request: Request, body: creative.Publish):
-    # A release is public, so keep a small, explicit creator snapshot on it. Never copy the
-    # account uid, OAuth token, payer identity, or private project id into public release data.
-    from .zhihu_oauth import current_account
-    account = current_account(request)
-    creator = None
-    if account:
-        name = str(account.get('fullname') or '').strip()[:80] or '知乎创作者'
-        avatar = account.get('avatar_path')
-        creator = {
-            'name': name,
-            'avatar_path': avatar.strip() if isinstance(avatar, str) and avatar.strip().startswith('https://') else None,
-        }
+def publish(pid: str, body: creative.Publish):
+    # A release is public, so keep a small creator snapshot on it. The local workbench has no
+    # signed-in identity, so attribution is a fixed neutral label rather than an account.
+    creator = {'name': '本地创作者', 'avatar_path': None}
     with Session() as db:
         row = get_work(db, pid)
         # A finished episode can go out before the rest of the film exists.
@@ -758,12 +708,12 @@ def publish(pid: str, request: Request, body: creative.Publish):
     with Session.begin() as db:
         row=get_work(db,pid);row.data={**row.data,'stage':'published','release_id':result['id']}
         release=db.get(Record,result['id'])
-        if release and release.kind=='reader_release' and creator and release.data.get('creator') != creator:
+        if release and release.kind=='reader_release' and release.data.get('creator') != creator:
             release.data={**release.data,'creator':creator};release.version+=1;db.flush()
             result=record_dict(release);annotated=release
     if annotated:
-        # Release manifests are immutable by version. Public creator attribution therefore becomes
-        # a new manifest revision instead of mutating the already exported v1 file.
+        # Release manifests are immutable by version, so the attribution becomes a new revision
+        # instead of mutating the already exported v1 file.
         from .video_storage import export_manifest
         export_manifest(annotated)
     return result

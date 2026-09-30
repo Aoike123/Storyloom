@@ -3,8 +3,8 @@
 ## Supported version
 
 Security fixes are applied to the latest revision of the default branch. This
-repository includes an anonymous public-demo deployment, but it is not a
-hardened multi-user service.
+repository is a pure local workbench that binds to the loopback interface; it
+is not a multi-user service.
 
 ## Reporting a vulnerability
 
@@ -16,19 +16,19 @@ in a public issue.
 
 ## Deployment boundary
 
-The current demo intentionally has no account or tenant isolation. Its supplied
-public stack terminates HTTPS at Caddy, fixes provider transports and model ids
-in application code, encrypts short-lived BYOK sessions, and places operator
-keys behind independent daily reservation budgets. Do not publish ports 3000
-or 8000 directly, bypass the reverse proxy, or run a public pool without
-conservative `PUBLIC_POOL_{LLM,IMAGE,VIDEO}_DAILY_BUDGET_CNY` limits.
+The workbench intentionally has no account, session, or tenant isolation: all
+works, assets, and generation records belong to this machine's single operator.
+Model keys live only in the local settings file (`.env.local`, or the file
+named by `STORYLOOM_ENV_FILE`) and are never returned to the browser in full.
+The services bind to `127.0.0.1` only. Do not publish ports 3000 or 8000,
+point a reverse proxy at them, or otherwise expose the workbench beyond the
+local machine.
 
-The anonymous workspace is shared: visitors can see and change common works.
-The supplied per-IP minute buckets, active-task cap, and container ceilings are
-availability guardrails for a small single-server demo, not a security boundary.
-There is no CAPTCHA, distributed abuse detection, upstream DDoS protection, or
-content moderation boundary yet. Add those controls and tenant isolation before
-treating this as a general production service.
+Because the workbench is loopback-only, its threat surface is whoever can
+already reach this machine; it deliberately ships no remote-abuse controls.
+Before exposing it as a networked or multi-user service you must add HTTPS,
+real account and session isolation, per-visitor ownership, abuse and rate
+limiting, and content moderation.
 
 Never commit `.env.local`, files below `data/`, application logs, database
 files, uploaded media, or real provider credentials. If a credential is ever

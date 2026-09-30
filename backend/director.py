@@ -211,9 +211,7 @@ def segment_stage(payload,passages,task_id,save_stage,treatment):
         issues=segments.plan_issues(plan,passages)
         if issues:raise ProviderError('已保存的微小说片段与原文不一致：'+'；'.join(issues[:3]))
         return plan,segments.plan_dump(plan,passages),'saved'
-    shot_limit,limit_note=shot_budget_limit()
-    if shot_limit is not None and shot_limit<segments.MIN_AFFORDABLE_SHOTS:
-        raise ProviderError('共享体验额度今天不足以完成一个短片（'+limit_note+'）。请改用自己的 Key，或明天再试。')
+    shot_limit=None
     save_stage('phase','正在把微小说切割成有序片段',28)
     attempts=[]
     def plan_contract(raw):
@@ -230,16 +228,6 @@ def segment_stage(payload,passages,task_id,save_stage,treatment):
     cut=segments.plan_dump(plan,passages)
     save_stage('segments',cut,32)
     return plan,cut,'generated'
-
-
-def shot_budget_limit():
-    """Cap the whole-film shot count to what this account's beans can still pay for."""
-    try:
-        from .model_access import affordable_shot_budget
-    except ImportError:return None,''
-    decision=affordable_shot_budget()
-    if decision is None:return None,''
-    return decision
 
 
 def chunk_issues(chunk,segment,passages,preproduction,expected_ids=None,earlier_ids=(),content=None):

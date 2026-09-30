@@ -4,9 +4,9 @@ Thank you for helping improve Storyloom.
 
 ## Development setup
 
-Follow the quick-start instructions in `README.md`. Keep `ALLOW_PAID_CALLS=false`
-for development and tests unless you are deliberately running an authorized
-provider integration test with an agreed budget.
+Follow the quick-start instructions in `README.md`. For development and tests,
+leave the model keys in `.env.local` empty — the automated tests never call a real
+model, so no keys are needed to run the suite.
 
 Before submitting a change, run:
 

@@ -1,6 +1,4 @@
-"""Failure reports stay useful locally and stay hidden in public demo mode."""
-import pytest
-from fastapi import HTTPException
+"""Failure reports stay useful to the local operator, with the full traceback server-side only."""
 
 from backend import diagnostics
 from backend.db import Record, Session, Task
@@ -30,14 +28,3 @@ def test_secrets_are_scrubbed_from_a_failure_report():
     assert 'sk-abcdef1234567890' not in scrubbed
     assert 'abcd1234efgh5678' not in scrubbed
     assert 'redacted' in scrubbed
-
-
-def test_public_demo_mode_withholds_failure_details(client, monkeypatch):
-    monkeypatch.setenv('STORYLOOM_DEMO_MODE', 'public')
-    with Session.begin() as db:
-        db.add(Task(id='broken-task', kind='image', status='running', owner='w'))
-    try:
-        raise TypeError('boom')
-    except TypeError as exc:
-        code = diagnostics.record_failure('broken-task', exc)
-    assert client.get('/api/diagnostics/' + code).status_code == 404

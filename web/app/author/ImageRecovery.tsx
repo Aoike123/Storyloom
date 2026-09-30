@@ -20,7 +20,7 @@ export default function ImageRecovery({images,paid,busy,onRetry,onRetryAll,draft
       const saved=(image.prompt||'').trim();
       const text=(drafts[image.task_id]??image.prompt??'').trim();
       const ready=text.length>=10&&text!==saved;
-      const reason=busy?'正在提交，请稍候。':!paid?'勾选上方付费调用后可重试。'
+      const reason=busy?'正在提交，请稍候。':!paid?'勾选上方的模型调用许可后可重试。'
         :text.length<10?'提示词至少需要 10 个字符。'
         :!ready?'请先修改提示词：同样的请求会被供应商再次拒绝。':'';
       return <div className="asset-redesign-heading is-rejected" key={image.task_id}>
@@ -35,6 +35,6 @@ export default function ImageRecovery({images,paid,busy,onRetry,onRetryAll,draft
         </div>
       </div>;
     })}
-    <small>{!paid?'勾选上方付费调用后可重试。':'图片补齐后会自动进入确认图片。'}</small>
+    <small>{!paid?'勾选上方的模型调用许可后可重试。':'图片补齐后会自动进入确认图片。'}</small>
   </section>;
 }

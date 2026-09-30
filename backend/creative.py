@@ -48,12 +48,12 @@ class Style(BaseModel):
     confirm_paid:bool=False
 
 def paid(body,*kinds):
-    """Gate a step on the providers it actually needs.
+    """Gate a step on the models it actually needs.
 
-    Gating on all three providers meant a spent video budget blocked text-only steps with a
-    message about confirming fees, even though the visitor had confirmed them.
+    Gating on all three providers meant a missing video key blocked text-only steps with a
+    message about model setup, even though the author had confirmed the step.
     """
-    if not body.confirm_paid:raise HTTPException(422,'请确认本次制作调用模型产生的费用。')
+    if not body.confirm_paid:raise HTTPException(422,'请确认调用模型执行本次制作。')
     message=payment_message(*(kinds or ('llm','image','video')),cfg=settings())
     if message:raise HTTPException(422,message)
 

@@ -23,7 +23,7 @@ test('a filled feedback card shows its permission control and enables after conf
   assert.equal(button(tree).props.disabled,true);
   button(tree).props.onClick();assert.equal(submitted,0);
   const html=renderToStaticMarkup(React.createElement(AssetFeedback,props));
-  assert.match(html,/本卡片的模型调用许可/);assert.match(html,/允许本作品调用付费模型/);
+  assert.match(html,/本卡片的模型调用许可/);assert.match(html,/允许本作品调用模型/);
   const permission=tree.props.children.find(child=>child?.props?.className?.includes('asset-feedback-permission'));
   permission.props.children[0].props.onChange({target:{checked:true}});
   tree=AssetFeedback({...props,paid});assert.equal(button(tree).props.disabled,false);

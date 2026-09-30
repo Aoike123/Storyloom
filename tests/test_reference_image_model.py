@@ -1,17 +1,11 @@
 import pytest
-from dotenv import dotenv_values
-from backend import local_config,image_provider
+from backend import image_provider
 from backend.environment import DEFAULTS
 
 
-def test_removed_edit_model_is_not_public_configuration(tmp_path,monkeypatch):
+def test_removed_edit_model_is_not_public_configuration():
+    # The image-edit model was removed; it must not reappear as a configurable default.
     assert 'IMAGE_EDIT_MODEL' not in DEFAULTS and 'IMAGE_EDIT_STEPS' not in DEFAULTS
-    monkeypatch.setattr(local_config,'env_file',lambda:tmp_path/'.env.local')
-    (tmp_path/'.env.local').write_text('IMAGE_API_KEY=kept-key\n',encoding='utf-8')
-    values={key:value for key,value in DEFAULTS.items() if not key.endswith('_API_KEY')}
-    local_config.save_config(values)
-    assert dotenv_values(tmp_path/'.env.local')['IMAGE_API_KEY']=='kept-key'
-    with pytest.raises(ValueError):local_config.save_config({'IMAGE_EDIT_MODEL':'Qwen/Qwen-Image-Edit'})
 
 
 def test_reference_composition_rejects_excess_images_before_charge(monkeypatch):

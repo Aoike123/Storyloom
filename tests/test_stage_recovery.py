@@ -148,32 +148,22 @@ def test_any_completed_step_can_be_redone_and_takes_its_branch_with_it(creative)
         assert not project.data.get('units') and not project.data.get('board')
 
 
-def test_a_worker_side_rerun_keeps_the_payer_the_browser_attached(creative):
-    """The reported bug: 已配置 Key 却反复提示使用算力豆.
-
-    The worker's automatic recovery ran outside the request scope, so the replacement node was
-    created with an empty payer and refused every call. The recorded database showed exactly that:
-    the failed node carried ``session_id=`` while its siblings carried the browser's key session.
-    """
+def test_a_worker_side_rerun_replaces_the_node_and_requeues_the_clips(creative):
+    """The worker's automatic recovery runs outside any request scope: the replacement node and
+    the re-queued clips must still be recorded, so the stopped work can move on without a browser."""
     from backend import worker
-    from backend.model_access import access_scope
 
-    node_id=rendering_stage()
+    node_id = rendering_stage()
     with Session.begin() as db:
-        node=db.get(Task,node_id)
-        node.session_id='model_access_visitor_key_session'
-        node.message='漫剧生成暂停：第 1 段失败'
-        node.payload={**node.payload,'work_id':'back-work'}
-    # Recovery runs with no browser in scope, exactly as the worker does it.
-    with access_scope(''):
-        assert worker.auto_retry_node(node_id) is True
+        node = db.get(Task, node_id)
+        node.message = '漫剧生成暂停：第 1 段失败（错误编号 E-AAAAAA）'
+        node.payload = {**node.payload, 'work_id': 'back-work'}
+    assert worker.auto_retry_node(node_id) is True
     with Session() as db:
-        replacement=db.get(Task,db.get(Record,'back-work').data['supervisor'])
-        assert replacement.id!=node_id
-        assert replacement.session_id=='model_access_visitor_key_session'
-        rerun=[task for task in db.scalars(select(Task).where(Task.kind=='video',Task.status=='queued'))]
-        assert len(rerun)==3
-        assert {task.session_id for task in rerun}=={'model_access_visitor_key_session'}
+        replacement = db.get(Task, db.get(Record, 'back-work').data['supervisor'])
+        assert replacement.id != node_id
+        rerun = [task for task in db.scalars(select(Task).where(Task.kind == 'video', Task.status == 'queued'))]
+        assert len(rerun) == 3
 
 
 def test_a_retry_only_rewrites_the_segment_that_failed(creative):
@@ -221,18 +211,17 @@ def test_a_long_list_of_failures_stays_readable():
 
 
 def test_every_picture_of_one_round_comes_back_in_one_action(creative,monkeypatch):
-    """The picture panel offers one button per picture; the whole set takes one visitor action."""
-    from test_image_recovery import accepting_pictures,own_key_access,stopped_by_the_operator_key
-    items,_=stopped_by_the_operator_key(creative,monkeypatch)
-    headers=own_key_access(creative)
+    """The picture panel offers one button per picture; the whole set takes one author action."""
+    from test_image_recovery import accepting_pictures,stopped_by_the_image_key
+    items,_=stopped_by_the_image_key(creative,monkeypatch)
     accepting_pictures(monkeypatch)
-    response=creative.post('/api/author/projects/back-work/images/retry',json={'confirm_paid':True},headers=headers)
+    response=creative.post('/api/author/projects/back-work/images/retry',json={'confirm_paid':True})
     assert response.status_code==200,response.text
     assert len(response.json()['tasks'])==len(items)
     drain()
-    work=creative.get('/api/author/projects/back-work',headers=headers).json()
+    work=creative.get('/api/author/projects/back-work').json()
     assert not work['retryable_images'] and work['stage']=='assets_review'
     assert all(item['asset'] for item in work['creative']['items'])
     # Nothing is left to repair, so a second click must not queue another round.
-    again=creative.post('/api/author/projects/back-work/images/retry',json={'confirm_paid':True},headers=headers)
+    again=creative.post('/api/author/projects/back-work/images/retry',json={'confirm_paid':True})
     assert again.status_code==409

@@ -6,9 +6,8 @@ content unless a file says otherwise.
 
 It does **not** grant rights to any of the following:
 
-- story text, author information, avatars, labels, or metadata retrieved from
-  Zhihu or another external service;
-- material uploaded by users or supplied by participating authors;
+- story text, author information, labels, or any other material imported into
+  the workbench by the operator (pasted text or uploaded files);
 - third-party reference images, fonts, music, video, trademarks, or logos;
 - runtime model output whose reuse is governed by the relevant model provider,
   input rights, or applicable law;
@@ -19,6 +18,6 @@ The names “Storyloom” and “叙间” and their visual marks are not licens
 trademarks. See Section 6 of the Apache License for the applicable trademark
 limitation.
 
-Before publishing a demo made from a Zhihu story, confirm the contest terms and
-the author's authorization for the intended display, adaptation, and
-distribution scope. Preserve source and author attribution in the product.
+Before publishing a work made from a locally imported story, confirm the
+author's authorization for the intended display, adaptation, and distribution
+scope. Preserve source and author attribution in the product.

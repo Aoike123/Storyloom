@@ -17,7 +17,7 @@ export default function AssetFeedback({name,task,text,paid,busy,inFlight,browsin
   const noteId='feedback-note-'+encodeURIComponent(task?.id||name);
   return <div className="asset-feedback">
     <label>修改意见<textarea aria-label={name+' 修改意见'} maxLength={1500} value={text} onChange={event=>onTextChange(event.target.value)} placeholder="直接描述想改哪里，AI 会整合完整提示词重新生成"/></label>
-    {!browsingEarlier&&showPermission&&<label className="checkbox asset-feedback-permission"><input type="checkbox" checked={paid} disabled={busy} onChange={event=>onPaidChange(event.target.checked)}/>允许本作品调用付费模型（当前标签页记住）</label>}
+    {!browsingEarlier&&showPermission&&<label className="checkbox asset-feedback-permission"><input type="checkbox" checked={paid} disabled={busy} onChange={event=>onPaidChange(event.target.checked)}/>允许本作品调用模型（当前标签页记住）</label>}
     <button type="button" className="button secondary" disabled={!!reason} title={reason||undefined} aria-describedby={noteId} onClick={()=>{if(!reason)onSubmit();}}>让 AI 按意见修改</button>
     <small id={noteId} className="asset-feedback-note">{reason||'意见会写入完整生成提示词并重新制作；新版本替换当前素材，原版本保留在历史记录中。'}</small>
   </div>;
