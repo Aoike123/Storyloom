@@ -1,6 +1,6 @@
 'use client';
 import {useEffect, useState} from 'react';
-import {Check, CircleAlert, Sparkles} from 'lucide-react';
+import {Check, ChevronDown, CircleAlert, Sparkles} from 'lucide-react';
 import type {ProgressTask} from './ProgressFeedback';
 import GenerationPrompt from './GenerationPrompt';
 import {SkillCallTrace} from './NodeSkills';
@@ -26,6 +26,7 @@ export default function TaskActivity({task, detailed = false}: {task: ProgressTa
   const retiredNote = superseded ? '此任务已因上游更新失效，记录保留供查看。' : '此任务已停止，已有记录保留供查看。';
   const problem = !active && !done && !retired;
   const [now, setNow] = useState(0);
+  const [historyOpen, setHistoryOpen] = useState(false);
   useEffect(() => {
     setNow(Date.now() / 1000);
     if (!active) return;
@@ -65,12 +66,15 @@ export default function TaskActivity({task, detailed = false}: {task: ProgressTa
       <p className="activity-status-note">{active ? now - activity.updated_at > 25 ? '还在等待下一次返回；已收到的进展与素材会保留。' : model ? '内容在完整检查后才用于后续制作。' : '等待期间可以阅读原文、查看素材，也可以稍后回来。' : retired ? retiredNote : done ? '本轮记录已保留，后续步骤可继续查看。' : '部分内容保留为草稿，后续步骤不会使用未通过检查的结果。'}</p>
     </> : activity.summary ? <p className="activity-summary-brief">{activity.summary}</p> : null}
     {detailed && !model && <GenerationPrompt key={task.id} generation={task.generation} pending={active}/>}
-    <details className="style-event-history activity-history"><summary>查看过程与内容 <span>{activity.events?.length || 0} 条记录</span></summary>
+    <div className="style-event-history activity-history">
+    <button type="button" className="history-toggle" aria-expanded={historyOpen} onClick={()=>setHistoryOpen(open=>!open)}>查看过程与内容 <span>{activity.events?.length || 0} 条记录</span><ChevronDown size={13} className={"history-chevron"+(historyOpen?" is-open":"")}/></button>
+    <div className={"expand"+(historyOpen?" is-open":"")} inert={!historyOpen || undefined} aria-hidden={!historyOpen || undefined}><div className="expand-inner">
       {task.result?.media?.startsWith('/media/') && <a href={task.result.media} target="_blank" rel="noreferrer">查看本次保存的{task.kind === 'video' ? '片段' : '画面'} ↗</a>}
       {!detailed && !model && <GenerationPrompt key={task.id} generation={task.generation} pending={active}/>}
       {!detailed && !!activity.items?.length && drafts}
       {activity.history?.map((item, index) => <section className="activity-past-call" key={index}><strong>{item.title}</strong><p>{item.summary || '本轮内容已返回。'}</p>{item.items?.map((draft, i) => <p key={i}><b>{draft.title}</b> · {draft.text}</p>)}</section>)}
       <ol>{activity.events?.map((event, index) => <li key={index}><time>{Math.max(0, Math.floor(event.at - activity.started_at))} 秒</time><span>{event.message}</span></li>)}</ol>
-    </details>
+    </div></div>
+    </div>
   </section>;
 }

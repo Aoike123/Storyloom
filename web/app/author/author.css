@@ -17,7 +17,7 @@
 .asset-redesign{padding:20px;margin:0 0 22px;border:1px solid #cfdcc2;border-left:4px solid #6f9458;border-radius:12px;background:#f5f9ef}
 .studio-step-return{padding:13px 17px;margin-bottom:14px;border:1px solid #cbdcbf;border-radius:8px;background:#f1f6e9;color:#5b744e;font-size:12px;line-height:1.8}
 .studio-step-return button{margin-left:12px;padding:5px 8px;border:0;background:transparent;color:#36583b;text-decoration:underline;cursor:pointer}
-.attempt-history>summary{cursor:pointer;color:#526f43;font-size:14px}.attempt-history>p{font-size:11px;color:#879779}
+.attempt-history>.history-toggle{color:#526f43;font-size:14px;padding:0 0 12px}.attempt-history>p{font-size:11px;color:#879779}
 .asset-redesign-heading{display:flex;align-items:center;justify-content:space-between;gap:22px}
 .asset-redesign h3{margin:0 0 7px;font-size:17px;font-weight:600;color:#365139}
 .asset-redesign p{margin:0;font-size:12px;color:#6c805d}
