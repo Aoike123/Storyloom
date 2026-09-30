@@ -1,6 +1,5 @@
 'use client';
 
-import StreamText from './StreamText';
 import {Check, CircleAlert, LoaderCircle, Sparkles} from 'lucide-react';
 import './progress-feedback.css';
 import './author/production-progress.css';
@@ -30,10 +29,6 @@ export const workStages = [
   {id: 'published', name: '发布作品', hint: '进入读者空间，供读者观看'},
 ];
 
-// Kept for existing callers; real streaming views provide their own stable stream key.
-export function Typewriter({text}: {text: string}) {
-  return <StreamText text={text} active streamKey="static-typewriter"/>;
-}
 
 export function ProgressBar({value, label}: {value?: number; label: string}) {
   const known = value !== undefined && Number.isFinite(value);

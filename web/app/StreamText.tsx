@@ -3,6 +3,10 @@ import {useEffect, useRef, useState} from 'react';
 import type {ComponentProps} from 'react';
 import {TextReveal} from './textReveal';
 
+// Once a paragraph has been fully revealed, later mounts with the same stream key show it at once:
+// the typewriter is reserved for the first return of a piece of text, never a re-typed echo.
+const revealed = new Map<string, string>();
+
 // All visible paragraphs share one frame loop, and idle paragraphs stop subscribing.
 const listeners = new Set<(now: number) => boolean>();
 let frame: number | undefined;
@@ -18,7 +22,7 @@ function subscribe(listener: (now: number) => boolean) {
 
 export default function StreamText({text, active = false, streamKey, instant = false}: {text: string; active?: boolean; streamKey: string; instant?: boolean}) {
   const buffer = useRef<TextReveal | null>(null);
-  if (!buffer.current) buffer.current = new TextReveal(text, streamKey, active && !instant);
+  if (!buffer.current) buffer.current = new TextReveal(text, streamKey, active && !instant && revealed.get(streamKey) !== text);
   const [visible, setVisible] = useState({key: streamKey, text: buffer.current.shown});
   const textNow = visible.key === streamKey ? visible.text : active && !instant ? '' : text;
 
@@ -28,6 +32,7 @@ export default function StreamText({text, active = false, streamKey, instant = f
     machine.update(text, streamKey, active, performance.now(), instant || motion.matches || document.hidden);
     const publish = () => setVisible(current => current.key === streamKey && current.text === machine.shown ? current : {key: streamKey, text: machine.shown});
     publish();
+    if (machine.shown === machine.target) revealed.set(streamKey, machine.target);
     const unsubscribe = machine.shown !== machine.target ? subscribe(now => {const pending = machine.advance(now); publish(); return pending;}) : () => {};
     const showAll = () => {if (document.hidden || motion.matches) {machine.finish(); publish(); unsubscribe();}};
     document.addEventListener('visibilitychange', showAll);
