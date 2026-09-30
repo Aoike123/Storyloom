@@ -121,6 +121,25 @@ def node_skill_detail(node: str):
     return {**public(binding), "effective_instructions": binding["system"]}
 
 
+@app.get("/api/models")
+def models():
+    """Read-only local model availability for the workbench status chip; never exposes keys."""
+    from .providers import settings
+
+    cfg = settings()
+    return {
+        "llm_configured": cfg["llm_configured"],
+        "image_configured": cfg["image_configured"],
+        "video_configured": cfg["video_configured"],
+        "models": {
+            "llm": cfg["llm_model"],
+            "image": cfg["image_model"],
+            "video": cfg["video_model"],
+        },
+        "config_file": cfg["config_file"],
+    }
+
+
 @app.get("/api/platform")
 def platform():
     from .workflows import WORKFLOWS

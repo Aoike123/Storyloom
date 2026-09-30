@@ -21,7 +21,7 @@ import useProductionFollow from './useProductionFollow';
 async function api(path:string,body?:unknown,signal?:AbortSignal){const r=await fetch('/api/author'+path,body===undefined?{signal}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal});const d=await r.json();const detail=typeof d.detail==='string'?d.detail:'暂时无法完成操作，请稍后再试。';if(!r.ok){throw Error(detail);}return d;}
 const stages:Record<string,string>={style:'先为这个故事，选择一种气质。',segments_review:'这段故事，切成几幕来讲？',preparing:'故事中的人物，正在走向画面。',assets_review:'这些形象，符合你的想象吗？',storyboarding:'这一段，拆成怎样的镜头？',rendering:'让分镜真正动起来。',episode_review:'这一集完成了，发布它，还是继续下一集？',film_review:'最后一次审片，让故事准备好登场。',published:'这段脑洞，已经有了画面。'};
 export default function Author(){
- const [works,setWorks]=useState<any[]>([]),[selected,setSelected]=useState(''),[work,setWork]=useState<any>(null),[opening,setOpening]=useState(true);
+ const [works,setWorks]=useState<any[]>([]),[selected,setSelected]=useState(''),[work,setWork]=useState<any>(null),[opening,setOpening]=useState(true),[modelStatus,setModelStatus]=useState<any>(null);
  const [art,setArt]=useState(''),[tone,setTone]=useState(''),[confirmed,setConfirmed]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[messageError,setMessageError]=useState(false),[syncError,setSyncError]=useState(''),[updated,setUpdated]=useState('');
  const [notes,setNotes]=useState<Record<string,string>>({}),[promptDrafts,setPromptDrafts]=useState<Record<string,string>>({}),[index,setIndex]=useState(0),[filter,setFilter]=useState('all'),[expanded,setExpanded]=useState(false);
  const [viewedStep,setViewedStep]=useState<string|null>(null);
@@ -56,6 +56,7 @@ export default function Author(){
   void load();
   return()=>{live=false;controller?.abort();};
  },[selected,refresh]);
+ useEffect(()=>{let live=true;fetch('/api/models').then(r=>r.ok?r.json():null).then(d=>{if(live&&d)setModelStatus(d);}).catch(()=>{});return()=>{live=false;};},[]);
  useEffect(()=>{
   if(!selected||!shouldPollProgress(streamConnection,progressActive))return;
   const timer=window.setInterval(()=>{if(!document.hidden)refreshWorkspace();},30000);
@@ -99,7 +100,7 @@ export default function Author(){
   resetKey:selected+':'+(work?.run_id||''),
   targetKey:[stage,recommendation?.id||'',...active.map(task=>task.id+':'+task.status)].join('|')});
  return <main className="author-page">
-  <header className="studio-header"><Link href="/" className="studio-brand">叙间<span>STORYLOOM / STUDIO</span></Link><div className="studio-header-right"><Link className="studio-back" href="/"><ArrowLeft size={15}/><span>返回故事市场</span></Link></div></header>
+  <header className="studio-header"><Link href="/" className="studio-brand">叙间<span>STORYLOOM / STUDIO</span></Link><div className="studio-header-right">{modelStatus&&<div className="studio-models" aria-label="本地模型状态">{([["文本",modelStatus.llm_configured],["画面",modelStatus.image_configured],["视频",modelStatus.video_configured]] as [string,boolean][]).map(([name,ok])=><span key={name} className={ok?'is-on':'is-off'}><i/>{ok?name+'模型已就绪':name+'模型未配置'}</span>)}<small>API Key 填写在 {modelStatus.config_file||'.env.local'}</small></div>}<Link className="studio-back" href="/"><ArrowLeft size={15}/><span>返回故事市场</span></Link></div></header>
   <div className="studio-heading"><div><span className="studio-eyebrow">MICROFICTION TO MOTION</span><h1>把一个脑洞，拍成一幕。</h1><p>阅读原文，选择风格，见证微小说成为漫剧的每一步。</p></div>{works.length>0&&<label className="studio-picker">继续已有制作<select aria-label="继续已有制作" value={selected} onChange={e=>{if(e.target.value)window.location.href='/author?work='+encodeURIComponent(e.target.value);}}><option value="">选择我的制作</option>{works.map(w=><option value={w.id} key={w.id}>{w.title}</option>)}</select></label>}</div>
   <InteractionFeedback busy={opening||busy} text={opening?'正在读取所选微小说原文与制作记录…':busy?actionLabel:message} error={!opening&&!busy&&messageError}/>
   {syncError&&<div className="studio-error" role="alert">{syncError}{work?' · 当前显示上次同步结果。':''}<button disabled={busy} onClick={()=>setRefresh(n=>n+1)}>重新同步</button></div>}
