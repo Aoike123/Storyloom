@@ -105,9 +105,9 @@
 .catalog-card-actions a,.catalog-card-actions button{min-height:32px}
 .catalog-search:focus-within{border-color:#b4d395;box-shadow:0 0 0 2px #b4d39516}
 .catalog-search input:focus{outline:0}
-.catalog-search{width:min(300px,28vw);min-height:44px;margin-left:auto;padding:9px 13px}
-.catalog-refresh{min-width:70px;min-height:44px;padding:0 13px;display:inline-flex;gap:5px;align-items:center;justify-content:center;border:1px solid #ffffff14;border-radius:7px;background:#ffffff03}
-.catalog-refresh:hover:not(:disabled){border-color:#8eaa78;background:#ffffff07;color:#cfe2b9!important}
+.catalog-search{width:min(300px,28vw);min-height:44px;margin-left:0;padding:9px 13px}
+.catalog-refresh{min-width:70px;min-height:44px;margin-left:auto;padding:0 13px;display:inline-flex;gap:5px;align-items:center;justify-content:center;border:1px solid #ffffff14;border-radius:7px;background:#ffffff03}
+@media(hover:hover){.catalog-refresh:hover:not(:disabled){border-color:#8eaa78;background:#ffffff07;color:#cfe2b9!important}}
 .catalog-error{display:flex;justify-content:space-between;gap:15px;align-items:center}.catalog-error button{white-space:nowrap;min-height:36px;text-decoration:underline;text-underline-offset:4px}
 .reader-world a:focus-visible,.reader-world button:focus-visible{outline:2px solid #d7efb4;outline-offset:3px}
 .reader-cover-link:focus-visible{outline:none!important}

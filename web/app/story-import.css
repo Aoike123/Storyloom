@@ -25,6 +25,7 @@
 .story-import-done{margin-top:14px;animation:story-import-fade var(--motion-soft) var(--ease-out);padding:11px 14px;border:1px solid #6f875a66;border-radius:7px;background:#26382b80;color:#bdccaf;font-size:12px;line-height:1.7}
 .story-import-actions{display:flex;gap:10px;margin-top:18px}
 .story-import-actions .button.primary{background:#c9dfab;color:#1c3022;border:0;padding:12px 22px;border-radius:8px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
-.story-import-actions .button.primary:disabled{opacity:.5;cursor:wait}
+.story-import-actions .button.primary:disabled{opacity:.5;cursor:not-allowed}
 @media(max-width:620px){.story-import{padding:18px}.story-import-head{flex-direction:column}.story-import-head .story-import-close{position:absolute}}
 @keyframes story-import-fade{from{opacity:0}}
+@media(hover:hover){.story-import-actions .button.primary:hover:not(:disabled){background:#d7eaba}}
