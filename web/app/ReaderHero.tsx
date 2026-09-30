@@ -3,7 +3,7 @@
 import Link from './ReaderLink';
 import {useRef} from 'react';
 import type {CSSProperties} from 'react';
-import {ArrowDown, ArrowRight, Clapperboard, Sparkles} from 'lucide-react';
+import {ArrowDown, ArrowRight, Clapperboard, Plus, Sparkles} from 'lucide-react';
 import ReaderArtwork from './ReaderArtwork';
 import ReaderCreatorAvatar from './ReaderCreatorAvatar';
 import {canWatch, productionLink, reducedMotion} from './reader-types';
@@ -16,9 +16,11 @@ type Props = {
   activeId: string;
   onActiveChange: (id: string) => void;
   onOpen: (item: CatalogItem, focusKey: string) => void;
+  inviting: boolean;
+  onImport?: () => void;
 };
 
-export default function ReaderHero({items, loading, activeId, onActiveChange, onOpen}: Props) {
+export default function ReaderHero({items, loading, activeId, onActiveChange, onOpen, inviting, onImport}: Props) {
   const current = Math.max(0, items.findIndex(item => item.id === activeId));
   const selected = items[current];
 
@@ -38,8 +40,13 @@ export default function ReaderHero({items, loading, activeId, onActiveChange, on
   return <section className="reader-hero catalog-hero reader-browse-hero" aria-labelledby="reader-welcome">
     <div className="reader-hero-copy">
       <div className="reader-kicker">微小说 · AI 漫剧</div>
-      <h1 id="reader-welcome">这段脑洞，<br/>换你会怎么演？</h1>
-      <p>看别人的版本，随时改写一刻；也可以从同一篇原作开始，完成属于你的漫剧。</p>
+      {inviting
+        ? <><h1 id="reader-welcome">把你脑子里的微小说，<br/>搬进来。</h1>
+            <p>粘贴正文，或上传一个文本文件；叙间会把它制作成属于你的第一部漫剧。</p>
+            {onImport && <button className="reader-cta" onClick={onImport}><Plus size={15}/>导入第一篇微小说</button>}
+          </>
+        : <><h1 id="reader-welcome">这段脑洞，<br/>换你会怎么演？</h1>
+            <p>看别人的版本，随时改写一刻；也可以从同一篇原作开始，完成属于你的漫剧。</p></>}
       {selected && <div className="reader-hero-paths">
         {canWatch(selected) && <button onClick={() => onOpen(selected, 'hero:' + selected.id)}>
           <Clapperboard size={15}/> 观看并临时改写
@@ -48,7 +55,7 @@ export default function ReaderHero({items, loading, activeId, onActiveChange, on
           <Sparkles size={14}/> {selected.project_id ? '继续我的版本' : canWatch(selected) ? '制作我的完整版本' : '制作第一版'}
         </Link>}
       </div>}
-      <small className="reader-hero-boundary">临时改写不进入你的作品；完整制作会保存在你的本地工作台。</small>
+      {!inviting && <small className="reader-hero-boundary">临时改写不进入你的作品；完整制作会保存在你的本地工作台。</small>}
       <a href="#reader-shelf" className="reader-browse-all" onClick={event => {
         event.preventDefault();
         document.getElementById('reader-shelf')?.scrollIntoView({behavior: reducedMotion() ? 'instant' : 'smooth', block: 'start'});
@@ -115,7 +122,7 @@ export default function ReaderHero({items, loading, activeId, onActiveChange, on
             </Link>
           </li>;
         })}
-      </ol> : <div className="reader-cover-empty"><span>故事封面还没到。</span><p>可以在下方重试读取目录。</p></div>}
+      </ol> : <div className="reader-cover-empty"><span>{inviting ? '第一部故事的封面会出现在这里。' : '故事封面还没到。'}</span><p>{inviting ? '在下方导入一篇微小说即可开始。' : '如果刚才是导入或读取失败，请查看上方的提示。'}</p></div>}
     </div>
   </section>;
 }

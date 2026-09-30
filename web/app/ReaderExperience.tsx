@@ -9,7 +9,7 @@ import ReaderCreatorAvatar from './ReaderCreatorAvatar';
 import ReaderHero from './ReaderHero';
 import ReaderStoryGrid from './ReaderStoryGrid';
 import StoryImport from './StoryImport';
-import {canWatch, groupProductionsByStory, productionLink} from './reader-types';
+import {canWatch, groupProductionsByStory, productionLink, reducedMotion} from './reader-types';
 import {rankByProduction} from './reader-carousel';
 import type {Catalog, CatalogItem, ReaderBranch, Release, ReleaseEntry} from './reader-types';
 import './reader-catalog.css';
@@ -385,6 +385,11 @@ export default function ReaderExperience() {
   const shelfGroups = groupProductionsByStory(visible, catalog?.releases || []).map((group, order) => ({...group, order}));
   const productionTotal = (catalog?.releases || []).length;
   const clearFilters = () => {setFilter('all'); setQuery(''); setSearchInput('');};
+  const firstRun = !!catalog && !loading && !catalog.warning && !message && !catalog.items.length;
+  function openImport() {
+    setImportOpen(true);
+    window.requestAnimationFrame(() => {document.querySelector('.story-import')?.scrollIntoView({behavior: reducedMotion() ? 'instant' : 'smooth', block: 'center'});});
+  }
 
   return <div className="reader-world">
     <nav className="reader-nav">
@@ -394,7 +399,7 @@ export default function ReaderExperience() {
       </div>
     </nav>
     {!story ? <div className="reader-catalog-page">
-      <ReaderHero items={carouselItems} loading={loading || (!!catalog?.items.length && !carouselItems.length)} activeId={activeId} onActiveChange={setActiveId} onOpen={openItem}/>
+      <ReaderHero items={carouselItems} loading={loading || (!!catalog?.items.length && !carouselItems.length)} activeId={activeId} onActiveChange={setActiveId} onOpen={openItem} inviting={firstRun} onImport={openImport}/>
       <section id="reader-shelf" className="reader-shelf">
         <div className="reader-section-title catalog-market-head">
           <div className="catalog-market-copy"><span className="reader-kicker">STORY MARKET</span><h2>故事市场</h2>
