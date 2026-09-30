@@ -1,9 +1,9 @@
 'use client';
-import {useRef, useState} from 'react';
+import {useEffect, useRef, useState} from 'react';
 import {FileUp, PenLine, X} from 'lucide-react';
 import './story-import.css';
 
-export default function StoryImport({onImported}:{onImported?:()=>void}) {
+export default function StoryImport({onImported, open, onClosed}:{onImported?:(storyId?:string)=>void; open:boolean; onClosed?:()=>void}) {
   const [tab, setTab] = useState<'paste' | 'file'>('paste');
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -12,11 +12,21 @@ export default function StoryImport({onImported}:{onImported?:()=>void}) {
   const [error, setError] = useState('');
   const [done, setDone] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef(0);
 
-  function after(name: string) {
+  useEffect(() => {
+    if (!open) return;
+    const id = window.requestAnimationFrame(() => {containerRef.current?.querySelector<HTMLElement>('input:not([type=file]), textarea')?.focus();});
+    return () => window.cancelAnimationFrame(id);
+  }, [open]);
+  useEffect(() => () => window.clearTimeout(closeTimer.current), []);
+
+  function after(storyId: string, name: string) {
     setContent(''); setTitle(''); setFile(null); if (fileRef.current) fileRef.current.value = '';
     setDone(`「${name}」已导入故事市场，可以开始制作你的漫剧版本。`);
-    onImported?.();
+    onImported?.(storyId);
+    closeTimer.current = window.setTimeout(() => onClosed?.(), 1200);
   }
 
   async function submit() {
@@ -29,7 +39,7 @@ export default function StoryImport({onImported}:{onImported?:()=>void}) {
         const r = await fetch('/api/stories/import', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({title: title.trim() || undefined, content})});
         d = await r.json();
         if (!r.ok) throw Error(typeof d.detail === 'string' ? d.detail : '导入失败，请重试。');
-        after(d.story?.title || title.trim() || '这个故事');
+        after(d.story?.id, d.story?.title || title.trim() || '这个故事');
       } else {
         if (!file) { setError('请选择一个文本文件。'); setBusy(false); return; }
         const form = new FormData();
@@ -38,7 +48,7 @@ export default function StoryImport({onImported}:{onImported?:()=>void}) {
         const r = await fetch('/api/stories/import-file', {method: 'POST', body: form});
         d = await r.json();
         if (!r.ok) throw Error(typeof d.detail === 'string' ? d.detail : '导入失败，请重试。');
-        after(d.story?.title || file.name);
+        after(d.story?.id, d.story?.title || file.name);
       }
     } catch (e) {
       setError((e as Error).message);
@@ -47,10 +57,10 @@ export default function StoryImport({onImported}:{onImported?:()=>void}) {
     }
   }
 
-  return <div className="story-import" role="dialog" aria-label="导入故事">
+  return <div ref={containerRef} className="story-import" role="dialog" aria-label="导入故事">
     <div className="story-import-head">
       <div><strong>导入一篇原作</strong><span>粘贴正文或上传文本文件，导入后即可在故事市场里制作漫剧。</span></div>
-      <button type="button" className="story-import-close" aria-label="关闭" disabled={busy} onClick={() => { setDone(''); setError(''); onImported?.(); }}>
+      <button type="button" className="story-import-close" aria-label="关闭" disabled={busy} onClick={() => { setDone(''); setError(''); onClosed?.(); }}>
         <X size={15}/>
       </button>
     </div>

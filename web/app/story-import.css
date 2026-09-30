@@ -1,5 +1,9 @@
 /* Local story import: paste a micro-fiction or upload a text file into the market. */
-.story-import{margin:0 0 30px;padding:22px 24px;border:1px solid #ffffff1a;border-radius:12px;background:#17211e;box-shadow:0 18px 48px #08110ccc}
+.story-import-slot{display:grid;grid-template-rows:0fr;margin-bottom:0;transition:grid-template-rows var(--motion-slow) var(--ease-out),margin-bottom var(--motion-slow) var(--ease-out)}
+.story-import-slot.is-open{grid-template-rows:1fr;margin-bottom:30px}
+.story-import-clip{overflow:hidden;min-height:0}
+.story-import{margin:0;padding:22px 24px;border:1px solid #ffffff1a;border-radius:12px;background:#17211e;box-shadow:0 18px 48px #08110ccc;opacity:0;transform:translateY(-8px);visibility:hidden;transition:opacity var(--motion-slow) var(--ease-out),transform var(--motion-slow) var(--ease-out),visibility 0s linear var(--motion-slow)}
+.story-import-slot.is-open .story-import{opacity:1;transform:none;visibility:visible;transition:opacity var(--motion-slow) var(--ease-out),transform var(--motion-slow) var(--ease-out)}
 .story-import-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
 .story-import-head strong{display:block;font-size:18px;font-weight:600;color:#e1e8d5}
 .story-import-head span{display:block;margin-top:5px;font-size:12px;line-height:1.8;color:#9aaa97}
@@ -17,9 +21,10 @@
 .story-import-field textarea:focus{border-color:#a0bc7d}
 .story-import-field input[type=file]{padding:8px;border:1px dashed #ffffff24;border-radius:7px;background:transparent;color:#94a18f;font:inherit;font-size:12px}
 .story-import-field small{color:#8f9e8a;font-size:11px}
-.story-import-error{margin-top:14px;padding:11px 14px;border:1px solid #a4675c75;border-radius:7px;background:#4b272445;color:#e3b0a4;font-size:12px;line-height:1.7}
-.story-import-done{margin-top:14px;padding:11px 14px;border:1px solid #6f875a66;border-radius:7px;background:#26382b80;color:#bdccaf;font-size:12px;line-height:1.7}
+.story-import-error{margin-top:14px;animation:story-import-fade var(--motion-soft) var(--ease-out);padding:11px 14px;border:1px solid #a4675c75;border-radius:7px;background:#4b272445;color:#e3b0a4;font-size:12px;line-height:1.7}
+.story-import-done{margin-top:14px;animation:story-import-fade var(--motion-soft) var(--ease-out);padding:11px 14px;border:1px solid #6f875a66;border-radius:7px;background:#26382b80;color:#bdccaf;font-size:12px;line-height:1.7}
 .story-import-actions{display:flex;gap:10px;margin-top:18px}
 .story-import-actions .button.primary{background:#c9dfab;color:#1c3022;border:0;padding:12px 22px;border-radius:8px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
 .story-import-actions .button.primary:disabled{opacity:.5;cursor:wait}
 @media(max-width:620px){.story-import{padding:18px}.story-import-head{flex-direction:column}.story-import-head .story-import-close{position:absolute}}
+@keyframes story-import-fade{from{opacity:0}}

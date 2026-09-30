@@ -388,7 +388,18 @@ export default function ReaderExperience() {
   const firstRun = !!catalog && !loading && !catalog.warning && !message && !catalog.items.length;
   function openImport() {
     setImportOpen(true);
-    window.requestAnimationFrame(() => {document.querySelector('.story-import')?.scrollIntoView({behavior: reducedMotion() ? 'instant' : 'smooth', block: 'center'});});
+    window.setTimeout(() => {document.querySelector('.story-import')?.scrollIntoView({behavior: reducedMotion() ? 'instant' : 'smooth', block: 'center'});}, reducedMotion() ? 0 : 260);
+  }
+  const [enterId, setEnterId] = useState('');
+  const importBtnRef = useRef<HTMLButtonElement>(null);
+  const wasImportOpen = useRef(false);
+  useEffect(() => {
+    if (wasImportOpen.current && !importOpen) importBtnRef.current?.focus();
+    wasImportOpen.current = importOpen;
+  }, [importOpen]);
+  function handleImported(storyId?: string) {
+    setRefresh(value => value + 1);
+    if (storyId) {setEnterId(storyId); window.setTimeout(() => setEnterId(current => current === storyId ? '' : current), 1500);}
   }
 
   return <div className="reader-world">
@@ -419,11 +430,23 @@ export default function ReaderExperience() {
           <button className="catalog-refresh" disabled={loading} onClick={() => setRefresh(value => value + 1)}>
             {loading && <LoaderCircle size={13} className="feedback-spin"/>}{loading ? '刷新中…' : '刷新'}
           </button>
-          <button type="button" className="catalog-import" onClick={() => setImportOpen(open => !open)}><Plus size={14}/>{importOpen ? '收起导入' : '导入故事'}</button>
+          <button ref={importBtnRef} type="button" className={'catalog-import' + (importOpen ? ' is-open' : '')} data-reader-focus="catalog:import" onClick={() => setImportOpen(open => !open)}><span className="catalog-import-icon"><Plus size={14}/></span>{importOpen ? '收起导入' : '导入故事'}</button>
         </div>
-        {importOpen && <StoryImport onImported={() => setRefresh(value => value + 1)}/>}
-        {catalog?.warning && <div className="catalog-warning" role="status">{catalog.stale ? '故事服务暂不可用，正在显示已保存的市场内容。' : '故事市场暂时无法读取，当前仅展示本地可观看的作品。'}{catalog.fetched_at && <small>内容保存于 {new Date(catalog.fetched_at * 1000).toLocaleString('zh-CN')}</small>}</div>}
-        {message && <div className="catalog-warning catalog-error" role="alert">{message}<button onClick={() => setRefresh(value => value + 1)} disabled={loading}>重试读取</button></div>}
+        <div className={'story-import-slot' + (importOpen ? ' is-open' : '')}>
+          <div className="story-import-clip" inert={!importOpen || undefined} aria-hidden={!importOpen || undefined}>
+            <StoryImport open={importOpen} onImported={handleImported} onClosed={() => setImportOpen(false)}/>
+          </div>
+        </div>
+        <div className={'catalog-warning-slot' + (catalog?.warning ? ' is-open' : '')}>
+          <div className="catalog-warning-clip" inert={!catalog?.warning || undefined} aria-hidden={!catalog?.warning || undefined}>
+            {catalog?.warning && <div className="catalog-warning" role="status">{catalog.stale ? '故事服务暂不可用，正在显示已保存的市场内容。' : '故事市场暂时无法读取，当前仅展示本地可观看的作品。'}{catalog.fetched_at && <small>内容保存于 {new Date(catalog.fetched_at * 1000).toLocaleString('zh-CN')}</small>}</div>}
+          </div>
+        </div>
+        <div className={'catalog-warning-slot' + (message ? ' is-open' : '')}>
+          <div className="catalog-warning-clip" inert={!message || undefined} aria-hidden={!message || undefined}>
+            {message && <div className="catalog-warning catalog-error" role="alert">{message}<button onClick={() => setRefresh(value => value + 1)} disabled={loading}>重试读取</button></div>}
+          </div>
+        </div>
         {loading && !catalog ? <div className="reader-story-grid catalog-skeleton-grid" role="status" aria-label="正在打开故事市场"><span className="feedback-sr-only">正在打开故事市场</span>{[0, 1, 2].map(id =>
           <div className="reader-story-card catalog-skeleton" key={id} aria-hidden="true"><div className="catalog-poster"/><div className="catalog-story-info"><i/><i/><i/></div></div>)}</div>
           : !visible.length ? <div className="reader-empty" role="status">
@@ -438,7 +461,7 @@ export default function ReaderExperience() {
             const stage = workStages.find(candidate => candidate.id === item.stage);
             const posterKey = 'shelf:poster:' + item.id, sourceKey = 'shelf:source:' + item.id, watchKey = 'shelf:watch:' + item.id;
             return <article className={'reader-story-card ' + (playable ? 'is-ready' : 'is-pending') + (stacked ? ' has-stack' : '')}
-                            key={item.id} data-story-id={item.id} data-productions={productions.length}>
+                            key={item.id} data-story-id={item.id} data-productions={productions.length} data-enter={item.id === enterId || undefined}>
               {stacked && <span className="catalog-stack" aria-hidden="true"><i/><i/></span>}
               <div className="catalog-poster">
                 {playable ? <button aria-label={'观看并临时改写《' + item.title + '》'} data-reader-focus={posterKey} onClick={() => openRelease(item, release!, posterKey)}>

@@ -26,3 +26,7 @@
 /* Prominent green action to add a local story to the market. */
 .catalog-import{display:inline-flex;align-items:center;gap:7px;padding:10px 16px;border:0;border-radius:7px;background:#c9dfab;color:#1c3022;font:inherit;font-size:12px;font-weight:600;cursor:pointer}
 .catalog-import:hover{background:#d4e8b6}
+.catalog-import .catalog-import-icon{display:inline-flex;transition:transform var(--motion-hover) var(--ease-out)}
+.catalog-import.is-open .catalog-import-icon{transform:rotate(45deg)}
+.reader-story-card[data-enter]{animation:card-enter var(--motion-soft) var(--ease-out)}
+@keyframes card-enter{from{opacity:0;transform:translateY(4px)}}

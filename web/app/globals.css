@@ -1,4 +1,4 @@
-:root{--bg:#f7f7f3;--paper:#fff;--ink:#202d39;--muted:#8a9193;--line:#e6e8e4;--accent:#d57451;--navy:#1e303e;--soft:#f2f2ed}
+:root{--bg:#f7f7f3;--paper:#fff;--ink:#202d39;--muted:#8a9193;--line:#e6e8e4;--accent:#d57451;--navy:#1e303e;--soft:#f2f2ed;--motion-tap:90ms;--motion-hover:160ms;--motion-soft:200ms;--motion-slow:240ms;--ease-out:cubic-bezier(.22,1,.36,1);--ease-settle:cubic-bezier(.33,.84,.3,1)}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:Arial,'Microsoft YaHei','PingFang SC',sans-serif;font-size:14px;line-height:1.6}
 button,input,textarea,select{font:inherit}
