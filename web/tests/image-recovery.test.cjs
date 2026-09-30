@@ -40,12 +40,12 @@ function buttons(tree){
 const label=node=>Array.isArray(node.props.children)?node.props.children.join(''):String(node.props.children);
 
 test('single-image retry requires an explicit enabled button click',()=>{
-  const calls=[];const props={images:[{task_id:'failed-image',name:'公司急救培训室'}],busy:false,paid:true,onRetry:id=>calls.push(id)};
+  const calls=[];const props={images:[{task_id:'failed-image',name:'公司急救培训室'}],busy:false,onRetry:id=>calls.push(id)};
   const tree=ImageRecovery(props);assert.deepEqual(calls,[]);
   const [button]=buttons(tree);assert.equal(label(button),'重试这张图片');
   assert.equal(button.props.disabled,false);
   button.props.onClick();assert.deepEqual(calls,['failed-image']);
-  for(const overrides of [{paid:false},{busy:true}]){
+  for(const overrides of [{busy:true}]){
     const html=renderToStaticMarkup(React.createElement(ImageRecovery,{...props,...overrides}));assert.match(html,/<button[^>]+disabled/);
   }
   assert.equal(ImageRecovery({...props,images:[]}),null);
@@ -54,17 +54,17 @@ test('single-image retry requires an explicit enabled button click',()=>{
 test('several rejected pictures can be brought back in one action',()=>{
   const retried=[];const all=[];
   const images=[{task_id:'one',name:'女主'},{task_id:'two',name:'公司急救培训室'},{task_id:'three',name:'走廊'}];
-  const html=renderToStaticMarkup(React.createElement(ImageRecovery,{images,busy:false,paid:true,onRetry:id=>retried.push(id),onRetryAll:()=>all.push('all')}));
+  const html=renderToStaticMarkup(React.createElement(ImageRecovery,{images,busy:false,onRetry:id=>retried.push(id),onRetryAll:()=>all.push('all')}));
   assert.match(html,/全部重试这 3 张/);
   assert.deepEqual(retried,[]);assert.deepEqual(all,[]);
-  const tree=ImageRecovery({images,busy:false,paid:true,onRetry:id=>retried.push(id),onRetryAll:()=>all.push('all')});
+  const tree=ImageRecovery({images,busy:false,onRetry:id=>retried.push(id),onRetryAll:()=>all.push('all')});
   const [batch,...perPicture]=buttons(tree);
   assert.equal(label(batch),'全部重试这 3 张');
   batch.props.onClick();assert.deepEqual(all,['all']);assert.equal(perPicture.length,3);
   perPicture[1].props.onClick();assert.deepEqual(retried,['two']);
   // One picture needs no batch action; a blocked round disables both ways.
-  assert.doesNotMatch(renderToStaticMarkup(React.createElement(ImageRecovery,{images:images.slice(0,1),busy:false,paid:true,onRetry:()=>{}})),/全部重试/);
-  const blocked=renderToStaticMarkup(React.createElement(ImageRecovery,{images,busy:false,paid:false,onRetry:()=>{},onRetryAll:()=>{}}));
+  assert.doesNotMatch(renderToStaticMarkup(React.createElement(ImageRecovery,{images:images.slice(0,1),busy:false,onRetry:()=>{}})),/全部重试/);
+  const blocked=renderToStaticMarkup(React.createElement(ImageRecovery,{images,busy:true,onRetry:()=>{},onRetryAll:()=>{}}));
   assert.match(blocked,/全部重试这 3 张/);assert.equal([...blocked.matchAll(/<button[^>]*disabled/g)].length,4);
 });
 
@@ -72,7 +72,7 @@ test('a content-policy rejection hands the prompt back to the author',()=>{
   const retried=[];
   const refused={task_id:'refused',name:'身份 C004',category:'content_policy',needs_prompt_edit:true,
     prompt:'身份 C004：完整展示自然体表与身体结构，无体毛，不穿人类服装。'};
-  const props={images:[refused],paid:true,busy:false,onRetry:(id,prompt)=>retried.push([id,prompt])};
+  const props={images:[refused],busy:false,onRetry:(id,prompt)=>retried.push([id,prompt])};
   // The saved prompt is offered for editing, and the button stays disabled until it changes.
   const untouched=renderToStaticMarkup(React.createElement(ImageRecovery,props));
   assert.match(untouched,/供应商判定这条提示词要求的内容违规/);
@@ -83,7 +83,6 @@ test('a content-policy rejection hands the prompt back to the author',()=>{
   assert.equal(button.props.disabled,false);
   button.props.onClick();
   assert.deepEqual(retried,[['refused','身份 C004：该角色穿着中性基础短装，完整着装。']]);
-  // A short draft is refused, and the paid gate still applies.
+  // A short draft is refused until it is long enough and different from the saved prompt.
   assert.match(renderToStaticMarkup(React.createElement(ImageRecovery,{...props,drafts:{refused:'太短'}})),/<button[^>]+disabled/);
-  assert.match(renderToStaticMarkup(React.createElement(ImageRecovery,{...props,paid:false,drafts:{refused:'身份 C004：该角色穿着中性基础短装，完整着装。'}})),/<button[^>]+disabled/);
 });
