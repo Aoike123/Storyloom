@@ -8,6 +8,19 @@ const SCROLL_KEYS=new Set(['ArrowUp','ArrowDown','PageUp','PageDown','Home','End
 // loop now chases the box while it grows.
 const EASE=0.18;
 const SETTLED=0.75;
+const SETTLE_MS=240;
+// The same settle curve the design tokens define; a tiny solver keeps the hook dependency-free.
+function settleCurve(x:number){
+  const p1x=0.33,p1y=0.84,p2x=0.3,p2y=1;
+  const cx=3*p1x,bx=3*(p2x-p1x)-cx,ax=1-cx-bx;
+  const cy=3*p1y,by=3*(p2y-p1y)-cy,ay=1-cy-by;
+  const sampleX=(t:number)=>((ax*t+bx)*t+cx)*t;
+  const sampleY=(t:number)=>((ay*t+by)*t+cy)*t;
+  const sampleDX=(t:number)=>(3*ax*t+2*bx)*t+cx;
+  let t=x;
+  for(let i=0;i<8;i++){const err=sampleX(t)-x;if(Math.abs(err)<1e-5)break;const d=sampleDX(t);if(Math.abs(d)<1e-6)break;t-=err/d;}
+  return sampleY(Math.max(0,Math.min(1,t)));
+}
 // A scroll position this hook did not ask for is the reader moving the page.
 const OWN_SCROLL_TOLERANCE=2;
 
@@ -57,6 +70,9 @@ export default function useProductionFollow({enabled,resetKey,targetKey}:{enable
   const state=useRef({enabled,following:true});
   // The scroll position this hook last asked the browser for; any other position is the reader.
   const ownScroll=useRef<number|null>(null);
+  const settleFrame=useRef<number|undefined>(undefined);
+  const flashTimer=useRef(0);
+  const [flash,setFlash]=useState(false);
   const targetRef=useCallback((next:HTMLDivElement|null)=>{
     node.current=next;
     setTarget(current=>current===next?current:next);
@@ -139,6 +155,7 @@ export default function useProductionFollow({enabled,resetKey,targetKey}:{enable
       manualUntil.current=performance.now()+900;
       // Drop any easing already in flight, so a scroll gesture is never pulled back mid-drag.
       if(frame.current!==undefined){window.cancelAnimationFrame(frame.current);frame.current=undefined;}
+      if(settleFrame.current!==undefined){window.cancelAnimationFrame(settleFrame.current);settleFrame.current=undefined;}
     };
     const onScroll=()=>{
       // A position this hook did not ask for is the reader moving the page: dragging the scrollbar,
@@ -167,18 +184,57 @@ export default function useProductionFollow({enabled,resetKey,targetKey}:{enable
     };
   },[enabled,target]);
 
-  useEffect(()=>()=>{if(frame.current!==undefined)window.cancelAnimationFrame(frame.current);},[]);
+  useEffect(()=>()=>{
+    if(frame.current!==undefined)window.cancelAnimationFrame(frame.current);
+    if(settleFrame.current!==undefined)window.cancelAnimationFrame(settleFrame.current);
+    window.clearTimeout(flashTimer.current);
+  },[]);
   /** Stop following at once, and drop any easing that is already in flight. */
   const unlock=useCallback(()=>{
     if(frame.current!==undefined){window.cancelAnimationFrame(frame.current);frame.current=undefined;}
+    if(settleFrame.current!==undefined){window.cancelAnimationFrame(settleFrame.current);settleFrame.current=undefined;}
     state.current.following=false;
     setFollowing(false);
   },[]);
+  /**
+   * The catch-up after "return to the work in progress" is a bounded 240ms settle on the design
+   * curve, not the endless asymptotic ease; when it lands, the continuous follow takes over again
+   * for the box that keeps growing.
+   */
+  const settle=useCallback(()=>{
+    const found=destination();
+    if(!found)return;
+    if(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches){
+      ownScroll.current=found.top;
+      window.scrollTo({top:found.top,behavior:'auto'});
+      return;
+    }
+    const start=window.scrollY;
+    const delta=found.top-start;
+    if(Math.abs(delta)<=SETTLED){follow(true);return;}
+    if(settleFrame.current!==undefined)window.cancelAnimationFrame(settleFrame.current);
+    if(frame.current!==undefined){window.cancelAnimationFrame(frame.current);frame.current=undefined;}
+    const started=performance.now();
+    const run=()=>{
+      settleFrame.current=undefined;
+      const progress=Math.min(1,(performance.now()-started)/SETTLE_MS);
+      const next=start+delta*settleCurve(progress);
+      ownScroll.current=next;
+      window.scrollTo(0,next);
+      if(progress<1)settleFrame.current=window.requestAnimationFrame(run);
+      else follow(true);
+    };
+    settleFrame.current=window.requestAnimationFrame(run);
+  },[destination,follow]);
   const resume=useCallback(()=>{
     manualUntil.current=0;
     state.current.following=true;
     setFollowing(true);
-    follow(true);
-  },[follow]);
-  return {targetRef,following,unlock,resume,ready:!!target};
+    // The target module takes one soft second of attention, then the highlight fades away.
+    setFlash(true);
+    window.clearTimeout(flashTimer.current);
+    flashTimer.current=window.setTimeout(()=>setFlash(false),1050);
+    settle();
+  },[settle]);
+  return {targetRef,following,unlock,resume,ready:!!target,flash};
 }

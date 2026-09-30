@@ -77,7 +77,7 @@
 .studio-review-handoff>small{display:block;margin-top:10px;color:#9a835f;font-size:9px;line-height:1.7}
 
 /* Page-level live follow: quiet while active, prominent only after the reader scrolls away. */
-.studio-live-module{position:relative;scroll-margin-top:96px;border-radius:12px}
+.studio-live-module{position:relative;scroll-margin-top:96px;border-radius:12px}.studio-live-module::before{content:'';position:absolute;inset:0;border-radius:inherit;background:#789960;opacity:0;pointer-events:none}.studio-live-module.is-flash::before{animation:follow-flash 1s var(--ease-settle) forwards}@keyframes follow-flash{from{opacity:.09}to{opacity:0}}
 .studio-live-module.is-following::after{content:'';position:absolute;top:22px;right:2px;width:6px;height:6px;border-radius:50%;background:#789960;box-shadow:0 0 0 5px #78996017;pointer-events:none}
 .studio-follow-control{position:fixed;right:max(20px,calc((100vw - 1440px)/2 + 28px));bottom:max(20px,env(safe-area-inset-bottom,0px));z-index:65;max-width:290px;color:#38533b}
 .studio-follow-status,.studio-follow-control>button{min-height:52px;display:flex;align-items:center;gap:11px;padding:8px 13px;border:1px solid #cad9be;border-radius:999px;background:#f8fbf3ee;box-shadow:0 12px 34px #243b2630;backdrop-filter:blur(14px)}
