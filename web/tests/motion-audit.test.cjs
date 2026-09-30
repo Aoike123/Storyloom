@@ -7,7 +7,7 @@ const path=require('node:path');
 // the compositor (opacity/transform), with one plan-sanctioned exception: hint-ring, the
 // single one-shot box-shadow focus ring. Legacy keyframes keep their documented properties.
 const NEW={
-  'live-breathe':['transform'],
+  'live-breathe':['opacity'],
   'check-in':['opacity','transform'],
   'hint-ring':['box-shadow'],
   'reader-enter':['opacity','transform'],
