@@ -295,7 +295,7 @@ def create_branch(body: BranchCommand, x_reader_session: str = Header(alias='X-R
         raise HTTPException(422, '请至少写两个有效字符。')
     cfg = settings()
     if not body.confirm_generation:
-        raise HTTPException(422, '请确认生成读者分支。')
+        raise HTTPException(422, '请确认开始本次生成。')
     refusal = paid_gate(cfg, 'llm', 'video')
     if refusal:
         raise HTTPException(422, refusal)

@@ -46,7 +46,7 @@ def describe(status):
 def refusal_error(reason):
     """A refusal raised before submission: the provider never saw this picture."""
     return {'provider':'local','http_status':None,'category':NOT_SUBMITTED,'summary':'这次生图没有提交给供应商',
-            'advice':safe_text(reason) or '请确认这一步可以调用模型后重试这张图片。',
+            'advice':safe_text(reason) or '可以直接重试这张图片。',
             'provider_message':'','provider_code':'','request_id':'','source':NOT_SUBMITTED,
             'captured_at':time.time()}
 

@@ -562,7 +562,7 @@ def projects(source_id:str):
 @router.post('')
 def create(body:Create):
     cfg=settings()
-    if not body.confirm_paid:raise HTTPException(422,'请确认本次导演阐述的模型调用。')
+    if not body.confirm_paid:raise HTTPException(422,'请确认开始本次生成。')
     refusal=paid_gate(cfg,'llm')
     if refusal:raise HTTPException(422,refusal)
     with Session.begin() as db:
@@ -675,7 +675,7 @@ class BoardStart(BaseModel):
 @router.post('/projects/{project_id}/storyboard')
 def start_storyboard(project_id:str,body:BoardStart):
     cfg=settings()
-    if not body.confirm_paid:raise HTTPException(422,'请确认分镜与预审调用。')
+    if not body.confirm_paid:raise HTTPException(422,'请确认开始本次生成。')
     refusal=paid_gate(cfg,'llm')
     if refusal:raise HTTPException(422,refusal)
     from .preproduction import ready

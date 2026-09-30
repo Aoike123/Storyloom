@@ -89,7 +89,7 @@ class Command(BaseModel):
 @router.post('/{pid}/shots/{sid}/video')
 def generate_video(pid:str,sid:str,body:Command):
     cfg=settings()
-    if not body.confirm_paid:raise HTTPException(422,'请确认视频生成费用。')
+    if not body.confirm_paid:raise HTTPException(422,'请确认开始本次生成。')
     refusal=paid_gate(cfg,'video')
     if refusal:raise HTTPException(422,refusal)
     if cfg.get('editable',{}).get('VIDEO_PROVIDER')!='minimax':raise HTTPException(422,'当前图片参考视频流程使用 MiniMax H3。')
