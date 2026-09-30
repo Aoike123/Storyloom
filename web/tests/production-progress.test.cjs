@@ -9,7 +9,7 @@ const {renderToStaticMarkup}=require('react-dom/server');
 const context={exports:{},require:name=>name==='../ProgressFeedback'?{
   activeStatuses:['queued','running','waiting'],taskNames:{image:'画面'},
   TaskProgress:({task})=>React.createElement('div',{'data-focused-task':task.id},task.label),
-}:name==='../GenerationPrompt'?{default:()=>null}:require(name)};
+}:name==='../GenerationPrompt'?{default:()=>null}:name==='./AssetFrame'?{default:(p)=>React.createElement('img',p)}:require(name)};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname,'../app/author/ProductionProgress.tsx'),'utf8'),{
   compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2022},
 }).outputText,context);

@@ -2,6 +2,7 @@
 import {useState} from 'react';
 import {ArrowDown, Check, Clapperboard, ImageIcon} from 'lucide-react';
 import {TaskProgress, activeStatuses, taskNames} from '../ProgressFeedback';
+import AssetFrame from './AssetFrame';
 import type {ProgressTask} from '../ProgressFeedback';
 import GenerationPrompt from '../GenerationPrompt';
 import type {GenerationInfo} from '../GenerationPrompt';
@@ -34,7 +35,7 @@ export default function ProductionProgress({tasks, outputs = [], stage, connecti
     {phase==='storyboarding' ? <p className="studio-note">分镜方案和镜头提示词会保存在上方任务记录中。本节点不生成图片或视频。</p> : <><div className="production-output-heading"><span>{media.length ? '视频片段 · ' + ready + ' / ' + media.length + ' 已完成' : '视频片段'}</span><a href="#production-outputs">看看已完成的素材 <ArrowDown size={12}/></a></div>
     <div id="production-outputs" className="production-output-rail" aria-label="已完成的素材预览">
       {visibleOutputs.length ? visibleOutputs.map(output => <article key={output.id}><header>{output.kind === 'video' ? <Clapperboard size={13}/> : <ImageIcon size={13}/>}<span>{output.title}</span></header>
-        {output.kind === 'video' ? <video src={output.media} controls playsInline preload="metadata"/> : <a href={output.media} target="_blank" rel="noreferrer" aria-label={'查看完整画面：' + output.title}><img src={output.media} alt={output.title} loading="lazy"/></a>}
+        {output.kind === 'video' ? <AssetFrame src={output.media} alt={output.title} video controls/> : <a href={output.media} target="_blank" rel="noreferrer" aria-label={'查看完整画面：' + output.title}><AssetFrame src={output.media} alt={output.title}/></a>}
         <small>已保存 · {output.kind === 'video' ? '可提前观看' : '可查看完整画面'}</small>
         <GenerationPrompt generation={output.generation} group="production-output-prompts"/>
       </article>) : <div className="production-output-empty"><ImageIcon size={22}/><p>{waiting ? '第一份素材完成后，就能在这里看到。' : '本轮尚无已完成的画面或片段。'}</p><small>现在可以阅读左侧原文，或查看上方创作内容。</small></div>}
