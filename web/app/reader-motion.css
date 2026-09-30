@@ -121,14 +121,15 @@
 .reader-segments{gap:8px}
 .reader-segments button{height:24px;background:linear-gradient(#435047,#435047) center/100% 5px no-repeat}
 .reader-segments .active{background:linear-gradient(#cce8a6,#cce8a6) center/100% 5px no-repeat}
-.reader-screen{animation:reader-enter .18s ease-out}
+.reader-screen{animation:reader-enter var(--motion-slow) var(--ease-out)}
+.reader-catalog-page{animation:reader-enter var(--motion-soft) var(--ease-out)}
 .catalog-mode-note{min-height:0!important;margin:0 0 3px!important;padding:9px 11px;border-left:2px solid #718c5e;background:#ffffff04;color:#95a68e!important;font-size:10px!important;line-height:1.7!important}
 .catalog-card-actions .catalog-create{justify-content:flex-end;color:#aebfa2!important;text-align:right}
 .reader-source-actions{display:flex;align-items:center;flex-wrap:wrap;gap:11px;margin:-12px 0 25px}
 .reader-source-actions>span{padding:5px 9px;border:1px solid #6f875a66;border-radius:5px;background:#26382b80;color:#b9caa9;font-size:10px}
 .reader-source-actions .reader-source-link{margin:0;gap:7px}
 .reader-temporary-note{margin:0 0 12px!important;padding:10px 12px;border-left:2px solid #839d6e;background:#ffffff05;color:#a8b99d!important;font-size:11px!important;line-height:1.75!important}
-@keyframes reader-enter{from{opacity:.5;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+@keyframes reader-enter{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 @keyframes reader-skeleton{50%{opacity:.6}}
 
 @media(max-width:1100px) and (min-width:821px){.reader-browse-hero.reader-hero{gap:20px;grid-template-columns:minmax(250px,.72fr) minmax(440px,1.28fr)}.reader-cover-stage{--cover-width:222px}}
