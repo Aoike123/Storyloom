@@ -63,3 +63,14 @@ test('the episode decision is a step of its own, so the rail still shows where t
   assert.equal(steps[7].props.children.props.disabled,true);
   assert.equal(steps[8].props.children.props.disabled,true);
 });
+
+test('the sliding marker only renders once a stage is active and moves by whole columns',()=>{
+  const kidsOf=tree=>(Array.isArray(tree.props.children)?tree.props.children:[tree.props.children]).flat(1).filter(c=>c&&c.props);
+  const markerOf=tree=>kidsOf(tree).find(c=>c.props.className==='stage-marker');
+  // 空工作台没有任何当前阶段：不出现游标，也不占网格单元（否则第 9 步会被挤到第二行）。
+  assert.equal(markerOf(WorkProgress({})),undefined);
+  const marker=markerOf(WorkProgress({stage:'rendering'}));
+  assert.ok(marker);
+  assert.equal(marker.props['aria-hidden'],'true');
+  assert.equal(marker.props.style.transform,'translateX(500%)');
+});

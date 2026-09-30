@@ -75,7 +75,7 @@ export function WorkProgress({stage, viewedStage, onStepSelect, disabled = false
   // The column count follows the step list, so adding a step never wraps the rail onto a second row.
   return <ol className={'work-progress' + (compact ? ' is-compact' : '')} aria-label="作品制作阶段"
              style={{'--stage-count': workStages.length} as React.CSSProperties}>
-    <span className="stage-marker" aria-hidden="true" style={{transform: 'translateX(' + Math.max(0, viewed) * 100 + '%)'}}><i/></span>
+    {viewed >= 0 && <span className="stage-marker" aria-hidden="true" style={{transform: 'translateX(' + viewed * 100 + '%)'}}><i/></span>}
   {workStages.map((s, index) => {
       const content=<><span className="stage-dot">{index < current || stage === 'published' ? <Check size={16} /> : String(index + 1).padStart(2, '0')}</span><div><strong>{s.name}</strong>{!compact && <small>{s.hint}</small>}</div></>;
       return <li key={s.id} className={index === viewed ? 'is-current' : index < current || stage === 'published' ? 'is-done' : ''} aria-current={index === viewed ? 'step' : undefined}>
