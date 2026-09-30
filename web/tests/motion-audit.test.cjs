@@ -29,7 +29,7 @@ const LEGACY={
   'feedback-blink':['opacity'],
   'reader-skeleton':['opacity'],
   'reader-branch-pending':['background-position'],
-  'studio-follow-pulse':['box-shadow'],
+  'studio-follow-pulse':['opacity','transform'],
 };
 
 function keyframesOf(css){
