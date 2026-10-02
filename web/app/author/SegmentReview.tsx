@@ -37,7 +37,7 @@ export default function SegmentReview({episodes,collapsed=false,children}:
   const finished = episodes.filter(episode => episode.render_complete).length;
   const published = episodes.filter(episode => episode.published).length;
   if (collapsed) {
-    return <details className="studio-note segment-review-collapsed">
+    return <details className="studio-note studio-segments segment-review-collapsed">
       <summary>情节清单 · 共 {episodes.length} 幕 · 已完成 {finished} 幕 · 已发布 {published} 幕</summary>
       <EpisodeList episodes={episodes} approved/>
     </details>;

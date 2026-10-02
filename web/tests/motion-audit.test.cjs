@@ -22,6 +22,9 @@ const NEW={
   'asset-enter':['opacity'],
   'asset-exit':['opacity'],
   'publish-glow':['opacity'],
+  'ui-enter':['opacity','transform'],
+  'ambient-drift':['opacity','transform'],
+  'folio-float':['transform'],
 };
 const LEGACY={
   'feedback-travel':['transform'],
@@ -70,7 +73,7 @@ test('every keyframe in the app styles is classified',()=>{
   const known=new Set([...Object.keys(NEW),...Object.keys(LEGACY)]);
   const unknown=Object.keys(all).filter(n=>!known.has(n));
   assert.deepEqual(unknown,[]);
-  assert.deepEqual(Object.keys(all).length,21);
+  assert.deepEqual(Object.keys(all).length,24);
 });
 
 test('keyframes added by the upgrade animate only the compositor',()=>{
@@ -95,11 +98,11 @@ test('legacy keyframes stay within their documented properties',()=>{
 
 test('the plan-sanctioned layout exceptions are the only non-compositor transitions',()=>{
   const css=files.map(f=>fs.readFileSync(f,'utf8')).join('\n');
-  // Expand/collapse animates grid-template-rows (plan exception 2.4/2.5); everything else that
-  // transitions a property must be one of the legacy color/size exceptions.
-  const legacyAllowed=new Set(['opacity','transform','translate','width','border-color','background','background-color','color','filter','box-shadow','grid-template-rows','scale','rotate','visibility']);
+  // Import uses grid rows; native disclosures progressively enhance intrinsic height.
+  // These local sizing transitions are the only exceptions to compositor motion.
+  const legacyAllowed=new Set(['opacity','transform','translate','width','border-color','background','background-color','color','filter','box-shadow','grid-template-rows','scale','rotate','visibility','height','content-visibility']);
   const seen=new Set();
-  for(const b of css.matchAll(/(?<!-)transition\s*:\s*([^;})]+)/g)){
+  for(const b of css.matchAll(/(?<!-)transition\s*:\s*([^;}]+)/g)){
     const parts=[];
     let depth=0,part='';
     for(const ch of b[1]){

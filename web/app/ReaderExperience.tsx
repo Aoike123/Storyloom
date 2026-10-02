@@ -9,6 +9,7 @@ import ReaderCreatorAvatar from './ReaderCreatorAvatar';
 import ReaderHero from './ReaderHero';
 import ReaderStoryGrid from './ReaderStoryGrid';
 import StoryImport from './StoryImport';
+import {uiErrorMessage} from './ui-errors';
 import {canWatch, groupProductionsByStory, productionLink, reducedMotion} from './reader-types';
 import {useReveal} from './useReveal';
 import {rankByProduction} from './reader-carousel';
@@ -181,7 +182,7 @@ export default function ReaderExperience() {
           else if (id) setMessage('这部作品暂时无法播放，可从目录选择其他作品。');
         }
       } catch (error) {
-        if (alive) setMessage((error as Error).message);
+        if (alive) setMessage(uiErrorMessage(error, '故事市场暂时无法读取，请稍后重试。'));
       } finally {
         if (alive) setLoading(false);
       }
@@ -273,7 +274,7 @@ export default function ReaderExperience() {
           timer = setTimeout(pollBranch, data.ready_count ? 1200 : 1800);
         }
       } catch (error) {
-        if (alive) {setReply((error as Error).message); setReplyError(true); timer = setTimeout(pollBranch, 3000);}
+        if (alive) {setReply(uiErrorMessage(error)); setReplyError(true); timer = setTimeout(pollBranch, 3000);}
       }
     }
     timer = setTimeout(pollBranch, 700);
@@ -303,7 +304,7 @@ export default function ReaderExperience() {
         setBranch(data); setReply(data.message); setReplyError(false);
       }
     } catch (error) {
-      if (currentStory.current === releaseId && requestVersion.current === version) {setReply((error as Error).message); setReplyError(true);}
+      if (currentStory.current === releaseId && requestVersion.current === version) {setReply(uiErrorMessage(error)); setReplyError(true);}
     } finally {
       if (currentStory.current === releaseId && requestVersion.current === version) setBusy(false);
     }
@@ -443,7 +444,6 @@ export default function ReaderExperience() {
   const firstRun = !!catalog && !loading && !catalog.warning && !message && !catalog.items.length;
   function openImport() {
     setImportOpen(true);
-    window.setTimeout(() => {document.querySelector('.story-import')?.scrollIntoView({behavior: reducedMotion() ? 'instant' : 'smooth', block: 'center'});}, reducedMotion() ? 0 : 260);
   }
   const [enterId, setEnterId] = useState('');
   const importBtnRef = useRef<HTMLButtonElement>(null);
@@ -461,7 +461,7 @@ export default function ReaderExperience() {
     <nav className="reader-nav">
       <button className="reader-brand" onClick={() => {if (story) back(); else window.scrollTo({top: 0, behavior: 'instant'});}}>叙间<span>每个故事，都有另一种可能</span></button>
       <div className="reader-entry-links">
-        <Link className="reader-work-link" href="/author" prefetch={false} onClick={() => {if (!story) remember('nav:author');}} data-reader-focus="nav:author">我的制作 <ArrowRight size={14}/></Link>
+        <Link className="reader-work-link button secondary" href="/author" prefetch={false} onClick={() => {if (!story) remember('nav:author');}} data-reader-focus="nav:author">我的制作 <ArrowRight size={14}/></Link>
       </div>
     </nav>
     {!story ? <div className="reader-catalog-page">
@@ -482,10 +482,10 @@ export default function ReaderExperience() {
             onCompositionStart={() => {composing.current = true;}}
             onCompositionEnd={event => {composing.current = false; setQuery(event.currentTarget.value);}}
             onChange={event => {setSearchInput(event.target.value); if (!composing.current) setQuery(event.target.value);}}/></label>
-          <button className="catalog-refresh" disabled={loading} onClick={() => setRefresh(value => value + 1)}>
+          <button className="catalog-refresh button secondary" disabled={loading} onClick={() => setRefresh(value => value + 1)}>
             {loading && <LoaderCircle size={13} className="feedback-spin"/>}{loading ? '刷新中…' : '刷新'}
           </button>
-          <button ref={importBtnRef} type="button" className={'catalog-import' + (importOpen ? ' is-open' : '')} data-reader-focus="catalog:import" onClick={() => setImportOpen(open => !open)}><span className="catalog-import-icon"><Plus size={14}/></span>{importOpen ? '收起导入' : '导入故事'}</button>
+          <button ref={importBtnRef} type="button" className={'catalog-import button secondary' + (importOpen ? ' is-open' : '')} data-reader-focus="catalog:import" onClick={() => setImportOpen(open => !open)}><span className="catalog-import-icon"><Plus size={14}/></span>{importOpen ? '收起导入' : '导入故事'}</button>
         </div>
         <div className={'story-import-slot' + (importOpen ? ' is-open' : '')}>
           <div className="story-import-clip" inert={!importOpen || undefined} aria-hidden={!importOpen || undefined}>
@@ -504,11 +504,11 @@ export default function ReaderExperience() {
         </div>
         {loading && !catalog ? <div className="reader-story-grid catalog-skeleton-grid" role="status" aria-label="正在打开故事市场"><span className="feedback-sr-only">正在打开故事市场</span>{[0, 1, 2].map(id =>
           <div className="reader-story-card catalog-skeleton" key={id} aria-hidden="true"><div className="catalog-poster"/><div className="catalog-story-info"><i/><i/><i/></div></div>)}</div>
-          : !visible.length ? <div className="reader-empty" role="status">
-            <span>{query ? '没有找到匹配的原作。' : filter === 'ready' ? '还没有公开放映的版本。' : (!catalog?.items.length ? '还没有导入任何原作。' : '暂时没有可展示的原作。')}</span>
-            <p>{filter === 'ready' && !query ? '切到「等待创作」，从一篇原作制作第一个完整版本。' : (!query && filter === 'all' && !catalog?.items.length ? '导入一篇微小说，开始你的第一部漫剧。' : '可以刷新内容或调整筛选条件。')}</p>
-            {(!query && filter === 'all' && !catalog?.items.length) ? <button className="catalog-import" onClick={() => setImportOpen(true)}><Plus size={14}/>导入故事</button> : (filter !== 'all' || query) && <button onClick={clearFilters}>浏览全部原作 →</button>}
-          </div> : <ReaderStoryGrid ids={shelfGroups.map(group => group.item.id)}>{shelfGroups.map(({item, productions, stacked, order}) => {
+          : !visible.length ? <div className={'catalog-empty-slot'+(firstRun&&importOpen?' is-hidden':'')}><div className="catalog-empty-clip" inert={firstRun&&importOpen||undefined} aria-hidden={firstRun&&importOpen||undefined}><div className="reader-empty" role="status">
+            <span>{query ? '没有找到匹配的原作。' : firstRun ? '还没有导入任何原作。' : filter === 'ready' ? '还没有公开放映的版本。' : '暂时没有可展示的原作。'}</span>
+            <p>{!query && firstRun ? '导入一篇微小说，开始你的第一部漫剧。' : filter === 'ready' && !query ? '切到「等待创作」，从一篇原作制作第一个完整版本。' : '可以刷新内容或调整筛选条件。'}</p>
+            {(!query && firstRun) ? <button className="catalog-import button primary" onClick={openImport}><Plus size={14}/>导入故事</button> : (filter !== 'all' || query) && <button className="button secondary" onClick={clearFilters}>浏览全部原作 <ArrowRight size={14}/></button>}
+          </div></div></div> : <ReaderStoryGrid ids={shelfGroups.map(group => group.item.id)}>{shelfGroups.map(({item, productions, stacked, order}) => {
             const active = Math.min(versionChoice[item.id] ?? 0, Math.max(0, productions.length - 1));
             const release = productions[active] || item.release;
             const playable = !!release && release.entries.length > 0;
@@ -550,8 +550,8 @@ export default function ReaderExperience() {
                 </div>}
                 {playable && <p className="catalog-mode-note">临时改写只在本次观看中生效，不会存入个人作品。</p>}
                 <div className="catalog-card-actions">{playable ? <>
-                  <button onClick={() => openRelease(item, release!, watchKey)} data-reader-focus={watchKey}>观看并改写 <ArrowRight size={15}/></button>
-                  {(item.work_id || item.project_id) && <Link className="catalog-create" href={productionLink(item)} prefetch={false} data-reader-focus={sourceKey} onClick={() => remember(sourceKey)}>
+                  <button className="button link" onClick={() => openRelease(item, release!, watchKey)} data-reader-focus={watchKey}>观看并改写 <ArrowRight size={15}/></button>
+                  {(item.work_id || item.project_id) && <Link className="catalog-create button link" href={productionLink(item)} prefetch={false} data-reader-focus={sourceKey} onClick={() => remember(sourceKey)}>
                     <Sparkles size={13}/>{item.project_id ? '继续我的完整版本' : '制作我的完整版本'}
                   </Link>}
                 </> : <Link href={productionLink(item)} prefetch={false} data-reader-focus={sourceKey} onClick={() => remember(sourceKey)}>

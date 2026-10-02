@@ -10,6 +10,7 @@ const {renderToStaticMarkup}=require('react-dom/server');
 function load(file){
   const context={exports:{},require:name=>{
     if(name.endsWith('.css')) return {};
+    if(name==='./ui-errors') return load('ui-errors.ts');
     if(name==='./ReaderLink') return {default:props=>React.createElement('a',props)};
     if(name==='./ReaderArtwork') return {default:()=>React.createElement('span',{'data-artwork':true})};
     if(name==='./ReaderCreatorAvatar') return {default:()=>React.createElement('span',{'data-avatar':true})};
@@ -31,7 +32,7 @@ const heroProps=(over={})=>({items:[],loading:false,activeId:'',onActiveChange:(
 test('an empty market invites the first story import',()=>{
   const html=renderToStaticMarkup(React.createElement(ReaderHero,heroProps({inviting:true,onImport:()=>{}})));
   assert.match(html,/把你脑子里的微小说/);
-  assert.match(html,/导入第一篇微小说/);
+  assert.match(html,/导入微小说/);
 });
 
 test('a stocked market keeps the browsing welcome without the import CTA',()=>{
@@ -39,7 +40,7 @@ test('a stocked market keeps the browsing welcome without the import CTA',()=>{
     items:[{id:'s1',title:'故事一',description:'',labels:[],release:{id:'r1',entries:[{clip_id:'c',media:'/media/a.mp4',start:0,end:1}]},work_id:'s1'}],
   })));
   assert.match(html,/这段脑洞/);
-  assert.doesNotMatch(html,/导入第一篇微小说/);
+  assert.doesNotMatch(html,/导入微小说/);
 });
 
 test('the import panel stays mounted so a draft survives closing and reopening',()=>{

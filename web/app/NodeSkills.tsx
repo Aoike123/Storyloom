@@ -27,7 +27,7 @@ export default function NodeSkillsPanel() {
       .then(data=>{if(!Array.isArray(data.nodes))throw Error('节点配置格式无效');if(!controller.signal.aborted)setNodes(data.nodes);}).catch(e=>{if(!controller.signal.aborted)setError(e.message);});
     return()=>controller.abort();
   },[open,nodes.length]);
-  return <details className="node-skills-panel" onToggle={event=>setOpen(event.currentTarget.open)}><summary>查看工作流节点与专业 Skill 绑定</summary>
+  return <details className="node-skills-panel" onToggle={event=>setOpen(event.currentTarget.open)}><summary>专业流程设置</summary>
     <p>这里显示已配置的专业能力；实际调用及版本记录在各任务中。点击节点名称可以检查生效的节点契约。</p>
     {error&&<p role="alert">{error}</p>}
     {open&&!nodes.length&&!error&&<p>正在读取节点配置…</p>}
