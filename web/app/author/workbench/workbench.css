@@ -1,0 +1,40 @@
+/* F1 · 工作台外壳布局（作用域 .workbench；复用全局 token/控件/动效；扁平前缀 workbench-，非 BEM） */
+
+.workbench{ min-height:100vh; display:flex; flex-direction:column; background:var(--bg); color:var(--ink); }
+
+/* 顶栏：品牌 + 项目身份/进度（核心） + 操作 */
+.workbench-topbar{ height:64px; flex:0 0 64px; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:0 20px; background:var(--paper); border-bottom:1px solid var(--line); }
+.workbench-brand{ font-size:20px; letter-spacing:2px; font-weight:600; white-space:nowrap; }
+.workbench-brand span{ font-size:10px; letter-spacing:1px; margin-left:12px; color:var(--muted); font-weight:400; }
+.workbench-topbar-project{ display:flex; align-items:center; gap:10px; min-width:0; flex:1; justify-content:center; }
+.workbench-project-name{ font-size:15px; color:var(--ink); font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workbench-project-stage{ font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:2px 10px; white-space:nowrap; background:var(--soft); }
+.workbench-project-author{ color:var(--muted); font-size:11px; white-space:nowrap; }
+.workbench-topbar-actions{ display:flex; align-items:center; gap:8px; flex:0 0 auto; }
+.workbench-topbar-actions .button.secondary[aria-pressed="true"]{ background:var(--control-hover); border-color:var(--control-focus); }
+
+/* 四个工作区标签（该项目的视图） */
+.workbench-tabs{ flex:0 0 50px; display:flex; align-items:center; gap:8px; padding:0 20px; background:var(--paper); border-bottom:1px solid var(--line); }
+
+/* 主体：主内容区 + 右侧按需面板 */
+.workbench-body{ flex:1; display:flex; min-height:0; }
+.workbench-main{ flex:1; min-width:0; display:flex; flex-direction:column; padding:16px 20px; gap:12px; overflow:auto; }
+.workbench-notice{ background:#f7eddb; color:#86572f; border:1px solid #e7cfa8; border-radius:8px; padding:10px 14px; font-size:13px; }
+.workbench-notice code{ font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+.workbench-canvas-placeholder{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; min-height:240px; border:1px dashed var(--line); border-radius:12px; color:var(--muted); text-align:center; padding:24px; }
+.workbench-canvas-placeholder span{ font-size:16px; color:var(--ink); font-weight:600; }
+.workbench-canvas-placeholder small{ font-size:12px; }
+
+/* 右侧按需上下文面板 */
+.workbench-panel{ flex:0 0 288px; width:288px; border-left:1px solid var(--line); background:var(--soft); padding:14px 16px; overflow:auto; }
+.workbench-panel-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+.workbench-panel-title{ font-size:13px; font-weight:600; color:var(--ink); }
+.workbench-panel-summary{ font-size:13px; color:var(--ink); margin:0 0 14px; }
+.workbench-panel-slots{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.workbench-slot-placeholder{ display:flex; align-items:center; justify-content:space-between; border:1px solid var(--line); border-radius:8px; background:var(--paper); padding:10px 12px; font-size:13px; color:var(--ink); }
+.workbench-slot-placeholder small{ color:var(--muted); }
+
+/* 响应式 + 减弱动态 */
+@media (max-width:900px){ .workbench-panel{ flex-basis:240px; width:240px; } }
+@media (max-width:620px){ .workbench-brand span{ display:none; } .workbench-topbar-project{ display:none; } .workbench-panel{ flex:1 1 auto; width:auto; } }
+@media (prefers-reduced-motion: reduce){ .workbench .button{ transition:none; } }
