@@ -6,6 +6,7 @@ import ContextPanel from './ContextPanel';
 import CanvasViewport from './CanvasViewport';
 import ReleaseWorkspace from './ReleaseWorkspace';
 import SourceArea from './SourceArea';
+import ConversationBar from './ConversationBar';
 import { WORKSPACE_LABELS, type WorkbenchState, type WorkbenchAction, type Workspace } from './workspace-state';
 import { type DisplayNode, type WorkspaceContent } from './display-model';
 import { type SourceFragment, type SourceModel } from './source-model';
@@ -37,8 +38,14 @@ function firstDialogue(text: string): string | null {
 function buildFragmentNode(task: 'script' | 'cut', frag: SourceFragment, source: SourceModel): DisplayNode {
   const text = source.text.slice(frag.range.start, frag.range.end);
   const body = text.length > 54 ? text.slice(0, 54) + '…' : text;
+  const sourceRef = {
+    fragmentName: frag.name,
+    rangeStart: frag.range.start,
+    rangeEnd: frag.range.end,
+    sourceRevision: source.revision,
+  };
   if (task === 'cut') {
-    return { id: frag.id, kind: 'cut', title: frag.name, group: frag.name, body, fields: [{ label: '裁减正文', value: null }], isExample: true };
+    return { id: frag.id, kind: 'cut', title: frag.name, group: frag.name, body, fields: [{ label: '裁减正文', value: null }], version: null, sourceRef, isExample: true };
   }
   return {
     id: frag.id,
@@ -50,6 +57,8 @@ function buildFragmentNode(task: 'script' | 'cut', frag: SourceFragment, source:
       { label: '动作', value: null },
       { label: '对白', value: firstDialogue(text) },
     ],
+    version: null,
+    sourceRef,
     isExample: true,
   };
 }
@@ -169,17 +178,23 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
           {active === 'film' ? (
             <ReleaseWorkspace nodes={nodes} selectedId={activeView.selectedId} onSelect={(id) => dispatch({ type: 'SELECT', id })} />
           ) : (
-            <CanvasViewport
-              canvasKey={active}
-              nodes={nodes}
-              layout={activeView.layout}
-              viewport={activeView.viewport}
-              selectedId={activeView.selectedId}
-              onViewportChange={(v) => dispatch({ type: 'SET_VIEWPORT', viewport: v })}
-              onSelect={(id) => dispatch({ type: 'SELECT', id })}
-              onNodeDragStop={(id, x, y) => dispatch({ type: 'SET_LAYOUT', id, x, y })}
-              emptyHint={emptyHint}
-            />
+            <>
+              <CanvasViewport
+                canvasKey={active}
+                nodes={nodes}
+                layout={activeView.layout}
+                viewport={activeView.viewport}
+                selectedId={activeView.selectedId}
+                onViewportChange={(v) => dispatch({ type: 'SET_VIEWPORT', viewport: v })}
+                onSelect={(id) => dispatch({ type: 'SELECT', id })}
+                onNodeDragStop={(id, x, y) => dispatch({ type: 'SET_LAYOUT', id, x, y })}
+                emptyHint={emptyHint}
+              />
+              <ConversationBar
+                stepLabel={`${WORKSPACE_LABELS[active]}步骤`}
+                contextLabel={selectedNode ? `针对「${selectedNode.title}」` : null}
+              />
+            </>
           )}
         </main>
 

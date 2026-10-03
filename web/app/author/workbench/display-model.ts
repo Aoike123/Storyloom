@@ -10,6 +10,14 @@ export interface FieldDef {
   value: string | null;
 }
 
+// 来源出处：该对象由哪个来源片段 / 正文版本派生（属性面板“来源”区展示）。
+export interface SourceRef {
+  fragmentName: string;
+  rangeStart: number;
+  rangeEnd: number;
+  sourceRevision: string;
+}
+
 export interface DisplayNode {
   id: string;
   kind: NodeKind;
@@ -17,8 +25,11 @@ export interface DisplayNode {
   group?: string;
   // 原文参考：从来源片段截取的真实文本（只读，供节点内展示与对照）
   body?: string;
-  // 可编辑字段（跟随所选对象，属性面板按此渲染真实字段，D 批）
+  // 可编辑字段（跟随所选对象，属性面板按此渲染真实字段）
   fields?: FieldDef[];
+  // 当前版本（未记录 → null，空态）；来源出处（无关联 → null）
+  version?: string | null;
+  sourceRef?: SourceRef | null;
   isExample?: boolean;
 }
 

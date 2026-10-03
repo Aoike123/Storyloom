@@ -128,18 +128,38 @@
 .workbench-node-field-value{ display:block; margin-top:2px; font-size:12px; color:var(--ink); line-height:1.5; }
 .workbench-node-field-empty{ display:block; margin-top:2px; font-size:12px; color:var(--muted); font-style:italic; }
 
+/* 每步骤对话入口（画布底部条；占位，不接真实 agent） */
+.workbench-conversation{ flex:0 0 auto; display:flex; align-items:center; gap:14px; border-top:1px solid var(--line); background:var(--paper); padding:9px 12px; }
+.workbench-conversation-step{ display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); white-space:nowrap; }
+.workbench-conversation-step-label{ color:var(--ink); font-weight:500; }
+.workbench-conversation-context{ color:var(--muted); }
+.workbench-conversation-input{ flex:1; display:flex; align-items:center; gap:8px; min-width:0; }
+.workbench-conversation-input input{ flex:1; min-width:0; border:1px solid var(--line); border-radius:8px; background:var(--soft); padding:8px 12px; font-size:13px; color:var(--ink); }
+.workbench-conversation-input input:focus{ border-color:var(--control-focus); }
+.workbench-conversation-note{ font-size:11px; color:var(--muted); white-space:nowrap; }
+
 /* 右侧属性面板（第三 grid 列；宽度由 --workbench-panel-width 控制，随所选对象更新，D 批重构内容） */
 .workbench-panel{ min-width:0; min-height:0; border-left:1px solid var(--line); background:var(--soft); padding:14px 16px; overflow:auto; display:flex; flex-direction:column; }
 .workbench-panel-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
 .workbench-panel-title{ font-size:13px; font-weight:600; color:var(--ink); }
-.workbench-panel-summary{ display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--ink); margin:0 0 14px; }
+.workbench-panel-empty{ font-size:13px; color:var(--muted); line-height:1.7; margin:0; }
+.workbench-inspector{ display:flex; flex-direction:column; gap:14px; }
+.workbench-inspector-identity{ display:flex; flex-direction:column; gap:4px; }
 .workbench-panel-kind{ font-size:11px; color:var(--muted); letter-spacing:.5px; }
 .workbench-panel-node-title{ font-size:14px; font-weight:600; color:var(--ink); word-break:break-word; }
 .workbench-panel-group{ font-size:11px; color:var(--muted); }
 .workbench-panel-example{ font-size:11px; color:var(--accent); }
-.workbench-panel-slots{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
-.workbench-slot-placeholder{ display:flex; align-items:center; justify-content:space-between; border:1px solid var(--line); border-radius:8px; background:var(--paper); padding:10px 12px; font-size:13px; color:var(--ink); }
-.workbench-slot-placeholder small{ color:var(--muted); }
+.workbench-inspector-section{ border-top:1px solid var(--line); padding-top:12px; display:flex; flex-direction:column; gap:8px; }
+.workbench-inspector-section h4{ margin:0; font-size:11px; font-weight:600; color:var(--muted); letter-spacing:.5px; }
+.workbench-inspector-fields{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+.workbench-inspector-field{ display:flex; flex-direction:column; gap:2px; border:1px solid var(--line); border-radius:8px; background:var(--paper); padding:7px 10px; }
+.workbench-inspector-field-label{ font-size:11px; color:var(--muted); letter-spacing:.5px; }
+.workbench-inspector-field-value{ font-size:13px; color:var(--ink); line-height:1.5; }
+.workbench-inspector-field-empty{ font-size:13px; color:var(--muted); font-style:italic; }
+.workbench-inspector-src{ margin:0; font-size:13px; color:var(--ink); line-height:1.5; }
+.workbench-inspector-src small{ display:block; margin-top:2px; font-size:11px; color:var(--muted); }
+.workbench-inspector-ver{ margin:0; font-size:13px; color:var(--ink); }
+.workbench-inspector-empty{ margin:0; font-size:13px; color:var(--muted); font-style:italic; }
 
 /* 响应式 + 减弱动态（完整响应式 / 小屏断点归 D08 收敛） */
 @media (max-width:900px){ .workbench{ --workbench-source-width:240px; --workbench-panel-width:240px; } }
