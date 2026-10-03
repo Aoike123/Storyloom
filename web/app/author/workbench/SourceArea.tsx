@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, Plus } from 'lucide-react';
 import {
   checkRange,
   deriveFragmentName,
@@ -25,6 +25,9 @@ interface Props {
   onJump: (f: SourceFragment) => void;
   onSetPending: (range: FragmentRange | null) => void;
   onAddCandidate: (f: SourceFragment) => void;
+  onImportStory?: (content: string, title: string) => void;
+  importBusy?: boolean;
+  importError?: string | null;
 }
 
 interface Pt {
@@ -49,10 +52,16 @@ export default function SourceArea({
   onJump,
   onSetPending,
   onAddCandidate,
+  onImportStory,
+  importBusy,
+  importError,
 }: Props) {
   const proseRef = useRef<HTMLDivElement>(null);
   const [pendingRect, setPendingRect] = useState<Pt | null>(null);
   const [conflict, setConflict] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [draftTitle, setDraftTitle] = useState('');
 
   const fragments = [...source.fragments, ...candidateFragments].sort((a, b) => a.range.start - b.range.start);
   const byId = new Map(fragments.map((f) => [f.id, f]));
@@ -153,6 +162,14 @@ export default function SourceArea({
     onJump(f);
   };
 
+  // 打开「导入故事」面板：预填现有正文（便于编辑后重新导入/更换）
+  function openImport() {
+    setDraft(source.text ?? '');
+    setDraftTitle('');
+    setConflict(null);
+    setImporting(true);
+  }
+
   if (!open) return null;
 
   return (
@@ -169,6 +186,10 @@ export default function SourceArea({
           <button type="button" aria-pressed={view === 'fragments'} onClick={() => onToggleView('fragments')}>
             {fragmentViewLabel}
           </button>
+          <button type="button" className="workbench-source-import" title="导入 / 更换故事原文" onClick={openImport}>
+            <Plus size={14} />
+            导入
+          </button>
           <button type="button" className="icon" aria-label="收起来源区" title="收起来源区" onClick={onCollapse}>
             <ChevronLeft size={15} />
           </button>
@@ -176,67 +197,110 @@ export default function SourceArea({
       </div>
 
       <div className="workbench-source-scroll" onScroll={() => pendingRange && clearPending()}>
-        {conflict ? (
-          <div className="workbench-conflict" role="status">
-            {conflict}
-          </div>
-        ) : null}
-        {!hasText ? (
-          <div className="workbench-source-empty">该故事尚未导入原文。导入后在此连续阅读，并划选片段进入后续制作。</div>
-        ) : view === 'original' ? (
-          <div className="workbench-original" ref={proseRef} onMouseUp={handleMouseUp}>
-            {segments.map((seg, i) =>
-              seg.region ? (
-                <span
-                  key={i}
-                  className={
-                    'workbench-region' +
-                    (seg.region.kind === 'pending' ? ' is-pending' : '') +
-                    (activeId && seg.region.id === activeId ? ' is-active' : '')
-                  }
-                  role={seg.region.kind === 'fragment' ? 'button' : undefined}
-                  tabIndex={seg.region.kind === 'fragment' ? 0 : undefined}
-                  onClick={seg.region.kind === 'fragment' ? () => {
-                    const f = byId.get(seg.region!.id);
-                    if (f) jumpTo(f);
-                  } : undefined}
-                  onKeyDown={seg.region.kind === 'fragment' ? (e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      const f = byId.get(seg.region!.id);
-                      if (f) jumpTo(f);
-                    }
-                  } : undefined}
-                >
-                  {seg.text}
-                </span>
-              ) : (
-                <span key={i} className="workbench-gap">
-                  {seg.text}
-                </span>
-              ),
-            )}
+        {importing ? (
+          <div className="workbench-import">
+            <label className="workbench-import-field">
+              <span>故事正文</span>
+              <textarea className="workbench-import-text" rows={12} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="在这里粘贴你的故事原文…" />
+            </label>
+            <label className="workbench-import-field">
+              <span>标题（可选）</span>
+              <input className="workbench-import-title" value={draftTitle} onChange={(e) => setDraftTitle(e.target.value)} placeholder="给这个故事起个标题" />
+            </label>
+            {importError ? (
+              <p className="workbench-import-error" role="alert">
+                {importError}
+              </p>
+            ) : null}
+            <div className="workbench-import-actions">
+              <button
+                type="button"
+                className="is-primary"
+                disabled={importBusy || !draft.trim()}
+                onClick={() => {
+                  if (!draft.trim()) return;
+                  onImportStory?.(draft.trim(), draftTitle.trim());
+                  setImporting(false);
+                }}
+              >
+                {importBusy ? '导入中…' : '导入故事'}
+              </button>
+              <button type="button" onClick={() => setImporting(false)}>
+                取消
+              </button>
+            </div>
           </div>
         ) : (
-          <div className="workbench-fragments">
-            {fragments.length === 0 ? (
-              <div className="workbench-source-empty">尚无片段。在「原文」视图划选一段连续文字，建立第一个故事片段。</div>
-            ) : (
-              fragments.map((f, i) => (
-                <button key={f.id} type="button" className={'workbench-fragment' + (activeId === f.id ? ' is-active' : '')} onClick={() => jumpTo(f)}>
-                  <span className="workbench-fragment-index">{i + 1}</span>
-                  <span className="workbench-fragment-body">
-                    <strong>{f.name}</strong>
-                    <small>
-                      {f.origin} · {f.progress}
-                    </small>
-                    <span className={'workbench-fragment-status is-' + (f.status === '已确认' ? 'done' : 'todo')}>{f.status}</span>
-                  </span>
-                  {f.isExample ? <em className="workbench-fragment-example">示例</em> : null}
+          <>
+            {conflict ? (
+              <div className="workbench-conflict" role="status">
+                {conflict}
+              </div>
+            ) : null}
+            {!hasText ? (
+              <div className="workbench-source-empty">
+                <p>这个项目还没有原文。导入你的故事后，就能在这里连续阅读、划选建立片段。</p>
+                <button type="button" className="is-primary workbench-source-empty-import" onClick={openImport}>
+                  <Plus size={15} />
+                  导入故事
                 </button>
-              ))
+              </div>
+            ) : view === 'original' ? (
+              <div className="workbench-original" ref={proseRef} onMouseUp={handleMouseUp}>
+                {segments.map((seg, i) =>
+                  seg.region ? (
+                    <span
+                      key={i}
+                      className={
+                        'workbench-region' +
+                        (seg.region.kind === 'pending' ? ' is-pending' : '') +
+                        (activeId && seg.region.id === activeId ? ' is-active' : '')
+                      }
+                      role={seg.region.kind === 'fragment' ? 'button' : undefined}
+                      tabIndex={seg.region.kind === 'fragment' ? 0 : undefined}
+                      onClick={seg.region.kind === 'fragment' ? () => {
+                        const f = byId.get(seg.region!.id);
+                        if (f) jumpTo(f);
+                      } : undefined}
+                      onKeyDown={seg.region.kind === 'fragment' ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          const f = byId.get(seg.region!.id);
+                          if (f) jumpTo(f);
+                        }
+                      } : undefined}
+                    >
+                      {seg.text}
+                    </span>
+                  ) : (
+                    <span key={i} className="workbench-gap">
+                      {seg.text}
+                    </span>
+                  ),
+                )}
+              </div>
+            ) : (
+              <div className="workbench-fragments">
+                {fragments.length === 0 ? (
+                  <div className="workbench-source-empty">尚无片段。在「原文」视图划选一段连续文字，建立第一个故事片段。</div>
+                ) : (
+                  fragments.map((f, i) => (
+                    <button key={f.id} type="button" className={'workbench-fragment' + (activeId === f.id ? ' is-active' : '')} onClick={() => jumpTo(f)}>
+                      <span className="workbench-fragment-index">{i + 1}</span>
+                      <span className="workbench-fragment-body">
+                        <strong>{f.name}</strong>
+                        <small>
+                          {f.origin} · {f.progress}
+                        </small>
+                        <span className={'workbench-fragment-status is-' + (f.status === '已确认' ? 'done' : 'todo')}>{f.status}</span>
+                      </span>
+                      {f.isExample ? <em className="workbench-fragment-example">示例</em> : null}
+                    </button>
+                  ))
+                )}
+              </div>
             )}
-          </div>
+          </>
         )}
       </div>
 

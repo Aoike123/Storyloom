@@ -93,11 +93,13 @@ export function computeExampleFragments(spans: Span[]): SourceFragment[] {
   return out;
 }
 
-// 从完整原文构造 SourceModel：真实正文 + 段落 + 隔离示例片段（无后端片段结构时）。
-export function buildSourceModel(text: string, revision: string): SourceModel {
+// 从完整原文构造 SourceModel：真实正文 + 段落 + 片段。
+// withExamples 默认 true（沿用隔离示例片段演示片段→节点流程）；用户刚导入自己的故事时传 false，
+// 得到干净空白（不预置示例），由用户在原文中划选建立真实片段。
+export function buildSourceModel(text: string, revision: string, opts?: { withExamples?: boolean }): SourceModel {
   const trimmed = (text ?? '').trim();
   const spans = splitParagraphSpans(trimmed);
-  const fragments = computeExampleFragments(spans);
+  const fragments = opts?.withExamples === false ? [] : computeExampleFragments(spans);
   return {
     revision,
     text: trimmed,

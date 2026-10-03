@@ -51,6 +51,7 @@ export interface WorkbenchState {
 export type WorkbenchAction =
   | { type: 'SET_PROJECT_ID'; id: string }
   | { type: 'SET_WORKSPACE'; workspace: Workspace } // 仅用户主动切换
+  | { type: 'SET_INITIAL_WORKSPACE'; workspace: Workspace } // 加载项目时设定起始标签（空项目落“切分”），非用户切换
   | { type: 'JUMP_FRAGMENT'; id: string; task: Workspace; selected: string | null } // 片段跳转
   | { type: 'SELECT'; id: string | null }
   | { type: 'SET_VIEWPORT'; viewport: Viewport }
@@ -104,6 +105,10 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return { ...createWorkbenchState(action.id), activeWorkspace: state.activeWorkspace };
     case 'SET_WORKSPACE':
       // 仅用户主动切换；各工作区各自的视图保持不变（切换只改 active），来源区/片段上下文不动
+      if (action.workspace === state.activeWorkspace) return state;
+      return { ...state, activeWorkspace: action.workspace };
+    case 'SET_INITIAL_WORKSPACE':
+      // 加载项目时设定起始标签（空项目落“切分”）；只在项目刚载入时由 page 触发一次
       if (action.workspace === state.activeWorkspace) return state;
       return { ...state, activeWorkspace: action.workspace };
     case 'JUMP_FRAGMENT': {

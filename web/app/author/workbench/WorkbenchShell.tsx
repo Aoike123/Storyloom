@@ -1,7 +1,7 @@
 'use client';
 import { useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, PanelLeft, Info, ListTodo } from 'lucide-react';
+import { ArrowLeft, PanelLeft, Info, ListTodo, FolderOpen } from 'lucide-react';
 import WorkspaceTabs from './WorkspaceTabs';
 import ContextPanel from './ContextPanel';
 import CanvasViewport from './CanvasViewport';
@@ -76,16 +76,21 @@ interface Props {
   hasWork?: boolean;
   source?: SourceModel | null;
   content?: Record<Workspace, WorkspaceContent> | null;
+  onImportStory?: (content: string, title: string) => void;
+  importBusy?: boolean;
+  importError?: string | null;
 }
 
 // 以「项目」为核心：项目顶栏 + 五个工作标签 + 三区主体（左：来源区｜中：任务画布/成片｜右：属性面板）。
 // 左侧来源区贯穿项目，跨工作区共享；点击荧光区域/片段 = 片段跳转（恢复目标片段的工作上下文）。
-export default function WorkbenchShell({ view, dispatch, title, author, stage, readError, hasWork, source, content }: Props) {
+// 未绑定项目（裸开 /author/workbench）时，主体整栏显示“进入项目入口”空态，不再向用户暴露内部路由。
+export default function WorkbenchShell({ view, dispatch, title, author, stage, readError, hasWork, source, content, onImportStory, importBusy, importError }: Props) {
   const active = view.activeWorkspace;
   const activeView = view.byWorkspace[active];
   const activeContent = content?.[active] ?? null;
   const [taskQueueOpen, setTaskQueueOpen] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const noProject = !hasWork;
 
   const allFragments = source ? [...source.fragments, ...view.candidateFragments].sort((a, b) => a.range.start - b.range.start) : [];
 
@@ -120,7 +125,7 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
   }
 
   return (
-    <div className="workbench" data-source={view.sourceOpen} data-inspector={view.inspectorOpen}>
+    <div className="workbench" data-noproject={noProject || undefined} data-source={noProject ? false : view.sourceOpen} data-inspector={noProject ? false : view.inspectorOpen}>
       <header className="workbench-topbar">
         <Link className="workbench-brand" href="/">
           叙间<span>STORYLOOM · WORKBENCH</span>
@@ -173,62 +178,80 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
       <WorkspaceTabs active={active} onSelect={(w: Workspace) => dispatch({ type: 'SET_WORKSPACE', workspace: w })} />
 
       <div className="workbench-body" ref={bodyRef}>
-        <SourceArea
-          source={source ?? { revision: 'import-0', text: '', paragraphs: [], fragments: [], isExample: false }}
-          open={view.sourceOpen}
-          view={view.sourceView}
-          activeFragmentId={view.activeFragmentId}
-          active={active}
-          candidateFragments={view.candidateFragments}
-          pendingRange={view.pendingRange}
-          onToggleView={(v) => dispatch({ type: 'SET_SOURCE_VIEW', view: v })}
-          onCollapse={() => dispatch({ type: 'SET_SOURCE_OPEN', open: false })}
-          onJump={jump}
-          onSetPending={(r) => dispatch({ type: 'SET_PENDING_RANGE', range: r })}
-          onAddCandidate={(f) => dispatch({ type: 'ADD_CANDIDATE_FRAGMENT', fragment: f })}
-        />
-
-        <main className="workbench-main">
-          {readError ? <div className="workbench-notice" role="alert">读取项目失败：{readError}</div> : null}
-          {!hasWork ? (
-            <div className="workbench-notice">
-              尚未绑定项目：请通过 <code>/author/workbench?work=&lt;id&gt;</code> 打开一个已有项目。
-            </div>
-          ) : null}
-          {active === 'film' ? (
-            <FilmEditor
-              clips={nodes}
-              resources={allFragments.map((f) => ({ id: f.id, name: f.name }))}
-              isExample={!nodes.some((n) => !n.isExample)}
+        {noProject ? (
+          <div className="workbench-noproject">
+            <FolderOpen size={42} />
+            <strong>还没有打开项目</strong>
+            <p>从项目入口选择一个项目，或新建一个项目——然后在这里导入你的故事原文、切分片段、编排剧本、制作成片。</p>
+            <Link className="button primary" href="/">
+              进入项目入口
+            </Link>
+          </div>
+        ) : (
+          <>
+            <SourceArea
+              source={source ?? { revision: 'import-0', text: '', paragraphs: [], fragments: [], isExample: false }}
+              open={view.sourceOpen}
+              view={view.sourceView}
+              activeFragmentId={view.activeFragmentId}
+              active={active}
+              candidateFragments={view.candidateFragments}
+              pendingRange={view.pendingRange}
+              onToggleView={(v) => dispatch({ type: 'SET_SOURCE_VIEW', view: v })}
+              onCollapse={() => dispatch({ type: 'SET_SOURCE_OPEN', open: false })}
+              onJump={jump}
+              onSetPending={(r) => dispatch({ type: 'SET_PENDING_RANGE', range: r })}
+              onAddCandidate={(f) => dispatch({ type: 'ADD_CANDIDATE_FRAGMENT', fragment: f })}
+              onImportStory={onImportStory}
+              importBusy={importBusy}
+              importError={importError}
             />
-          ) : (
-            <>
-              <CanvasViewport
-                canvasKey={active}
-                nodes={nodes}
-                layout={activeView.layout}
-                viewport={activeView.viewport}
-                selectedId={activeView.selectedId}
-                onViewportChange={(v) => dispatch({ type: 'SET_VIEWPORT', viewport: v })}
-                onSelect={(id) => dispatch({ type: 'SELECT', id })}
-                onNodeDragStop={(id, x, y) => dispatch({ type: 'SET_LAYOUT', id, x, y })}
-                emptyHint={emptyHint}
-              />
-              <ConversationBar
-                stepLabel={`${WORKSPACE_LABELS[active]}步骤`}
-                contextLabel={selectedNode ? `针对「${selectedNode.title}」` : null}
-              />
-            </>
-          )}
-        </main>
 
-        <ContextPanel
-          open={view.inspectorOpen}
-          selectedNode={selectedNode}
-          onClose={() => dispatch({ type: 'SET_INSPECTOR', open: false })}
-        />
+            <main className="workbench-main">
+              {readError ? (
+                <div className="workbench-notice" role="alert">
+                  {readError}
+                  <Link className="workbench-notice-link" href="/">
+                    返回项目入口
+                  </Link>
+                </div>
+              ) : null}
+              {active === 'film' ? (
+                <FilmEditor
+                  clips={nodes}
+                  resources={allFragments.map((f) => ({ id: f.id, name: f.name }))}
+                  isExample={!nodes.some((n) => !n.isExample)}
+                />
+              ) : (
+                <>
+                  <CanvasViewport
+                    canvasKey={active}
+                    nodes={nodes}
+                    layout={activeView.layout}
+                    viewport={activeView.viewport}
+                    selectedId={activeView.selectedId}
+                    onViewportChange={(v) => dispatch({ type: 'SET_VIEWPORT', viewport: v })}
+                    onSelect={(id) => dispatch({ type: 'SELECT', id })}
+                    onNodeDragStop={(id, x, y) => dispatch({ type: 'SET_LAYOUT', id, x, y })}
+                    emptyHint={emptyHint}
+                  />
+                  <ConversationBar
+                    stepLabel={`${WORKSPACE_LABELS[active]}步骤`}
+                    contextLabel={selectedNode ? `针对「${selectedNode.title}」` : null}
+                  />
+                </>
+              )}
+            </main>
 
-        <SourceLines bodyRef={bodyRef} regionActive={regionActive} nodeId={sourceNodeId} />
+            <ContextPanel
+              open={view.inspectorOpen}
+              selectedNode={selectedNode}
+              onClose={() => dispatch({ type: 'SET_INSPECTOR', open: false })}
+            />
+
+            <SourceLines bodyRef={bodyRef} regionActive={regionActive} nodeId={sourceNodeId} />
+          </>
+        )}
       </div>
     </div>
   );
