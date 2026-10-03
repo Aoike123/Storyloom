@@ -145,9 +145,12 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
           activeFragmentId={view.activeFragmentId}
           active={active}
           candidateFragments={view.candidateFragments}
+          pendingRange={view.pendingRange}
           onToggleView={(v) => dispatch({ type: 'SET_SOURCE_VIEW', view: v })}
           onCollapse={() => dispatch({ type: 'SET_SOURCE_OPEN', open: false })}
           onJump={jump}
+          onSetPending={(r) => dispatch({ type: 'SET_PENDING_RANGE', range: r })}
+          onAddCandidate={(f) => dispatch({ type: 'ADD_CANDIDATE_FRAGMENT', fragment: f })}
         />
 
         <main className="workbench-main">

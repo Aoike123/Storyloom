@@ -56,8 +56,8 @@ export function splitParagraphSpans(text: string): Span[] {
   return spans;
 }
 
-// 从一段文字的首行派生一个可读片段名（示例用；真实名称来自项目对象）。
-function nameFrom(spanText: string, fallback: string): string {
+// 从一段文字的首行派生一个可读片段名（示例/候选用；真实名称来自项目对象）。
+export function deriveFragmentName(spanText: string, fallback: string): string {
   const line = spanText.split('\n').find((l) => l.trim()) ?? '';
   const t = line.trim();
   if (!t) return fallback;
@@ -80,7 +80,7 @@ export function computeExampleFragments(spans: Span[]): SourceFragment[] {
     const last = f === maxFrags - 1;
     out.push({
       id: 'F' + String(f + 1).padStart(2, '0'),
-      name: nameFrom(spans[a].text, '示例片段 ' + String(f + 1).padStart(2, '0')),
+      name: deriveFragmentName(spans[a].text, '示例片段 ' + String(f + 1).padStart(2, '0')),
       status: last ? '待确认' : '已确认',
       origin: f === 0 ? '用户切分' : f === 1 ? 'AI 建议 · 用户确认' : 'AI 切分建议',
       progress: last ? '片段边界待确认' : '剧本 2 项 · 视频 0/3',

@@ -72,6 +72,17 @@
 .workbench-fragment-status.is-todo{ color:var(--accent); background:var(--soft); border:1px solid var(--line); }
 .workbench-fragment-example{ flex:0 0 auto; font-style:normal; font-size:10px; color:var(--muted); border:1px solid var(--line); border-radius:5px; padding:1px 5px; margin-top:2px; white-space:nowrap; }
 
+/* 划选未标注文字后的浮动「新建片段/取消」工具（随选区定位，固定于视口） */
+.workbench-pending-tool{ position:fixed; z-index:60; display:flex; align-items:center; gap:2px; background:var(--paper); border:1px solid var(--line); border-radius:9px; box-shadow:0 6px 22px rgba(32,45,57,.16); padding:4px; animation:wb-rise var(--motion-slow) var(--ease-out); }
+.workbench-pending-tool button{ border:0; background:transparent; color:var(--ink); font-size:12.5px; font-weight:500; padding:6px 11px; border-radius:6px; white-space:nowrap; }
+.workbench-pending-tool button.is-primary{ background:var(--control-primary); color:var(--control-primary-text); }
+.workbench-pending-tool button.is-primary:hover{ background:var(--control-primary-hover); }
+.workbench-pending-tool button:not(.is-primary):hover{ background:var(--soft); }
+@keyframes wb-rise{ from{ opacity:0; transform:translateY(4px); } to{ opacity:1; transform:none; } }
+
+/* 划选与已有片段重叠时的冲突提示（来源区顶部，自动消失） */
+.workbench-conflict{ margin-bottom:10px; padding:8px 11px; border:1px solid var(--line); border-left:2px solid var(--accent); border-radius:8px; background:var(--soft); color:var(--ink); font-size:12px; line-height:1.5; }
+
 /* 画布（React Flow） */
 .workbench-canvas{ position:relative; flex:1; min-height:280px; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--paper); }
 .workbench-canvas > .react-flow{ position:absolute; inset:0; width:100%; height:100%; background:var(--paper); }
