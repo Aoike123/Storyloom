@@ -1,6 +1,7 @@
 /* F1/F2 · 工作台外壳布局（作用域 .workbench；复用全局 token/控件/动效；扁平前缀 workbench-，非 BEM） */
 
 .workbench{
+  position:relative;
   min-height:100vh; display:flex; flex-direction:column; background:var(--bg); color:var(--ink);
   --workbench-source-width:288px;
   --workbench-panel-width:288px;
@@ -173,6 +174,27 @@
 .workbench-film-clip-tools button{ border:1px solid var(--line); background:var(--paper); border-radius:6px; padding:5px 8px; color:var(--ink); display:inline-flex; align-items:center; }
 .workbench-film-clip-tools button:hover{ border-color:var(--accent); }
 .workbench-film-clip-tools button.is-danger:hover{ border-color:#c0392b; color:#c0392b; }
+
+/* 项目任务队列弹层（顶栏「任务」按钮；状态由项目阶段派生） */
+.workbench-taskqueue{ position:absolute; top:52px; right:16px; z-index:55; width:264px; background:var(--paper); border:1px solid var(--line); border-radius:12px; box-shadow:0 10px 30px rgba(32,45,57,.16); padding:12px; display:flex; flex-direction:column; gap:10px; animation:wb-rise var(--motion-slow) var(--ease-out); }
+.workbench-taskqueue-head{ display:flex; align-items:center; justify-content:space-between; font-size:13px; font-weight:600; color:var(--ink); }
+.workbench-taskqueue-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:3px; }
+.workbench-taskqueue-item{ display:flex; align-items:center; gap:8px; padding:7px 9px; border-radius:8px; font-size:13px; color:var(--ink); }
+.workbench-taskqueue-item svg{ color:var(--muted); flex:0 0 auto; }
+.workbench-taskqueue-item.is-done{ color:var(--muted); }
+.workbench-taskqueue-item.is-done svg{ color:var(--accent); }
+.workbench-taskqueue-item.is-current{ background:var(--soft); box-shadow:inset 0 0 0 1px var(--line); color:var(--ink); }
+.workbench-taskqueue-item.is-current svg{ color:var(--accent); }
+.workbench-taskqueue-item .is-spin{ animation:wb-spin 1.6s linear infinite; }
+.workbench-taskqueue-label{ flex:1; }
+.workbench-taskqueue-status{ font-size:11px; color:var(--muted); }
+.workbench-taskqueue-foot{ font-size:11px; color:var(--muted); border-top:1px solid var(--line); padding-top:8px; }
+@keyframes wb-spin{ to{ transform:rotate(360deg); } }
+
+/* 来源连线覆盖层：当前片段在来源区的荧光区域边缘 → 其在画布中的首个节点（单条线） */
+.workbench-source-lines{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:45; }
+.workbench-source-lines line{ stroke:var(--accent); stroke-width:1.5; }
+.workbench-source-lines circle{ fill:var(--accent); }
 
 /* 右侧属性面板（第三 grid 列；宽度由 --workbench-panel-width 控制，随所选对象更新，D 批重构内容） */
 .workbench-panel{ min-width:0; min-height:0; border-left:1px solid var(--line); background:var(--soft); padding:14px 16px; overflow:auto; display:flex; flex-direction:column; }

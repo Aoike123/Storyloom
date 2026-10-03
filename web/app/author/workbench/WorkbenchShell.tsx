@@ -1,12 +1,15 @@
 'use client';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, PanelLeft, Info } from 'lucide-react';
+import { ArrowLeft, PanelLeft, Info, ListTodo } from 'lucide-react';
 import WorkspaceTabs from './WorkspaceTabs';
 import ContextPanel from './ContextPanel';
 import CanvasViewport from './CanvasViewport';
 import FilmEditor from './FilmEditor';
 import SourceArea from './SourceArea';
 import ConversationBar from './ConversationBar';
+import TaskQueue from './TaskQueue';
+import SourceLines from './SourceLines';
 import { WORKSPACE_LABELS, type WorkbenchState, type WorkbenchAction, type Workspace } from './workspace-state';
 import { type DisplayNode, type WorkspaceContent } from './display-model';
 import { type SourceFragment, type SourceModel } from './source-model';
@@ -81,6 +84,8 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
   const active = view.activeWorkspace;
   const activeView = view.byWorkspace[active];
   const activeContent = content?.[active] ?? null;
+  const [taskQueueOpen, setTaskQueueOpen] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   const allFragments = source ? [...source.fragments, ...view.candidateFragments].sort((a, b) => a.range.start - b.range.start) : [];
 
@@ -93,6 +98,9 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
     nodes = allFragments.map((f) => buildFragmentNode(active, f, source));
   }
   const selectedNode = nodes.find((n) => n.id === activeView.selectedId) ?? null;
+  // 来源连线：仅剧本/裁减（节点 id = 片段 id）+ 来源区原文视图 + 有活跃片段时绘制
+  const sourceNodeId = active === 'script' || active === 'cut' ? view.activeFragmentId : null;
+  const regionActive = view.sourceOpen && view.sourceView === 'original' && !!sourceNodeId;
   const emptyList = Object.values(emptyReasons).filter(Boolean) as string[];
   const loading = !!hasWork && !content;
   const emptyHint = loading
@@ -126,6 +134,16 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
           <button
             type="button"
             className="button secondary"
+            aria-pressed={taskQueueOpen}
+            title="项目任务队列"
+            onClick={() => setTaskQueueOpen((o) => !o)}
+          >
+            <ListTodo size={15} />
+            任务
+          </button>
+          <button
+            type="button"
+            className="button secondary"
             aria-pressed={view.sourceOpen}
             title={view.sourceOpen ? '收起来源区' : '展开来源区'}
             onClick={() => dispatch({ type: 'SET_SOURCE_OPEN', open: !view.sourceOpen })}
@@ -150,9 +168,11 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
         </div>
       </header>
 
+      {taskQueueOpen ? <TaskQueue currentStage={stage ?? null} onClose={() => setTaskQueueOpen(false)} /> : null}
+
       <WorkspaceTabs active={active} onSelect={(w: Workspace) => dispatch({ type: 'SET_WORKSPACE', workspace: w })} />
 
-      <div className="workbench-body">
+      <div className="workbench-body" ref={bodyRef}>
         <SourceArea
           source={source ?? { revision: 'import-0', text: '', paragraphs: [], fragments: [], isExample: false }}
           open={view.sourceOpen}
@@ -207,6 +227,8 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
           selectedNode={selectedNode}
           onClose={() => dispatch({ type: 'SET_INSPECTOR', open: false })}
         />
+
+        <SourceLines bodyRef={bodyRef} regionActive={regionActive} nodeId={sourceNodeId} />
       </div>
     </div>
   );
