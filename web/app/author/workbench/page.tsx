@@ -47,7 +47,8 @@ export default function AuthorWorkbench() {
       stage={work?.stage ?? null}
       readError={readError}
       hasWork={hasWork}
-      content={content}
+      source={content?.source ?? null}
+      content={content?.byWorkspace ?? null}
     />
   );
 }

@@ -21,6 +21,7 @@ export default function WorkspaceTabs({ active, onSelect }: Props) {
           {WORKSPACE_LABELS[w]}
         </button>
       ))}
+      <span className="workbench-tabs-note">工作标签 · 暂定</span>
     </nav>
   );
 }
