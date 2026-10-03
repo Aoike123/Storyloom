@@ -75,7 +75,7 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
           </button>
           <Link className="button secondary" href="/">
             <ArrowLeft size={15} />
-            返回故事市场
+            返回
           </Link>
         </div>
       </header>
