@@ -4,7 +4,7 @@ import { ArrowLeft, PanelLeft, Info } from 'lucide-react';
 import WorkspaceTabs from './WorkspaceTabs';
 import ContextPanel from './ContextPanel';
 import CanvasViewport from './CanvasViewport';
-import ReleaseWorkspace from './ReleaseWorkspace';
+import FilmEditor from './FilmEditor';
 import SourceArea from './SourceArea';
 import ConversationBar from './ConversationBar';
 import { WORKSPACE_LABELS, type WorkbenchState, type WorkbenchAction, type Workspace } from './workspace-state';
@@ -176,7 +176,11 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
             </div>
           ) : null}
           {active === 'film' ? (
-            <ReleaseWorkspace nodes={nodes} selectedId={activeView.selectedId} onSelect={(id) => dispatch({ type: 'SELECT', id })} />
+            <FilmEditor
+              clips={nodes}
+              resources={allFragments.map((f) => ({ id: f.id, name: f.name }))}
+              isExample={!nodes.some((n) => !n.isExample)}
+            />
           ) : (
             <>
               <CanvasViewport

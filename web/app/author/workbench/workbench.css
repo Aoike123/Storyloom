@@ -138,6 +138,42 @@
 .workbench-conversation-input input:focus{ border-color:var(--control-focus); }
 .workbench-conversation-note{ font-size:11px; color:var(--muted); white-space:nowrap; }
 
+/* 成片工作区：全尺寸剪辑组件（独立实例，非画布）；暗色 16:9 监视器 + 多轨时间轴 + 来源资源区 */
+.workbench-film{ flex:1; min-height:0; display:flex; flex-direction:column; gap:10px; }
+.workbench-film-bar{ display:flex; align-items:center; gap:10px; }
+.workbench-film-bar strong{ font-size:14px; font-weight:600; color:var(--ink); }
+.workbench-film-note{ font-size:11px; color:var(--muted); }
+.workbench-film-monitor{ flex:0 0 auto; background:#0e1520; border-radius:10px; overflow:hidden; }
+.workbench-film-screen{ aspect-ratio:16/9; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; color:#8fa1b3; font-size:13px; }
+.workbench-film-transport{ display:flex; align-items:center; gap:12px; padding:10px 14px; border-top:1px solid rgba(255,255,255,.08); }
+.workbench-film-play{ width:34px; height:34px; border-radius:50%; border:0; background:var(--accent); color:#fff; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; }
+.workbench-film-play:hover{ filter:brightness(1.08); }
+.workbench-film-time{ font-variant-numeric:tabular-nums; font-size:12.5px; color:#dfe6ee; white-space:nowrap; }
+.workbench-film-seek{ flex:1; accent-color:var(--accent); }
+.workbench-film-body{ flex:1; min-height:0; display:flex; gap:10px; }
+.workbench-film-resources{ flex:0 0 200px; border:1px solid var(--line); border-radius:10px; background:var(--paper); padding:12px; overflow:auto; display:flex; flex-direction:column; gap:8px; }
+.workbench-film-resources h4{ margin:0; font-size:11px; color:var(--muted); letter-spacing:.5px; }
+.workbench-film-resources ul{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+.workbench-film-resources li{ display:flex; align-items:center; justify-content:space-between; gap:8px; border:1px solid var(--line); border-radius:8px; padding:6px 8px; }
+.workbench-film-res-name{ font-size:12px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workbench-film-res-add{ border:1px solid var(--line); background:var(--soft); border-radius:6px; padding:4px 8px; font-size:11px; color:var(--ink); white-space:nowrap; }
+.workbench-film-res-add:hover{ border-color:var(--accent); }
+.workbench-film-res-empty{ font-size:12px; color:var(--muted); margin:0; }
+.workbench-film-timeline{ flex:1; min-width:0; position:relative; border:1px solid var(--line); border-radius:10px; background:var(--paper); padding:12px; overflow:auto; display:flex; flex-direction:column; gap:10px; }
+.workbench-film-playhead{ position:absolute; top:0; bottom:0; width:2px; background:var(--accent); pointer-events:none; }
+.workbench-film-track{ display:flex; align-items:center; gap:10px; }
+.workbench-film-track-label{ flex:0 0 40px; font-size:11px; color:var(--muted); }
+.workbench-film-track-clips{ flex:1; display:flex; gap:6px; overflow-x:auto; padding:4px; }
+.workbench-film-clip{ flex:0 0 auto; max-width:160px; border:1px solid var(--line); border-radius:6px; background:var(--soft); padding:6px 10px; font-size:12px; color:var(--ink); text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workbench-film-clip.is-selected{ border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+.workbench-film-clip.is-example{ opacity:.85; }
+.workbench-film-track-empty{ font-size:11px; color:var(--muted); }
+.workbench-film-clip-tools{ display:flex; align-items:center; gap:6px; margin-top:2px; padding:8px 10px; border:1px dashed var(--line); border-radius:8px; background:var(--soft); font-size:12px; color:var(--ink); }
+.workbench-film-clip-tools span{ flex:1; }
+.workbench-film-clip-tools button{ border:1px solid var(--line); background:var(--paper); border-radius:6px; padding:5px 8px; color:var(--ink); display:inline-flex; align-items:center; }
+.workbench-film-clip-tools button:hover{ border-color:var(--accent); }
+.workbench-film-clip-tools button.is-danger:hover{ border-color:#c0392b; color:#c0392b; }
+
 /* 右侧属性面板（第三 grid 列；宽度由 --workbench-panel-width 控制，随所选对象更新，D 批重构内容） */
 .workbench-panel{ min-width:0; min-height:0; border-left:1px solid var(--line); background:var(--soft); padding:14px 16px; overflow:auto; display:flex; flex-direction:column; }
 .workbench-panel-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
