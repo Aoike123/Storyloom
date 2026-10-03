@@ -4,14 +4,15 @@
 
 ## 设计与开发基线
 
-下一轮工作台采用故事／制作／素材／成片四个顶部标签、主体画布与右侧上下文区域，删除左侧常驻栏和独立版本工具。制作按场整齐排列多个镜头，素材以生成内容为重点。大结构基本认可，细节与操作继续讨论；正式开发计划只到框架验收：
+当前工作台设计采用左侧故事来源区：原文连续阅读，以完整荧光区域标记片段；片段视图动态生成并可点击跳转。切分／裁减、剧本、分镜、资产使用无限画布，成片使用铺满右侧主工作区的剪辑组件，左侧来源列表作为资源区。属性跟随所选项目对象，每步骤底部都有自然语言对话入口。顶部标签数量与名称继续设计，确认规则、工程缺口及任务见：
 
 - [设计任务骨架（当前入口）](docs/workbench-redesign-2026-10-02/design-task-skeleton.md)
 - [画布优先设计方向](docs/workbench-redesign-2026-10-02/canvas-design-direction.md)
 - [工作台设计规范](docs/workbench-redesign-2026-10-02/design-spec.md)
-- [实施计划与验收清单](docs/workbench-redesign-2026-10-02/implementation-plan.md)
+- [框架记录与后续工程安排](docs/workbench-redesign-2026-10-02/implementation-plan.md)
+- [本轮来源工作台交互稿](docs/workbench-redesign-2026-10-02/prototypes/storyloom-source-studio.html)
 
-本期按框架接口、工作台外壳、基础画布、只读内容适配、框架验收五批安排，不启动具体业务操作的实现。后续操作确认后另补计划；验证仅覆盖当前改动。当前已实现的制作规则见 [素材工作流](docs/asset-identity-workflow.md)。
+F0–F4 框架已完成，原四标签和无左侧栏作为历史实现记录保留。本轮更新设计与后续工程拆分，精确文字范围、服务端校验及迁移仍待实现；交互稿不代表生产能力已经接入。验证仅覆盖当前改动。当前已实现的制作规则见 [素材工作流](docs/asset-identity-workflow.md)。
 
 ## 快速启动
 
