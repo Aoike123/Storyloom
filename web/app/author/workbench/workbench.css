@@ -27,6 +27,22 @@
 .workbench-canvas > .react-flow{ position:absolute; inset:0; width:100%; height:100%; background:var(--paper); }
 .workbench-canvas-empty{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:13px; pointer-events:none; z-index:2; }
 .workbench-canvas-tag{ position:absolute; left:12px; bottom:10px; font-size:11px; color:var(--muted); background:var(--soft); border:1px solid var(--line); border-radius:6px; padding:3px 8px; pointer-events:none; z-index:2; }
+.workbench-canvas-fit{ position:absolute; top:10px; right:10px; z-index:3; }
+
+/* 成片工作区：独立容器占位（非画布；不接剪辑时间轴内核，F0 §2） */
+.workbench-release{ position:relative; flex:1; min-height:280px; border:1px solid var(--line); border-radius:12px; background:var(--paper); padding:16px 20px; overflow:auto; }
+.workbench-release-note{ display:flex; flex-direction:column; gap:4px; padding-bottom:14px; border-bottom:1px solid var(--line); margin-bottom:14px; }
+.workbench-release-note strong{ font-size:15px; color:var(--ink); }
+.workbench-release-note small{ font-size:12px; color:var(--muted); }
+.workbench-release-empty{ color:var(--muted); font-size:13px; padding:24px 0; }
+.workbench-release-list{ list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:12px; }
+.workbench-release-item{ display:flex; gap:10px; align-items:center; border:1px solid var(--line); border-radius:10px; background:var(--soft); padding:10px; cursor:pointer; transition:border-color var(--motion-hover) var(--ease-out), box-shadow var(--motion-hover) var(--ease-out); }
+.workbench-release-item:hover{ border-color:var(--control-focus); }
+.workbench-release-item.is-selected{ border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+.workbench-release-thumb{ width:56px; height:40px; border-radius:6px; background:var(--line); flex:0 0 auto; }
+.workbench-release-meta{ display:flex; flex-direction:column; gap:2px; min-width:0; }
+.workbench-release-title{ font-size:13px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workbench-release-meta small{ font-size:11px; color:var(--muted); }
 
 /* 自定义节点 */
 .workbench-node{ border-radius:10px; background:var(--paper); border:1px solid var(--line); box-shadow:0 1px 2px rgba(0,0,0,.05); transition:box-shadow var(--motion-hover) var(--ease-out), border-color var(--motion-hover) var(--ease-out); }

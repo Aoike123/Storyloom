@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react';
 import WorkspaceTabs from './WorkspaceTabs';
 import ContextPanel from './ContextPanel';
 import CanvasViewport from './CanvasViewport';
+import ReleaseWorkspace from './ReleaseWorkspace';
 import { WORKSPACE_LABELS, type WorkbenchState, type WorkbenchAction, type Workspace } from './workspace-state';
 import { type DisplayNode, type WorkspaceContent } from './display-model';
 
@@ -31,8 +32,8 @@ interface Props {
   content?: Record<Workspace, WorkspaceContent> | null;
 }
 
-// F1/F3 · 工作台外壳：以「项目」为核心——顶栏呈现项目身份与进度；
-// 故事/制作/素材/成片是该项目的四个工作区视图；主体为 React Flow 画布，展示 adapter 映射的真实只读节点。
+// F1/F3/F4 · 工作台外壳：以「项目」为核心——顶栏呈现项目身份与进度；
+// 故事/制作/素材/成片是该项目的四个工作区视图：前三个为无限画布，成片为独立容器占位。
 export default function WorkbenchShell({ view, dispatch, title, author, stage, readError, hasWork, content }: Props) {
   const active = view.activeWorkspace;
   const activeView = view.byWorkspace[active];
@@ -89,17 +90,21 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
               尚未绑定项目：请通过 <code>/author/workbench?work=&lt;id&gt;</code> 打开一个已有项目。
             </div>
           ) : null}
-          <CanvasViewport
-            canvasKey={active}
-            nodes={nodes}
-            layout={activeView.layout}
-            viewport={activeView.viewport}
-            selectedId={activeView.selectedId}
-            onViewportChange={(v) => dispatch({ type: 'SET_VIEWPORT', viewport: v })}
-            onSelect={(id) => dispatch({ type: 'SELECT', id })}
-            onNodeDragStop={(id, x, y) => dispatch({ type: 'SET_LAYOUT', id, x, y })}
-            emptyHint={emptyHint}
-          />
+          {active === 'release' ? (
+            <ReleaseWorkspace nodes={nodes} selectedId={activeView.selectedId} onSelect={(id) => dispatch({ type: 'SELECT', id })} />
+          ) : (
+            <CanvasViewport
+              canvasKey={active}
+              nodes={nodes}
+              layout={activeView.layout}
+              viewport={activeView.viewport}
+              selectedId={activeView.selectedId}
+              onViewportChange={(v) => dispatch({ type: 'SET_VIEWPORT', viewport: v })}
+              onSelect={(id) => dispatch({ type: 'SELECT', id })}
+              onNodeDragStop={(id, x, y) => dispatch({ type: 'SET_LAYOUT', id, x, y })}
+              emptyHint={emptyHint}
+            />
+          )}
         </main>
         <ContextPanel open={panelOpen} selectedNode={selectedNode} onClose={() => dispatch({ type: 'SET_PANEL', open: false })} />
       </div>

@@ -1,13 +1,15 @@
 'use client';
-import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, Controls, useNodesState, type Node } from '@xyflow/react';
+import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, useReactFlow, useNodesState, type Node } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { Maximize } from 'lucide-react';
 import SceneFrameNode from './SceneFrame';
 import PreviewNode from './PreviewNode';
 import { type DisplayNode } from './display-model';
 import { type Viewport } from './workspace-state';
 
-// 只暴露画布能力：平移 / 缩放 / fit / 节点自由摆放 / 单选。
-// 明确禁用：连线(nodesConnectable=false)、多选(selectionKeyCode/multiSelectionKeyCode=null)、删除(deleteKeyCode=null)——留给业务层 D02/D05。
+// 只暴露画布能力：平移(拖空白) / 缩放(滚轮) / 适配(自有按钮) / 节点自由摆放 / 单选。
+// 明确禁用：连线(nodesConnectable=false)、多选(selectionKeyCode/multiSelectionKeyCode=null)、删除(deleteKeyCode=null)、
+// 以及 React Flow 自带 Controls 控件面板（改用工作台自有的 workbench-canvas-fit 适配按钮，见 F0 §6）。
 const nodeTypes = {
   scene: SceneFrameNode,
   preview: PreviewNode,
@@ -26,16 +28,20 @@ function toRfNode(
   };
 }
 
-interface Props {
-  canvasKey: string;
-  nodes: DisplayNode[];
-  layout?: Record<string, { x: number; y: number }>;
-  viewport?: Viewport;
-  selectedId?: string | null;
-  onViewportChange?: (v: Viewport) => void;
-  onSelect?: (id: string | null) => void;
-  onNodeDragStop?: (id: string, x: number, y: number) => void;
-  emptyHint?: string;
+// 工作台自有的「适配视野」按钮（替代 React Flow 自带 Controls 控件面板）
+function FitViewButton() {
+  const { fitView } = useReactFlow();
+  return (
+    <button
+      type="button"
+      className="button icon workbench-canvas-fit"
+      title="适配视野"
+      aria-label="适配视野"
+      onClick={() => fitView({ duration: 200 })}
+    >
+      <Maximize size={15} />
+    </button>
+  );
 }
 
 // 按场整齐排列：同 group 的节点排成一行（场次节点在前、其余横排），行与行纵向堆叠；
@@ -62,10 +68,24 @@ function defaultLayout(nodes: DisplayNode[]): Record<string, { x: number; y: num
   return out;
 }
 
+interface Props {
+  canvasKey: string;
+  nodes: DisplayNode[];
+  layout?: Record<string, { x: number; y: number }>;
+  viewport?: Viewport;
+  selectedId?: string | null;
+  onViewportChange?: (v: Viewport) => void;
+  onSelect?: (id: string | null) => void;
+  onNodeDragStop?: (id: string, x: number, y: number) => void;
+  emptyHint?: string;
+}
+
 function CanvasInner({ nodes, layout, viewport, onViewportChange, onSelect, onNodeDragStop, emptyHint }: Props) {
   const defaults = defaultLayout(nodes);
   const initial = nodes.map((n) => toRfNode(n, defaults[n.id] ?? { x: 80, y: 80 }, layout));
   const [rfNodes, , onNodesChange] = useNodesState(initial);
+  // 首次进入该工作区（视口仍为默认 {0,0,1}）时自动适配视野；之后恢复已保存的视野
+  const isPristine = !!viewport && viewport.x === 0 && viewport.y === 0 && viewport.scale === 1;
 
   return (
     <div className="workbench-canvas">
@@ -78,23 +98,26 @@ function CanvasInner({ nodes, layout, viewport, onViewportChange, onSelect, onNo
         onPaneClick={() => onSelect?.(null)}
         onNodeDragStop={(_e, node) => onNodeDragStop?.(node.id, node.position.x, node.position.y)}
         onMove={(_e, vp) => onViewportChange?.({ x: vp.x, y: vp.y, scale: vp.zoom })}
+        onInit={(instance) => {
+          if (isPristine && nodes.length > 0) instance.fitView({ duration: 0 });
+        }}
         defaultViewport={viewport ? { x: viewport.x, y: viewport.y, zoom: viewport.scale } : undefined}
         nodesDraggable
         nodesConnectable={false}
         elementsSelectable
         panOnDrag
+        zoomOnScroll
         deleteKeyCode={null}
         selectionKeyCode={null}
         multiSelectionKeyCode={null}
         minZoom={0.2}
         maxZoom={2}
-        fitView
       >
         <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="var(--line)" />
-        <Controls />
       </ReactFlow>
+      <FitViewButton />
       {nodes.length === 0 ? <div className="workbench-canvas-empty">{emptyHint ?? '本工作区暂无内容'}</div> : null}
-      <div className="workbench-canvas-tag">示例画布 · F3 接入真实项目数据</div>
+      {nodes.length > 0 ? <div className="workbench-canvas-tag">{nodes.length} 个节点</div> : null}
     </div>
   );
 }
