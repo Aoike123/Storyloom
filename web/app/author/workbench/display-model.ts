@@ -15,5 +15,15 @@ export interface DisplayNode {
 export interface WorkspaceContent {
   workspace: Workspace;
   nodes: DisplayNode[];
-  emptyReasons: string[];
+  emptyReasons: Partial<Record<NodeKind, string>>;
 }
+
+// 节点类型的中文展示名（右侧摘要 / 空态用）
+export const NODE_KIND_LABELS: Record<NodeKind, string> = {
+  source: '来源故事',
+  script: '剧本',
+  scene: '场次',
+  shot: '镜头',
+  asset: '素材',
+  clip: '成片',
+};

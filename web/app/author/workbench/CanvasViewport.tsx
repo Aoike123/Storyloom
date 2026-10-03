@@ -38,10 +38,33 @@ interface Props {
   emptyHint?: string;
 }
 
+// 按场整齐排列：同 group 的节点排成一行（场次节点在前、其余横排），行与行纵向堆叠；
+// 用户自由摆卡（layout）优先于这里的默认坐标。
+function defaultLayout(nodes: DisplayNode[]): Record<string, { x: number; y: number }> {
+  const groups = new Map<string, DisplayNode[]>();
+  for (const n of nodes) {
+    const key = n.group ?? n.kind;
+    const arr = groups.get(key);
+    if (arr) arr.push(n);
+    else groups.set(key, [n]);
+  }
+  const out: Record<string, { x: number; y: number }> = {};
+  let row = 0;
+  for (const [, gns] of groups) {
+    const y = 80 + row * 220;
+    let x = 80;
+    for (const n of gns) {
+      out[n.id] = { x, y };
+      x += (n.kind === 'scene' ? 320 : 150) + 24;
+    }
+    row += 1;
+  }
+  return out;
+}
+
 function CanvasInner({ nodes, layout, viewport, onViewportChange, onSelect, onNodeDragStop, emptyHint }: Props) {
-  const initial = nodes.map((n, i) =>
-    toRfNode(n, { x: 80 + (i % 2) * 240, y: 80 + Math.floor(i / 2) * 180 }, layout),
-  );
+  const defaults = defaultLayout(nodes);
+  const initial = nodes.map((n) => toRfNode(n, defaults[n.id] ?? { x: 80, y: 80 }, layout));
   const [rfNodes, , onNodesChange] = useNodesState(initial);
 
   return (

@@ -1,28 +1,17 @@
 'use client';
-import { useEffect, useReducer, useState } from 'react';
+import { useEffect, useReducer, useMemo, useState } from 'react';
 import WorkbenchShell from './WorkbenchShell';
 import { createWorkbenchState, workbenchReducer } from './workspace-state';
+import { mapProject, type WorkInput } from './project-adapter';
 import './workbench.css';
 
-async function readProject(id: string, signal: AbortSignal): Promise<{ title?: string; author?: string; stage?: string } | null> {
-  const r = await fetch('/api/author/projects/' + encodeURIComponent(id), { signal });
-  if (!r.ok) return null;
-  const d: any = await r.json();
-  return {
-    title: typeof d?.title === 'string' ? d.title : undefined,
-    author: d?.source && typeof d.source.author_name === 'string' ? d.source.author_name : undefined,
-    stage: typeof d?.stage === 'string' ? d.stage : undefined,
-  };
-}
-
 // 新工作台入口 /author/workbench?work=<id>：以「项目」为核心，与现有 /author 生产流程并存、互不干扰。
-// 本期（F1）只读现有项目、只搭框架外壳；不做任何业务操作。
+// 只读现有项目：读 work → project-adapter 映射为四个工作区的展示模型 → 装配 Shell。
+// 视图状态（前端）与业务状态（服务端）严格分离；本组件只把 work 交给 adapter，不在组件内读业务字段做流程判断。
 export default function AuthorWorkbench() {
   const [state, dispatch] = useReducer(workbenchReducer, '', createWorkbenchState);
   const [hasWork, setHasWork] = useState(false);
-  const [title, setTitle] = useState<string | null>(null);
-  const [author, setAuthor] = useState<string | null>(null);
-  const [stage, setStage] = useState<string | null>(null);
+  const [work, setWork] = useState<WorkInput | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -31,32 +20,34 @@ export default function AuthorWorkbench() {
     setHasWork(true);
     dispatch({ type: 'SET_PROJECT_ID', id });
     const controller = new AbortController();
-    readProject(id, controller.signal)
-      .then((d) => {
-        if (d) {
-          setTitle(d.title ?? null);
-          setAuthor(d.author ?? null);
-          setStage(d.stage ?? null);
-          setReadError(null);
-        } else {
-          setReadError('项目不存在或无法读取');
-        }
+    fetch('/api/author/projects/' + encodeURIComponent(id), { signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
       })
-      .catch((e) => {
-        if ((e as Error)?.name !== 'AbortError') setReadError('读取项目失败，请稍后再试');
+      .then((d: WorkInput) => {
+        if (!d || typeof d !== 'object') throw new Error('empty');
+        setWork(d);
+        setReadError(null);
+      })
+      .catch((e: unknown) => {
+        if ((e as Error)?.name !== 'AbortError') setReadError('项目不存在或无法读取');
       });
     return () => controller.abort();
   }, []);
+
+  const content = useMemo(() => (work ? mapProject(work) : null), [work]);
 
   return (
     <WorkbenchShell
       view={state}
       dispatch={dispatch}
-      title={title}
-      author={author}
-      stage={stage}
+      title={work?.title ?? null}
+      author={work?.source?.author_name ?? null}
+      stage={work?.stage ?? null}
       readError={readError}
       hasWork={hasWork}
+      content={content}
     />
   );
 }

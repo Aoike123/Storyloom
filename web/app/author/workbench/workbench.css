@@ -44,7 +44,11 @@
 .workbench-panel{ flex:0 0 288px; width:288px; border-left:1px solid var(--line); background:var(--soft); padding:14px 16px; overflow:auto; }
 .workbench-panel-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
 .workbench-panel-title{ font-size:13px; font-weight:600; color:var(--ink); }
-.workbench-panel-summary{ font-size:13px; color:var(--ink); margin:0 0 14px; }
+.workbench-panel-summary{ display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--ink); margin:0 0 14px; }
+.workbench-panel-kind{ font-size:11px; color:var(--muted); letter-spacing:.5px; }
+.workbench-panel-node-title{ font-size:14px; font-weight:600; color:var(--ink); word-break:break-word; }
+.workbench-panel-group{ font-size:11px; color:var(--muted); }
+.workbench-panel-example{ font-size:11px; color:var(--accent); }
 .workbench-panel-slots{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
 .workbench-slot-placeholder{ display:flex; align-items:center; justify-content:space-between; border:1px solid var(--line); border-radius:8px; background:var(--paper); padding:10px 12px; font-size:13px; color:var(--ink); }
 .workbench-slot-placeholder small{ color:var(--muted); }

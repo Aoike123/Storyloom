@@ -5,7 +5,7 @@ import WorkspaceTabs from './WorkspaceTabs';
 import ContextPanel from './ContextPanel';
 import CanvasViewport from './CanvasViewport';
 import { WORKSPACE_LABELS, type WorkbenchState, type WorkbenchAction, type Workspace } from './workspace-state';
-import { type DisplayNode } from './display-model';
+import { type DisplayNode, type WorkspaceContent } from './display-model';
 
 // 现有 9 个生产阶段的只读中文标签（顶栏进度用，非导航）
 const STAGE_LABELS: Record<string, string> = {
@@ -20,13 +20,6 @@ const STAGE_LABELS: Record<string, string> = {
   published: '发布作品',
 };
 
-// F2 示例节点（占位，验证画布交互）；F3 由 project-adapter.mapProject 提供真实只读数据
-const DEMO_NODES: DisplayNode[] = [
-  { id: 'demo-scene-1', kind: 'scene', title: '第一幕 · 开场', isExample: true },
-  { id: 'demo-shot-1', kind: 'shot', title: '镜头 1 · 主角登场', isExample: true },
-  { id: 'demo-asset-1', kind: 'asset', title: '角色 · 主角', isExample: true },
-];
-
 interface Props {
   view: WorkbenchState;
   dispatch: (a: WorkbenchAction) => void;
@@ -35,14 +28,29 @@ interface Props {
   stage?: string | null;
   readError?: string | null;
   hasWork?: boolean;
+  content?: Record<Workspace, WorkspaceContent> | null;
 }
 
-// F1/F2 · 工作台外壳：以「项目」为核心——顶栏呈现项目身份与进度；
-// 故事/制作/素材/成片是该项目的四个工作区视图；主体为 React Flow 画布（示例节点）。
-export default function WorkbenchShell({ view, dispatch, title, author, stage, readError, hasWork }: Props) {
+// F1/F3 · 工作台外壳：以「项目」为核心——顶栏呈现项目身份与进度；
+// 故事/制作/素材/成片是该项目的四个工作区视图；主体为 React Flow 画布，展示 adapter 映射的真实只读节点。
+export default function WorkbenchShell({ view, dispatch, title, author, stage, readError, hasWork, content }: Props) {
   const active = view.activeWorkspace;
   const activeView = view.byWorkspace[active];
   const panelOpen = activeView.panelOpen;
+
+  const activeContent = content?.[active] ?? null;
+  const nodes: DisplayNode[] = activeContent?.nodes ?? [];
+  const selectedNode = nodes.find((n) => n.id === activeView.selectedId) ?? null;
+  const emptyReasons = activeContent?.emptyReasons ?? {};
+  const emptyList = (Object.values(emptyReasons) ?? []).filter((s) => !!s) as string[];
+  const loading = !!hasWork && !content;
+  const emptyHint = loading
+    ? '正在读取项目…'
+    : nodes.length === 0
+      ? emptyList.length > 0
+        ? emptyList.join('；')
+        : `「${WORKSPACE_LABELS[active]}」工作区暂无内容`
+      : undefined;
 
   return (
     <div className="workbench">
@@ -83,21 +91,17 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
           ) : null}
           <CanvasViewport
             canvasKey={active}
-            nodes={DEMO_NODES}
+            nodes={nodes}
             layout={activeView.layout}
             viewport={activeView.viewport}
             selectedId={activeView.selectedId}
             onViewportChange={(v) => dispatch({ type: 'SET_VIEWPORT', viewport: v })}
             onSelect={(id) => dispatch({ type: 'SELECT', id })}
             onNodeDragStop={(id, x, y) => dispatch({ type: 'SET_LAYOUT', id, x, y })}
-            emptyHint={`「${WORKSPACE_LABELS[active]}」工作区暂无节点`}
+            emptyHint={emptyHint}
           />
         </main>
-        <ContextPanel
-          open={panelOpen}
-          selectedId={activeView.selectedId}
-          onClose={() => dispatch({ type: 'SET_PANEL', open: false })}
-        />
+        <ContextPanel open={panelOpen} selectedNode={selectedNode} onClose={() => dispatch({ type: 'SET_PANEL', open: false })} />
       </div>
     </div>
   );
