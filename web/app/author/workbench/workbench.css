@@ -1,4 +1,4 @@
-/* F1 · 工作台外壳布局（作用域 .workbench；复用全局 token/控件/动效；扁平前缀 workbench-，非 BEM） */
+/* F1/F2 · 工作台外壳布局（作用域 .workbench；复用全局 token/控件/动效；扁平前缀 workbench-，非 BEM） */
 
 .workbench{ min-height:100vh; display:flex; flex-direction:column; background:var(--bg); color:var(--ink); }
 
@@ -18,12 +18,27 @@
 
 /* 主体：主内容区 + 右侧按需面板 */
 .workbench-body{ flex:1; display:flex; min-height:0; }
-.workbench-main{ flex:1; min-width:0; display:flex; flex-direction:column; padding:16px 20px; gap:12px; overflow:auto; }
+.workbench-main{ flex:1; min-width:0; display:flex; flex-direction:column; padding:16px 20px; gap:12px; overflow:hidden; }
 .workbench-notice{ background:#f7eddb; color:#86572f; border:1px solid #e7cfa8; border-radius:8px; padding:10px 14px; font-size:13px; }
 .workbench-notice code{ font-family:ui-monospace,Menlo,monospace; font-size:12px; }
-.workbench-canvas-placeholder{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; min-height:240px; border:1px dashed var(--line); border-radius:12px; color:var(--muted); text-align:center; padding:24px; }
-.workbench-canvas-placeholder span{ font-size:16px; color:var(--ink); font-weight:600; }
-.workbench-canvas-placeholder small{ font-size:12px; }
+
+/* 画布（React Flow） */
+.workbench-canvas{ position:relative; flex:1; min-height:280px; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--paper); }
+.workbench-canvas > .react-flow{ position:absolute; inset:0; width:100%; height:100%; background:var(--paper); }
+.workbench-canvas-empty{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:13px; pointer-events:none; z-index:2; }
+.workbench-canvas-tag{ position:absolute; left:12px; bottom:10px; font-size:11px; color:var(--muted); background:var(--soft); border:1px solid var(--line); border-radius:6px; padding:3px 8px; pointer-events:none; z-index:2; }
+
+/* 自定义节点 */
+.workbench-node{ border-radius:10px; background:var(--paper); border:1px solid var(--line); box-shadow:0 1px 2px rgba(0,0,0,.05); transition:box-shadow var(--motion-hover) var(--ease-out), border-color var(--motion-hover) var(--ease-out); }
+.workbench-node.is-selected{ border-color:var(--accent); box-shadow:0 0 0 2px var(--accent) inset, 0 2px 10px rgba(213,116,81,.20); }
+.workbench-node.is-example{ opacity:.92; }
+.workbench-sceneframe{ width:300px; padding:10px 12px; }
+.workbench-sceneframe-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:13px; font-weight:600; color:var(--ink); }
+.workbench-sceneframe-head em{ font-style:normal; font-size:10px; color:var(--muted); border:1px solid var(--line); border-radius:5px; padding:1px 6px; white-space:nowrap; }
+.workbench-sceneframe-body{ margin-top:8px; font-size:12px; color:var(--muted); border-top:1px dashed var(--line); padding-top:8px; }
+.workbench-preview{ width:132px; padding:8px; }
+.workbench-preview-thumb{ height:76px; border-radius:7px; background:var(--soft); border:1px solid var(--line); }
+.workbench-preview-title{ margin-top:8px; font-size:12px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 /* 右侧按需上下文面板 */
 .workbench-panel{ flex:0 0 288px; width:288px; border-left:1px solid var(--line); background:var(--soft); padding:14px 16px; overflow:auto; }
@@ -37,4 +52,4 @@
 /* 响应式 + 减弱动态 */
 @media (max-width:900px){ .workbench-panel{ flex-basis:240px; width:240px; } }
 @media (max-width:620px){ .workbench-brand span{ display:none; } .workbench-topbar-project{ display:none; } .workbench-panel{ flex:1 1 auto; width:auto; } }
-@media (prefers-reduced-motion: reduce){ .workbench .button{ transition:none; } }
+@media (prefers-reduced-motion: reduce){ .workbench .button{ transition:none; } .workbench-node{ transition:none; } }

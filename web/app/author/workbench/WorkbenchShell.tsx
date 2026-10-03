@@ -3,7 +3,9 @@ import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import WorkspaceTabs from './WorkspaceTabs';
 import ContextPanel from './ContextPanel';
+import CanvasViewport from './CanvasViewport';
 import { WORKSPACE_LABELS, type WorkbenchState, type WorkbenchAction, type Workspace } from './workspace-state';
+import { type DisplayNode } from './display-model';
 
 // 现有 9 个生产阶段的只读中文标签（顶栏进度用，非导航）
 const STAGE_LABELS: Record<string, string> = {
@@ -18,6 +20,13 @@ const STAGE_LABELS: Record<string, string> = {
   published: '发布作品',
 };
 
+// F2 示例节点（占位，验证画布交互）；F3 由 project-adapter.mapProject 提供真实只读数据
+const DEMO_NODES: DisplayNode[] = [
+  { id: 'demo-scene-1', kind: 'scene', title: '第一幕 · 开场', isExample: true },
+  { id: 'demo-shot-1', kind: 'shot', title: '镜头 1 · 主角登场', isExample: true },
+  { id: 'demo-asset-1', kind: 'asset', title: '角色 · 主角', isExample: true },
+];
+
 interface Props {
   view: WorkbenchState;
   dispatch: (a: WorkbenchAction) => void;
@@ -28,8 +37,8 @@ interface Props {
   hasWork?: boolean;
 }
 
-// F1 · 工作台外壳：以「项目」为核心——顶栏呈现项目身份与进度；
-// 故事/制作/素材/成片是该项目的四个工作区视图（无左侧栏、无版本入口）。
+// F1/F2 · 工作台外壳：以「项目」为核心——顶栏呈现项目身份与进度；
+// 故事/制作/素材/成片是该项目的四个工作区视图；主体为 React Flow 画布（示例节点）。
 export default function WorkbenchShell({ view, dispatch, title, author, stage, readError, hasWork }: Props) {
   const active = view.activeWorkspace;
   const activeView = view.byWorkspace[active];
@@ -72,10 +81,17 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
               尚未绑定项目：请通过 <code>/author/workbench?work=&lt;id&gt;</code> 打开一个已有项目。
             </div>
           ) : null}
-          <div className="workbench-canvas-placeholder">
-            <span>{WORKSPACE_LABELS[active]} 工作区</span>
-            <small>主体画布将于 F2 接入（React Flow）；本阶段为框架占位，尚不承载业务数据。</small>
-          </div>
+          <CanvasViewport
+            canvasKey={active}
+            nodes={DEMO_NODES}
+            layout={activeView.layout}
+            viewport={activeView.viewport}
+            selectedId={activeView.selectedId}
+            onViewportChange={(v) => dispatch({ type: 'SET_VIEWPORT', viewport: v })}
+            onSelect={(id) => dispatch({ type: 'SELECT', id })}
+            onNodeDragStop={(id, x, y) => dispatch({ type: 'SET_LAYOUT', id, x, y })}
+            emptyHint={`「${WORKSPACE_LABELS[active]}」工作区暂无节点`}
+          />
         </main>
         <ContextPanel
           open={panelOpen}
