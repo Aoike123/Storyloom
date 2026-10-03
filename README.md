@@ -4,12 +4,14 @@
 
 ## 设计与开发基线
 
-下一轮工作台使用项目树与对象编辑器，增加故事预处理、篇章／场／镜头层级、可见的素材版本共用关系与逐对象审核。目前为待实施方案：
+下一轮工作台以顶部故事／制作／素材／发布标签和占据主体的无限画布组织创作，编辑与任务工具按需打开。当前只完成设计任务骨架，详细交互逐项设计后再实施：
 
+- [设计任务骨架（当前入口）](docs/workbench-redesign-2026-10-02/design-task-skeleton.md)
+- [画布优先设计方向](docs/workbench-redesign-2026-10-02/canvas-design-direction.md)
 - [工作台设计规范](docs/workbench-redesign-2026-10-02/design-spec.md)
 - [实施计划与验收清单](docs/workbench-redesign-2026-10-02/implementation-plan.md)
 
-完成开发后按计划书检查行为、版本依赖、双主题和真实制作闭环。当前已实现的制作规则见 [素材工作流](docs/asset-identity-workflow.md)。
+下一步只设计工作台壳与顶部导航；故事预处理、结构编排、素材共用、制作调度、发布与双主题分批完成。设计阶段只做必要走查，开发后按相关计划验收。当前已实现的制作规则见 [素材工作流](docs/asset-identity-workflow.md)。
 
 ## 快速启动
 

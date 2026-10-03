@@ -2,7 +2,7 @@
 
 当前有两个主要入口：读者目录与漫剧制作。工作台是纯本地工具，没有账号、登录或付费额度；生成只需要本地设置文件（`.env.local`）中填有对应模型的 API Key，未配置时只能浏览不能生成。原管理页面已合并到制作页。
 
-新版项目树、素材共用关系、故事预处理与双主题尚待实施，设计和验收依据见 [设计规范](docs/workbench-redesign-2026-10-02/design-spec.md) 与 [实施计划](docs/workbench-redesign-2026-10-02/implementation-plan.md)。以下记录当前制作流程。
+新版工作台采用顶部空间标签、主体无限画布与按需工具，目前仅完成[设计任务骨架](docs/workbench-redesign-2026-10-02/design-task-skeleton.md)，详细工作模式分批设计。领域要求见[设计规范](docs/workbench-redesign-2026-10-02/design-spec.md)，开发后的验收见[实施计划](docs/workbench-redesign-2026-10-02/implementation-plan.md)。以下记录当前已实现的制作流程。
 
 ## 本次实现
 
