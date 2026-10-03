@@ -8,8 +8,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
 
+from .auth import request_ctx, router as auth_router
 from .authors import router as author_router
-from .catalog import router as catalog_router
 from .creative import router as creative_router
 from .db import DATA, Record, Session, Task, init_db, record_dict, task_dict
 from .director import router as director_router
@@ -17,7 +17,6 @@ from .preproduction import router as preproduction_router
 from .production import reader as reader_router
 from .production import router as production_router
 from .reader_branch import router as reader_branch_router
-from .story_sources import router as story_router
 from .video_files import StorageError
 from .video_storage import router as storage_router
 
@@ -35,12 +34,11 @@ app = FastAPI(
     title="叙间 · 本地工作台",
     lifespan=lifespan,
 )
-app.include_router(story_router)
+app.include_router(auth_router)
 app.include_router(director_router)
 app.include_router(production_router)
 app.include_router(reader_router)
 app.include_router(reader_branch_router)
-app.include_router(catalog_router)
 app.include_router(storage_router)
 
 from .consistency import router as consistency_router
@@ -92,6 +90,16 @@ async def local_only(request: Request, call_next):
     elif path.startswith("/media/"):
         response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+    """Expose the current request to deep helpers (the author owner check) via a contextvar."""
+    token = request_ctx.set(request)
+    try:
+        return await call_next(request)
+    finally:
+        request_ctx.reset(token)
 
 
 @app.get("/api/health")

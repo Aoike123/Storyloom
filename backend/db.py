@@ -25,6 +25,11 @@ class Base(DeclarativeBase):
     pass
 
 
+# Identity of the pre-account single local maker. Records written without a logged-in user are
+# owned by this sentinel; it is wiped with the rest of legacy content (D09 clean break).
+LOCAL_OWNER = 'local'
+
+
 class Record(Base):
     __tablename__ = 'records'
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
@@ -32,15 +37,15 @@ class Record(Base):
     data: Mapped[dict] = mapped_column(JSON, default=dict)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created: Mapped[float] = mapped_column(Float, default=time.time)
+    owner_id: Mapped[str] = mapped_column(String(80), default=LOCAL_OWNER, index=True)
+    visibility: Mapped[str] = mapped_column(String(16), default='private')
+
 
 class Task(Base):
     __tablename__ = 'tasks'
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
     kind: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(32), default='queued', index=True)
-    # Legacy field kept for schema stability. A local workbench has no per-visitor payer, so this
-    # stays empty; it no longer gates or bills anything.
-    session_id: Mapped[str] = mapped_column(String(80), default='')
     revision: Mapped[int] = mapped_column(Integer, default=0)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     result: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -49,6 +54,17 @@ class Task(Base):
     lease: Mapped[float] = mapped_column(Float, default=0)
     owner: Mapped[str] = mapped_column(String(80), default='')
     attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created: Mapped[float] = mapped_column(Float, default=time.time)
+
+
+class User(Base):
+    __tablename__ = 'users'
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(200), default='')
+    password_hash: Mapped[str] = mapped_column(String(256), default='')
+    # Single active session token (opaque, rotated on each login).
+    auth_token: Mapped[str] = mapped_column(String(128), default='', index=True)
     created: Mapped[float] = mapped_column(Float, default=time.time)
 
 
@@ -109,7 +125,7 @@ def task_dict(row):
     references=row.payload.get('reference_media')
     preview=row.payload.get('frame_media') or (references[0] if isinstance(references,list) and references else None)
     preview=preview if isinstance(preview,str) and preview.startswith('/media/') else None
-    return {'id': row.id, 'kind': row.kind, 'status': row.status, 'session_id': row.session_id,
+    return {'id': row.id, 'kind': row.kind, 'status': row.status,
             'production_phase':row.payload.get('production_phase') or row.payload.get('phase'),
             'production_node':row.payload.get('production_node'),
             'revision': row.revision, 'progress': row.progress, 'message': completed_message(row.payload) if row.kind=='image' and row.status=='completed' else row.message,
@@ -119,5 +135,29 @@ def task_dict(row):
             'activity': activity_data(row),'preview':preview,'revision_of':row.payload.get('revision_of'),
             'failure_code':row.result.get('failure_code') if isinstance(row.result,dict) else None}
 
+def apply_migrations():
+    """Idempotent, dialect-agnostic schema migrations layered on top of create_all.
+
+    create_all only ever adds *missing* tables, so pre-existing databases need explicit
+    ALTER TABLE steps here: the new owner/visibility columns on records, and the removal of
+    the legacy per-visitor task session_id (D09: the anonymous payer/session is dropped)."""
+    from sqlalchemy import inspect
+
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    with engine.begin() as conn:
+        if 'records' in tables:
+            rec_cols = {c['name'] for c in insp.get_columns('records')}
+            if 'owner_id' not in rec_cols:
+                conn.exec_driver_sql(f"ALTER TABLE records ADD COLUMN owner_id VARCHAR(80) DEFAULT '{LOCAL_OWNER}'")
+            if 'visibility' not in rec_cols:
+                conn.exec_driver_sql("ALTER TABLE records ADD COLUMN visibility VARCHAR(16) DEFAULT 'private'")
+        if 'tasks' in tables:
+            task_cols = {c['name'] for c in insp.get_columns('tasks')}
+            if 'session_id' in task_cols:
+                conn.exec_driver_sql("ALTER TABLE tasks DROP COLUMN session_id")
+
+
 def init_db():
     Base.metadata.create_all(engine)
+    apply_migrations()

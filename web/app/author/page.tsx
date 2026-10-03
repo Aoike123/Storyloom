@@ -1,7 +1,7 @@
 'use client';
 import {useCallback,useEffect,useRef,useState} from 'react';
 import Link from 'next/link';
-import {ArrowLeft,ArrowRight,BookOpen,Check,ChevronDown,Clapperboard,LocateFixed,Plus,RotateCcw,TriangleAlert} from 'lucide-react';
+import {ArrowLeft,ArrowRight,BookOpen,Check,ChevronDown,Clapperboard,LocateFixed,RotateCcw,TriangleAlert} from 'lucide-react';
 import {activeStatuses,problemStatuses,InteractionFeedback,TaskProgress,WorkProgress,workStages,ProgressTask} from '../ProgressFeedback';
 import './author.css';
 import StyleProgress from '../StyleProgress';
@@ -19,7 +19,6 @@ import SegmentReview from './SegmentReview';
 import AssetFeedback from './AssetFeedback';
 import AssetFrame from './AssetFrame';
 import NodeSkillsPanel from '../NodeSkills';
-import StoryImport from '../StoryImport';
 import {uiErrorMessage} from '../ui-errors';
 import useProductionFollow from './useProductionFollow';
 async function api(path:string,body?:unknown,signal?:AbortSignal){const r=await fetch('/api/author'+path,body===undefined?{signal}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal});const d=await r.json();const detail=typeof d.detail==='string'?d.detail:'暂时无法完成操作，请稍后再试。';if(!r.ok){throw Error(detail);}return d;}
@@ -29,8 +28,7 @@ export default function Author(){
  const [art,setArt]=useState(''),[tone,setTone]=useState(''),[confirmed,setConfirmed]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[messageError,setMessageError]=useState(false),[syncError,setSyncError]=useState(''),[updated,setUpdated]=useState('');
  const [notes,setNotes]=useState<Record<string,string>>({}),[promptDrafts,setPromptDrafts]=useState<Record<string,string>>({}),[index,setIndex]=useState(0),[filter,setFilter]=useState('all'),[expanded,setExpanded]=useState(false);
  const [viewedStep,setViewedStep]=useState<string|null>(null);
- const [importOpen,setImportOpen]=useState(false),[activityOpen,setActivityOpen]=useState(false),[sourceOpen,setSourceOpen]=useState(false);
- const importTrigger=useRef<HTMLButtonElement>(null);
+ const [activityOpen,setActivityOpen]=useState(false),[sourceOpen,setSourceOpen]=useState(false);
  const justAdvanced = useRef(false);
  const [refresh,setRefresh]=useState(0),[actionLabel,setActionLabel]=useState('正在提交操作，等待服务确认…');
  const refreshWorkspace=useCallback(()=>setRefresh(n=>n+1),[]);
@@ -38,13 +36,12 @@ export default function Author(){
  const progressActive=hasActiveProgress(work);
  const streamConnection=useProjectProgress(work,progressActive,setWork,refreshWorkspace);
  useEffect(()=>{
-  let live=true;const params=new URLSearchParams(window.location.search),id=params.get('work'),story=params.get('story');
+  let live=true;const params=new URLSearchParams(window.location.search),id=params.get('work');
   if(id){setSelected(id);setOpening(false);}
-  else if(story){api('/stories/'+encodeURIComponent(story)+'/open',{}).then(d=>{if(live){setSelected(d.id);setWork(d);window.history.replaceState(null,'','/author?work='+encodeURIComponent(d.id));}}).catch(e=>{if(live){setMessage(uiErrorMessage(e));setMessageError(true);}}).finally(()=>{if(live)setOpening(false);});}
   else setOpening(false);
   return()=>{live=false;};
  },[]);
- useEffect(()=>{let live=true;api('/projects').then(d=>{if(live){setWorks(d);const params=new URLSearchParams(window.location.search);if(!params.get('story')&&!params.get('work')&&d.length){setSelected(d[0].id);window.history.replaceState(null,'','/author?work='+encodeURIComponent(d[0].id));}}}).catch(e=>{if(live){setMessage(uiErrorMessage(e));setMessageError(true);}});return()=>{live=false;};},[]);
+ useEffect(()=>{let live=true;api('/projects').then(d=>{if(live){setWorks(d);const params=new URLSearchParams(window.location.search);if(!params.get('work')&&d.length){setSelected(d[0].id);window.history.replaceState(null,'','/author?work='+encodeURIComponent(d[0].id));}}}).catch(e=>{if(live){setMessage(uiErrorMessage(e));setMessageError(true);}});return()=>{live=false;};},[]);
  useEffect(()=>{
   if(!selected)return;
   let live=true,controller:AbortController|undefined;
@@ -130,11 +127,11 @@ export default function Author(){
     {syncError?<div className="studio-error" role="alert">{syncError}{work?' · 当前显示上次同步结果。':''}<button disabled={busy} onClick={()=>setRefresh(n=>n+1)}>重新同步</button></div>:<InteractionFeedback busy={opening||busy} text={opening?'正在读取所选微小说原文与制作记录…':busy?actionLabel:message} error={!opening&&!busy&&messageError}/>}{work&&!opening&&!busy&&!message&&!syncError&&<span className="studio-idle-note"><i/>制作进度已同步<span>{updated&&'更新于 '+updated}</span></span>}
   </div>
   {!opening&&!selected&&<>
-    <div className={'studio-empty-slot'+(importOpen?' is-editing':'')}><div className="studio-empty-clip" inert={importOpen||undefined} aria-hidden={importOpen||undefined}>
-    <section className="studio-empty"><BookOpen size={35} strokeWidth={1.4}/><span className="studio-eyebrow">制作工作台</span><h1>从一篇原作开始</h1><p>带来你的微小说，选择视觉方向，完成属于你的第一部漫剧。</p><div className="studio-empty-actions"><button ref={importTrigger} className="button primary" onClick={()=>setImportOpen(true)}><Plus size={15}/>导入故事</button><Link className="button secondary" href="/">浏览故事市场 <ArrowRight size={15} className="button-arrow"/></Link></div><ol className="studio-start-path"><li><span>01</span>导入原文</li><li><span>02</span>设定视觉风格</li><li><span>03</span>审核并发布</li></ol></section>
+    <div className="studio-empty-slot"><div className="studio-empty-clip">
+    <section className="studio-empty"><BookOpen size={35} strokeWidth={1.4}/><span className="studio-eyebrow">制作工作台</span><h1>从你的一个项目开始</h1><p>先到项目入口，新建一个项目或选择一个已有项目，再回来把故事拍成漫剧。</p><div className="studio-empty-actions"><Link className="button primary" href="/">去项目入口 <ArrowRight size={15} className="button-arrow"/></Link></div></section>
     </div></div>
-    <div className={'story-import-slot'+(importOpen?' is-open':'')}><div className="story-import-clip" inert={!importOpen||undefined} aria-hidden={!importOpen||undefined}><StoryImport open={importOpen} onClosed={()=>{setImportOpen(false);window.requestAnimationFrame(()=>importTrigger.current?.focus({preventScroll:true}));}} onImported={storyId=>{if(storyId)window.location.href='/author?story='+encodeURIComponent(storyId);}}/></div></div>
   </>}
+
   {!opening&&selected&&!work&&!syncError&&<InteractionFeedback busy text="正在同步这篇微小说的制作进度…"/>}
   {work&&<>
 
@@ -169,7 +166,7 @@ export default function Author(){
 
       <div className="studio-asset-grid">{cards.map((c:any)=><article className="studio-asset" key={c.task?.id||c.name}><h3>{c.name}</h3>{c.description&&<p>{c.description}</p>}{c.asset?<AssetFrame src={c.asset.media} alt={c.name} video={stage==='film_review'} controls={stage==='film_review'}/>:<div className={'asset-frame asset-frame-placeholder'+(stage==='film_review'?' asset-frame-video':'')}><InteractionFeedback busy={activeStatuses.includes(c.task?.status)} text={c.task?.message||'等待制作'} title={stage==='film_review'?'视频制作':'画面制作'}/></div>}<GenerationPrompt generation={c.task?.generation} pending={activeStatuses.includes(c.task?.status)} group="asset-review-prompts"/><AssetFeedback name={c.name} task={c.task} text={notes[c.task?.id]||''} busy={busy} inFlight={inFlight} browsingEarlier={browsingEarlier} onTextChange={text=>setNotes(previous=>({...previous,[c.task?.id]:text}))} onSubmit={()=>act(async()=>{await api('/projects/'+selected+'/feedback',{task_id:c.task.id,text:notes[c.task.id],confirm_paid:true});setConfirmed(false);},'正在保存修改意见，安排重新制作…')}/></article>)}</div>
       {!browsingEarlier&&['assets_review','film_review'].includes(stage||'')&&<div className="studio-confirm is-review"><label className="checkbox"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/>我已查看本轮{stage==='assets_review'?'人物与场景图片':'完整视频'}，确认满意</label><button className="button primary" disabled={busy||!confirmed||!ready} onClick={()=>act(async()=>{await api('/projects/'+selected+(stage==='assets_review'?'/generate':'/publish'),{confirm:true,confirm_paid:true});},stage==='assets_review'?'正在确认图片，安排分镜与视频制作…':'正在核对片段，保存发布结果…',true)}>{stage==='assets_review'?'确认基础素材，生成分镜':'确认成片，发布到读者目录'} <ArrowRight size={15}/></button></div>}
-      {stage==='published'&&<div className="studio-published"><Clapperboard size={38} className="publish-icon"/><p>作品已进入读者目录，并前置展示为“已有漫剧”。{remainingEpisodes.length>0&&'这部作品还没做完：继续下一个情节，再次发布会把新的一集接在后面。'}</p><a className="button primary" href={work.release_id?'/?story='+encodeURIComponent(work.release_id):'/'}>观看这部漫剧 <ArrowRight size={15}/></a>{!browsingEarlier&&remainingEpisodes.length>0&&<button className="button secondary" disabled={busy} onClick={()=>act(async()=>{await api('/projects/'+selected+'/episodes/continue',{confirm_paid:true});followProduction();},'正在开始下一集的分镜与视频…',true)}>继续下一个情节（还有 {remainingEpisodes.length} 集） <ArrowRight size={14}/></button>}<a className="button secondary" href="/">选择下一个脑洞</a></div>}
+      {stage==='published'&&<div className="studio-published"><Clapperboard size={38} className="publish-icon"/><p>作品已进入读者目录，并前置展示为“已有漫剧”。{remainingEpisodes.length>0&&'这部作品还没做完：继续下一个情节，再次发布会把新的一集接在后面。'}</p><a className="button primary" href={work.release_id?'/watch?release='+encodeURIComponent(work.release_id):'/'}>观看这部漫剧 <ArrowRight size={15}/></a>{!browsingEarlier&&remainingEpisodes.length>0&&<button className="button secondary" disabled={busy} onClick={()=>act(async()=>{await api('/projects/'+selected+'/episodes/continue',{confirm_paid:true});followProduction();},'正在开始下一集的分镜与视频…',true)}>继续下一个情节（还有 {remainingEpisodes.length} 集） <ArrowRight size={14}/></button>}<a className="button secondary" href="/">返回项目入口</a></div>}
      </section>
      <details className="author-panel studio-activity" id="studio-activity" open={activityOpen} onToggle={event=>setActivityOpen(event.currentTarget.open)}><summary className="studio-section-heading"><span>制作记录与设置</span><small>{jobs.filter(t=>t.status==='completed').length} 已完成 · {active.length} 进行中 · {problems.length} 需处理</small></summary><div className="studio-activity-body">{stage==='style'&&recommendation?.status==='completed'&&<StyleProgress task={recommendation} detailed connection={streamConnection}/>}<div className="studio-filters">{[['all','全部'],['active','进行中'],['attention','需处理']].map(([value,label])=><button key={value} className={filter===value?'is-selected':''} aria-pressed={filter===value} onClick={()=>{setFilter(value);setExpanded(false);}}>{label}</button>)}</div><ProductionActivity tasks={expanded?filtered:filtered.slice(0,5)}/>{!filtered.length&&<p className="studio-note">{filter==='attention'?'当前没有需要处理的任务。':filter==='active'?'当前没有正在执行的任务。':'确定风格并开始制作后，每一步的实际状态都会显示在这里。'}</p>}{filtered.length>5&&<button className="studio-expand" onClick={()=>setExpanded(!expanded)}>{expanded?'收起记录':'查看全部 '+filtered.length+' 项任务'}</button>}<p className="studio-note">创作摘要、制作阶段和已完成素材会持续更新；每项任务的过程记录可展开查看。</p>
      <div className="studio-tools">

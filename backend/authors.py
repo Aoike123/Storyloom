@@ -1,4 +1,4 @@
-"""Local author production workflow: every project belongs to the single local maker."""
+"""Author production workflow: every project belongs to its owner (a real account)."""
 import hashlib
 import asyncio
 import json
@@ -11,6 +11,7 @@ from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from .db import HISTORY_LIMIT, Session, Record, Task, uid, record_dict, task_dict, generation_debug
+from .auth import active_user, assert_owner
 from . import creative, director
 from . import story_sources
 from .skill_runtime import call_node
@@ -21,11 +22,13 @@ from .production_nodes import (NODES, queue_node, node_snapshots, is_node_task, 
 from .production_nodes import retry_node as retry_stage_node, redo_node as redo_stage_node
 
 router = APIRouter(prefix='/api/author', tags=['author'])
-open_lock = Lock()
 attempt_lock = Lock()
 def get_work(db, pid):
-    """The project row behind an HTTP request."""
-    return work_row(db, pid)
+    """The project row behind an HTTP request, with the owner check for a logged-in user. The
+    legacy local maker (no token) and the worker (which uses work_row) are unrestricted."""
+    row = work_row(db, pid)
+    assert_owner(row)
+    return row
 
 
 def work_row(db, pid):
@@ -36,42 +39,133 @@ def work_row(db, pid):
     return row
 
 
-def work_id_for(work_id):
-    """Stable project id for one story; a single local maker never shares a project record."""
-    return 'work_story_' + hashlib.sha256(work_id.encode()).hexdigest()[:32]
+def _creators(db, owner_ids):
+    """Map owner id to a small public creator card, looking the users up in one query."""
+    from .db import User
+    ids = {oid for oid in owner_ids if oid}
+    users = {u.id: u for u in db.scalars(select(User).where(User.id.in_(ids)))} if ids else {}
+    return {oid: ({'name': users[oid].username, 'avatar_path': None} if oid in users
+                  else {'name': '创作者', 'avatar_path': None}) for oid in owner_ids}
 
 
-@router.post('/stories/{work_id}/open')
-def open_story(work_id: str):
-    if not story_sources.valid_id(work_id):
-        raise HTTPException(422, '故事标识格式无效。')
-    pid = work_id_for(work_id)
-    with open_lock:
-        with Session() as db:
-            existing = db.get(Record, pid)
-            if existing is not None and existing.kind == 'author_project':
-                return workspace(pid)
-        if existing is None:
-            source = story_sources.detail(work_id)
-            with Session.begin() as db:
-                db.add(Record(id=pid, kind='author_project', data={
-                    'title': source.get('title') or '未命名故事', 'source_id': source['id'],
-                    'source_work_id': work_id, 'stage': 'style', 'workflow': 'author-brainstorm-v7',
-                    'source_warning': source.get('warning'),
-                }))
-    return workspace(pid)
+def _public_project_dict(row, creator):
+    """A public-safe project card for the registry: what anyone may see of someone else's work."""
+    data = row.data
+    return {'id': row.id, 'title': data.get('title'), 'description': data.get('description'),
+            'stage': data.get('stage'), 'visibility': row.visibility, 'created': row.created,
+            'release_id': data.get('release_id'), 'creator': creator}
+
+
+class VisibilityIn(BaseModel):
+    visibility: Literal['private', 'public']
+    description: str | None = None
 
 
 @router.get('/projects')
-def projects():
+def projects(scope: str = 'mine'):
+    """My own projects (requires login) or the public registry of projects anyone may browse."""
+    user = active_user()
     with Session() as db:
-        rows = list(db.scalars(select(Record).where(Record.kind == 'author_project').order_by(Record.created.desc())))
-        return [record_dict(r) for r in rows]
+        if scope == 'public':
+            rows = list(db.scalars(select(Record).where(
+                Record.kind == 'author_project', Record.visibility == 'public'
+            ).order_by(Record.created.desc())))
+            creators = _creators(db, [r.owner_id for r in rows])
+            return [_public_project_dict(r, creators[r.owner_id]) for r in rows]
+        if user is None:
+            raise HTTPException(401, '请先登录。')
+        rows = list(db.scalars(select(Record).where(
+            Record.kind == 'author_project', Record.owner_id == user.id
+        ).order_by(Record.created.desc())))
+        return [{**record_dict(r), 'owner_id': r.owner_id, 'visibility': r.visibility} for r in rows]
+
+
+@router.get('/releases/{rid}')
+def public_release(rid: str):
+    """Public, no-login view of a finished film, gated on the publishing project being public."""
+    with Session() as db:
+        release = db.get(Record, rid)
+        if release is None or release.kind != 'reader_release':
+            raise HTTPException(404, '成片不存在。')
+        did = release.data.get('director_id')
+        project = None
+        for p in db.scalars(select(Record).where(Record.kind == 'author_project')):
+            if p.data.get('release_id') == rid or p.data.get('director_id') == did:
+                project = p
+                break
+        if project is None or project.visibility != 'public':
+            raise HTTPException(404, '该成片尚未公开。')
+        data = release.data
+        return {
+            'id': release.id, 'project_id': project.id,
+            'title': data.get('title'), 'author': data.get('author'),
+            'description': data.get('description'), 'creator': data.get('creator'),
+            'entries': data.get('entries') or [], 'published_at': data.get('published_at'),
+            'units_complete': data.get('units_complete'),
+        }
+
+
+@router.post('/projects/{pid}/visibility')
+def set_visibility(pid: str, body: VisibilityIn):
+    """The owner marks their project public (browseable) or private again."""
+    with Session.begin() as db:
+        row = get_work(db, pid)
+        row.visibility = body.visibility
+        if body.description is not None:
+            row.data = {**row.data, 'description': body.description}
+        return {'id': row.id, 'visibility': row.visibility}
+
+
+class CreateProjectIn(BaseModel):
+    title: str = Field(default='未命名项目', max_length=120)
+
+
+@router.post('/projects')
+def create_project(body: CreateProjectIn):
+    """Create an empty project owned by the current user; its story is added later in the story
+    workspace. This is the 新建项目 entry on the project-entry homepage."""
+    user = active_user()
+    if user is None:
+        raise HTTPException(401, '请先登录。')
+    title = (body.title or '').strip()[:120] or '未命名项目'
+    pid = uid('work')
+    with Session.begin() as db:
+        db.add(Record(id=pid, kind='author_project', owner_id=user.id, visibility='private',
+                      data={'title': title, 'stage': 'story', 'workflow': 'author-brainstorm-v7'}))
+    return workspace(pid)
+
+
+class StoryImportIn(BaseModel):
+    content: str
+    title: str | None = None
+
+
+@router.post('/projects/{pid}/story')
+def import_project_story(pid: str, body: StoryImportIn):
+    """Import the original text into this project as its own source. The production pipeline reads
+    it unchanged; a unique, owner-scoped source keeps multi-user ownership intact, and the original
+    text stays private even when the project is published."""
+    content = body.content
+    story_sources._check_content(content)
+    title = (body.title or '').strip()[:200]
+    sid = uid('source')
+    digest = hashlib.sha256(content.encode('utf-8')).hexdigest()
+    with Session.begin() as db:
+        row = get_work(db, pid)
+        db.add(Record(id=sid, kind='story_source', owner_id=row.owner_id, visibility='private', data={
+            'work_id': sid, 'title': title or row.data.get('title') or '未命名故事', 'author_name': None,
+            'labels': ['项目原文'], 'content': content, 'source': '项目原文', 'source_url': None,
+            'fetched_at': time.time(), 'content_hash': digest, 'completeness': 'full', 'status': 'imported',
+        }))
+        row.data = {**row.data, 'source_id': sid, 'source_work_id': sid, 'stage': 'style'}
+    return workspace(pid)
+
 
 @router.get('/projects/{pid}')
 def workspace(pid: str):
     with Session() as db:
         row = get_work(db, pid); data = record_dict(row); data['workspace_at']=data['progress_at']=time.time()
+        data['owner_id'] = row.owner_id; data['visibility'] = row.visibility
         source = db.get(Record, row.data.get('source_id', ''))
         data['source'] = {k: source.data.get(k) for k in ('title','work_id','author_name','labels','content','source','source_url','fetched_at','completeness')} if source else None
         heartbeat = db.get(Record, 'worker_heartbeat')
@@ -695,9 +789,11 @@ def feedback(pid: str, body: creative.Feedback):
 
 @router.post('/projects/{pid}/publish')
 def publish(pid: str, body: creative.Publish):
-    # A release is public, so keep a small creator snapshot on it. The local workbench has no
-    # signed-in identity, so attribution is a fixed neutral label rather than an account.
-    creator = {'name': '本地创作者', 'avatar_path': None}
+    # A release is public, so keep a small creator snapshot on it, attributed to the project owner.
+    user = active_user()
+    if user is None:
+        raise HTTPException(401, '请先登录。')
+    creator = {'name': user.username, 'avatar_path': None}
     with Session() as db:
         row = get_work(db, pid)
         # A finished episode can go out before the rest of the film exists.
