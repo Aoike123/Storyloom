@@ -24,7 +24,7 @@ function toRfNode(
     id: n.id,
     type: n.kind === 'scene' ? 'scene' : 'preview',
     position: layout?.[n.id] ?? fallback,
-    data: { title: n.title, kind: n.kind, isExample: n.isExample ?? false },
+    data: { title: n.title, kind: n.kind, body: n.body, fields: n.fields, isExample: n.isExample ?? false },
   };
 }
 
@@ -61,7 +61,7 @@ function defaultLayout(nodes: DisplayNode[]): Record<string, { x: number; y: num
     let x = 80;
     for (const n of gns) {
       out[n.id] = { x, y };
-      x += (n.kind === 'scene' ? 320 : 150) + 24;
+      x += (n.kind === 'scene' ? 320 : n.kind === 'script' || n.kind === 'cut' ? 230 : 150) + 24;
     }
     row += 1;
   }

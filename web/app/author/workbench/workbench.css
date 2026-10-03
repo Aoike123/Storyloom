@@ -117,6 +117,17 @@
 .workbench-preview-thumb{ height:76px; border-radius:7px; background:var(--soft); border:1px solid var(--line); }
 .workbench-preview-title{ margin-top:8px; font-size:12px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
+/* 文本单元（剧本/裁减）：无缩略图，宽卡片承载「原文参考 + 可编辑字段」 */
+.workbench-preview-text{ width:206px; }
+.workbench-preview-text .workbench-preview-title{ white-space:normal; }
+.workbench-node-body{ margin-top:8px; font-size:11.5px; line-height:1.6; color:var(--ink); background:var(--soft); border:1px solid var(--line); border-radius:8px; padding:7px 9px; }
+.workbench-node-body-label{ display:block; font-size:10px; color:var(--muted); letter-spacing:.5px; margin-bottom:2px; }
+.workbench-node-fields{ margin-top:8px; display:flex; flex-direction:column; gap:6px; }
+.workbench-node-field{ border:1px solid var(--line); border-radius:8px; background:var(--paper); padding:6px 9px; }
+.workbench-node-field-label{ font-size:10.5px; color:var(--muted); letter-spacing:.5px; }
+.workbench-node-field-value{ display:block; margin-top:2px; font-size:12px; color:var(--ink); line-height:1.5; }
+.workbench-node-field-empty{ display:block; margin-top:2px; font-size:12px; color:var(--muted); font-style:italic; }
+
 /* 右侧属性面板（第三 grid 列；宽度由 --workbench-panel-width 控制，随所选对象更新，D 批重构内容） */
 .workbench-panel{ min-width:0; min-height:0; border-left:1px solid var(--line); background:var(--soft); padding:14px 16px; overflow:auto; display:flex; flex-direction:column; }
 .workbench-panel-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }

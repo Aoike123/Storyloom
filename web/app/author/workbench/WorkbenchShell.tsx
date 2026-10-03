@@ -30,21 +30,28 @@ function firstDialogue(text: string): string | null {
   return q ? q : null;
 }
 
-// 中央画布节点：分镜/资产/成片用真实数据；切分/剧本按当前片段派生示例节点（B 批细化为独立节点类型）。
-function buildFragmentNodes(task: Workspace, frag: SourceFragment, source: SourceModel): DisplayNode[] {
+// 中央画布节点：分镜/资产/成片用真实数据；切分/剧本每个片段各一个节点。
+// 剧本 = 节点内含「动作 / 对白」两个可编辑字段；切分 = 节点内含「裁减正文」字段。
+// 片段是真实原文范围，正文取自真实文本；字段留空走空态，仅对白取自原文引号（非伪造）。
+// 片段未在服务端绑定（D03 待定）→ 标记 isExample（不伪造已保存记录）。
+function buildFragmentNode(task: 'script' | 'cut', frag: SourceFragment, source: SourceModel): DisplayNode {
   const text = source.text.slice(frag.range.start, frag.range.end);
-  const ex = frag.isExample ?? false;
+  const body = text.length > 54 ? text.slice(0, 54) + '…' : text;
   if (task === 'cut') {
-    return [{ id: frag.id + ':cut', kind: 'script', title: '片段裁减草稿', group: frag.name, isExample: ex }];
+    return { id: frag.id, kind: 'cut', title: frag.name, group: frag.name, body, fields: [{ label: '裁减正文', value: null }], isExample: true };
   }
-  if (task === 'script') {
-    const dialogue = firstDialogue(text);
-    return [
-      { id: frag.id + ':action', kind: 'script', title: '人物动作', group: frag.name, isExample: true },
-      { id: frag.id + ':dialogue', kind: 'script', title: dialogue ?? '人物对白', group: frag.name, isExample: true },
-    ];
-  }
-  return [];
+  return {
+    id: frag.id,
+    kind: 'script',
+    title: frag.name,
+    group: frag.name,
+    body,
+    fields: [
+      { label: '动作', value: null },
+      { label: '对白', value: firstDialogue(text) },
+    ],
+    isExample: true,
+  };
 }
 
 interface Props {
@@ -65,19 +72,18 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
   const active = view.activeWorkspace;
   const activeView = view.byWorkspace[active];
   const activeContent = content?.[active] ?? null;
-  const selectedNode = activeContent?.nodes.find((n) => n.id === activeView.selectedId) ?? null;
 
   const allFragments = source ? [...source.fragments, ...view.candidateFragments].sort((a, b) => a.range.start - b.range.start) : [];
-  const currentFragment = allFragments.find((f) => f.id === view.activeFragmentId) ?? allFragments[0] ?? null;
 
-  // 中央节点：分镜/资产/成片用真实数据；切分/剧本按当前片段派生
+  // 中央节点：分镜/资产/成片用真实数据；切分/剧本每个片段各一个节点（剧本=动作/对白字段，切分=裁减字段）
   let nodes: DisplayNode[] = [];
   const emptyReasons: Record<string, string> = activeContent?.emptyReasons ?? {};
   if (active === 'board' || active === 'assets' || active === 'film') {
     nodes = activeContent?.nodes ?? [];
-  } else if (currentFragment && source) {
-    nodes = buildFragmentNodes(active, currentFragment, source);
+  } else if (source) {
+    nodes = allFragments.map((f) => buildFragmentNode(active, f, source));
   }
+  const selectedNode = nodes.find((n) => n.id === activeView.selectedId) ?? null;
   const emptyList = Object.values(emptyReasons).filter(Boolean) as string[];
   const loading = !!hasWork && !content;
   const emptyHint = loading
@@ -92,7 +98,7 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
   function jump(f: SourceFragment) {
     const saved = view.contexts[f.id];
     const task: Workspace = saved?.task ?? f.task;
-    const selected = saved?.selected ?? (task === 'script' ? f.id + ':dialogue' : task === 'cut' ? f.id + ':cut' : null);
+    const selected = saved?.selected ?? (task === 'script' || task === 'cut' ? f.id : null);
     dispatch({ type: 'JUMP_FRAGMENT', id: f.id, task, selected });
   }
 
