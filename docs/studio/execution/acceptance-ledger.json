@@ -1467,12 +1467,38 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "保存raw与canonical并返回真实来源身份，不生成片段。",
-      "allowlist_scope": "backend/studio/projects/service.py、backend/studio/projects/api.py、backend/studio/sources/service.py、backend/studio/sources/api.py、tests/studio/test_projects.py；逐命令子卡收窄",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/sources/{service,api}.py + tests/studio/test_sources.py（主模型收窄：来源域测试独立成文件）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.6",
+        "tested_baseline": "faf2cf9 + 3 卡文件（本卡提交）",
+        "scope": "source_import_command_s1",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 240/240（10 新 + 230 既有）；代码审查：import_source 全链路正确——前置 404 单点、仅判空 422、幂等读先于写事务、raw 原样/canonicalize/双 sha256/utf16_len/OFFSET_POLICY 常量、prev=ORDER BY created DESC,id DESC（线性导入史）、空指针自动激活+updated=now、hint 冻结文案、dup 恒含、同事务 add→flush→指针→CommandRecord。",
+          "S1 冻结行为逐条：401；项目 404 不泄漏（不存在=跨属主同形状）；空 content 422 required；raw 逐字节原样（CRLF/首尾空格保留，T4/T10）；canonical 仅 CRLF→LF；双哈希=测试内独立 hashlib 值；char_length=canonical UTF-16 单位；offset_policy lf-utf16-v1；prev=null→链；首版自动激活（项目 active==新 id）；第二版不激活+hint 精确+active 不变；重复 canonical 仍建版本 dup=true（R03）；重放 200 零副作用；reused 422。"
+        ],
+        "contract_question_ruling": [
+          "裁定1（卡片笔误，非契约问题）：卡片 T4 写 char_length=13 为算术笔误；附录 01 §1 冻结定义（canonical 的 UTF-16 code unit 数）对 \"  hello\\nworld  \" = 15（2+5+1+5+2）。执行器以附录为准断言 15——正确。附录无改动，契约版本不变。",
+          "裁定2（测试场景适配）：卡片 T6“修订数==3”在独立测试（每测重置 DB）下需 3 次导入才成立；执行器将 T6 实现为自包含 3 导入（v1 CRLF 原文 → v2 新内容 → v3 纯 LF 变体），同时验证重复建版本链——正确的测试工程适配，行为不变。"
+        ],
+        "evidence": [
+          "backend/studio/sources/service.py",
+          "backend/studio/sources/api.py",
+          "tests/studio/test_sources.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-01-e",
