@@ -64,7 +64,10 @@ studio_releases
   published_at  TIMESTAMPTZ nullable
   created_at / updated_at
   cas_revision  INT
-  UNIQUE (project_id, name)
+  UNIQUE (project_id, name) -- v2.4 修正：条件唯一索引，仅 status IN ('draft','published') 生效
+                             -- （plain UQ 与 R12 同名版本链矛盾：再发布=新 published 行+旧行退役保留，
+                             --   两行同名必然并存；条件唯一 = 每 name 至多一个存活行，
+                             --   即创建时 duplicate_scope 语义，退役链行可共存）
 ```
 
 ## 2. 剪辑与确认（R09）
@@ -76,7 +79,7 @@ studio_releases
 
 ## 3. 发布与版本共存（R12）
 
-- **创建发布**：选 confirmed_edit + 名称（项目名或自定义）；`UNIQUE(project_id,name)` 冲突 → 422 `duplicate_scope`。
+- **创建发布**：选 confirmed_edit + 名称（项目名或自定义）；已存在**存活**（draft/published）同名行 → 422 `duplicate_scope`（v2.4 条件唯一）。
 - **发布**（RV5，preview 必须，kind=`release_publish`）：
   - preview impact = 将复制到公开目录的文件清单（成片 mp4 + poster 图，逐文件 sha256）与旧同名版本处置（被 `predecessor_release_id` 取代，仍保留可看）。
   - apply（`release_publish` job）：复制冻结产物到 `data/studio/public/{releaseId}/`（原子写；目录只含本次发布白名单文件）→ Release=published + public_dir。
