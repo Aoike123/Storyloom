@@ -25,7 +25,7 @@ from ..projects.models import StudioProject
 from .models import SourceRevision
 from .ranges import canonicalize, utf16_len
 
-__all__ = ["import_source"]
+__all__ = ["import_source", "get_source_revision"]
 
 # 附录 01 §1：offset_policy 固定常量（响应必回）
 OFFSET_POLICY = "lf-utf16-v1"
@@ -197,3 +197,42 @@ def import_source(session, user, pid, content, command_id) -> dict:
         )
 
     return response
+
+
+def get_source_revision(session, user, pid, revision_id) -> dict:
+    """S3 读取来源版本（附录 01 §2，契约 v2.6）。
+
+    纯读：不写任何表、不 commit、不接受 command_id（附录 00 §3）。
+    行为（冻结）：
+    - 前置：项目不存在或非属主 → 一律 404 not_found
+      （kind=project, id=pid；同 P3 单点模式，不泄漏存在性）；
+    - 修订不存在 **或** 其 project_id != pid（跨项目引用）→ 一律 404
+      not_found（裁定：kind=source, id=revisionId——不区分"不存在"
+      与"属别的项目"，不泄漏存在性）；
+    - 命中 → 200 完整修订 DTO（§1 全字段 + is_active）：raw/canonical
+      全文返回；created_at = 模型 created；is_active = 项目当前
+      active_source_revision_id == 该 id。
+    """
+    # 前置：项目须存在且属主；否则一律 404（不泄漏存在性）
+    project = session.scalar(select(StudioProject).where(StudioProject.id == pid))
+    if project is None or project.owner_id != user.id:
+        raise StudioAPIError.not_found("project", pid)
+
+    # 修订须存在且隶属本项目；否则一律 404（kind=source，裁定）
+    rev = session.scalar(select(SourceRevision).where(SourceRevision.id == revision_id))
+    if rev is None or rev.project_id != pid:
+        raise StudioAPIError.not_found("source", revision_id)
+
+    return {
+        "id": rev.id,
+        "project_id": rev.project_id,
+        "previous_revision_id": rev.previous_revision_id,
+        "raw_content": rev.raw_content,
+        "raw_hash": rev.raw_hash,
+        "canonical_content": rev.canonical_content,
+        "canonical_hash": rev.canonical_hash,
+        "offset_policy": rev.offset_policy,
+        "char_length": rev.char_length,
+        "created_at": rev.created,
+        "is_active": project.active_source_revision_id == rev.id,
+    }

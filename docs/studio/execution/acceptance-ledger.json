@@ -1517,12 +1517,35 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "读取指定来源正文/摘要，跨项目引用拒绝。",
-      "allowlist_scope": "backend/studio/projects/service.py、backend/studio/projects/api.py、backend/studio/sources/service.py、backend/studio/sources/api.py、tests/studio/test_projects.py；逐命令子卡收窄",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/sources/{service,api}.py + tests/studio/test_sources.py（追加）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.6",
+        "tested_baseline": "7451967 + 3 文件追加（本卡提交）",
+        "scope": "source_read_command_s3",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 247/247（7 新 + 240 既有）；代码审查：get_source_revision 双段 404（project 单点 + source 统一不泄漏）+ 11 字段 DTO 内联组装 + is_active 指针比对，纯读零副作用。",
+          "S3 冻结行为逐条：401；404 kind=project（不存在=跨属主）；404 kind=source（不存在=跨项目，T16 对照自读 200 证明不泄漏）；200 恰 11 字段（raw/canonical 全文逐字节、双哈希独立复算、is_active 正确）；3×GET 零副作用。"
+        ],
+        "contract_question_ruling": [],
+        "evidence": [
+          "backend/studio/sources/service.py",
+          "backend/studio/sources/api.py",
+          "tests/studio/test_sources.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-01",
@@ -1552,11 +1575,27 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "allowlist_scope": "backend/studio/projects/service.py、backend/studio/projects/api.py、backend/studio/sources/service.py、backend/studio/sources/api.py、tests/studio/test_projects.py；逐命令子卡收窄",
       "attempts": [],
-      "acceptance": null
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.6",
+        "scope": "projects+sources 全部 5 子卡（P1/P3/P2/S1/S3）",
+        "checks": [
+          "全部子卡 SOURCE-01-a..e 于 2026-10-04 逐张独立验收（各自 acceptance 块）；父卡白名单 projects/{service,api}.py + sources/{service,api}.py + test_projects.py/test_sources.py 全程未越界；累计 47 个 API 级测试（P1 10 + P3 5 + P2 6 + S1 10 + S3 7）。",
+          "家族级行为闭环：项目三读（P2 列表 envelope/00 §6、P3 单读、P1 创建）+ 来源两写读（S1 不可变导入、S3 全文读）；读写统一 404 不泄漏贯穿；command_id 幂等（重放 200 零副作用 / 异 body 422 reused）贯穿；契约 v2.6 duplicate(409) 经全局 handler。"
+        ],
+        "contract_question_ruling": [
+          "汇总子卡裁定：v2.6 错误协议实现缺口（01-a）；UOW 显式 flush 模式（01-a）；P2 排序/ clamp / cursor 格式 gap 填补（01-c）；S1 卡片算术笔误两处（01-d）。均见子卡块。"
+        ],
+        "evidence": [
+          "tests/studio/test_projects.py",
+          "tests/studio/test_sources.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-02",

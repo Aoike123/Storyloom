@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from ...core.auth import require_user
 from ...core.db import Session
-from .service import import_source
+from .service import get_source_revision, import_source
 
 router = APIRouter(tags=["studio-sources"])
 
@@ -43,3 +43,14 @@ def import_source_route(
     if result.pop("_replay", None):
         return JSONResponse(status_code=200, content=result)
     return result
+
+
+@router.get("/projects/{pid}/sources/{revision_id}")
+def get_source_revision_route(
+    pid: str,
+    revision_id: str,
+    db=Depends(_session),
+    user=Depends(require_user),
+):
+    """S3 读取来源版本（附录 01 §2）：200 完整修订 DTO；404 project/source。纯读。"""
+    return get_source_revision(db, user, pid, revision_id)

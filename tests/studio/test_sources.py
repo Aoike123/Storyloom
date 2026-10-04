@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy import select, text
 
 from backend.core.db import Base, Session, engine
+from backend.studio.contracts.models import CommandRecord
 from backend.studio.sources.models import SourceRevision
 
 
@@ -76,6 +77,18 @@ def _revision_count(pid) -> int:
             .scalars()
             .all()
         )
+
+
+def _command_count() -> int:
+    with Session() as s:
+        return len(s.execute(select(CommandRecord)).scalars().all())
+
+
+def _get_source(client, token, pid, revision_id):
+    return client.get(
+        f"/api/studio/projects/{pid}/sources/{revision_id}",
+        headers=_auth(token),
+    )
 
 
 # T1 无 token → 401
@@ -291,3 +304,134 @@ def test_t10_no_trim_regression(db, client):
         b" x "
     ).hexdigest()
     assert body["char_length"] == 3
+
+
+# ── S3 读取来源版本（附录 01 §2）：GET /projects/{pid}/sources/{revisionId} ──
+
+# T11 无 token → 401
+def test_t11_no_token_401(db, client):
+    r = client.get(
+        "/api/studio/projects/01010101010101010101010101/sources/"
+        "02020202020202020202020202"
+    )
+    assert r.status_code == 401
+    assert r.json()["error"]["code"] == "unauthenticated"
+
+
+# T12 pid 不存在（26 字符 ULID）→ 404，details=={"kind":"project","id":pid}
+def test_t12_nonexistent_pid_404(db, client):
+    token = _register(client, "s3_t12_alice")
+    pid = "01" * 13
+    r = _get_source(client, token, pid, "02" * 13)
+    assert r.status_code == 404, r.text
+    err = r.json()["error"]
+    assert err["code"] == "not_found"
+    assert err["details"] == {"kind": "project", "id": pid}
+
+
+# T13 跨属主项目（他人项目 + 任意 26 字符 revisionId）→ 404 details kind=project
+def test_t13_cross_owner_404(db, client):
+    t1 = _register(client, "s3_t13_bob")
+    t2 = _register(client, "s3_t13_carol")
+    pid = _create_project(client, t1, "T13Proj")
+    r = _get_source(client, t2, pid, "02" * 13)
+    assert r.status_code == 404, r.text
+    err = r.json()["error"]
+    assert err["code"] == "not_found"
+    assert err["details"] == {"kind": "project", "id": pid}
+
+
+# T14 属主读自己首版（先 S1 导入）→ 200：
+# raw/canonical 逐字节 == 导入时值；双哈希正确；char_length/offset_policy/prev 正确；
+# is_active true（首版自动激活）
+def test_t14_read_first_version_200(db, client):
+    token = _register(client, "s3_t14_dave")
+    pid = _create_project(client, token, "T14Proj")
+    content = "  hello\r\nworld  "
+    r1 = _import(client, token, pid, content)
+    assert r1.status_code == 201, r1.text
+    rev = r1.json()
+    r2 = _get_source(client, token, pid, rev["id"])
+    assert r2.status_code == 200, r2.text
+    body = r2.json()
+    # DTO = 附录 01 §1 全字段 + is_active（不含 S1 专属 activation_hint/duplicate_content）
+    assert set(body.keys()) == {
+        "id",
+        "project_id",
+        "previous_revision_id",
+        "raw_content",
+        "raw_hash",
+        "canonical_content",
+        "canonical_hash",
+        "offset_policy",
+        "char_length",
+        "created_at",
+        "is_active",
+    }
+    assert body["id"] == rev["id"]
+    assert body["project_id"] == pid
+    assert body["previous_revision_id"] is None
+    # raw / canonical 逐字节 == 导入时值
+    assert body["raw_content"] == content
+    assert body["canonical_content"] == "  hello\nworld  "
+    # 双哈希 = sha256(UTF-8)——测试内独立计算
+    assert body["raw_hash"] == hashlib.sha256(content.encode("utf-8")).hexdigest()
+    assert body["canonical_hash"] == hashlib.sha256(
+        "  hello\nworld  ".encode("utf-8")
+    ).hexdigest()
+    assert body["offset_policy"] == "lf-utf16-v1"
+    assert body["char_length"] == 15
+    assert isinstance(body["created_at"], (int, float))
+    # 首版自动激活 → is_active true
+    assert body["is_active"] is True
+
+
+# T15 项目内不存在的 revisionId（26 字符）→ 404 details=={"kind":"source","id":<revisionId>}
+def test_t15_nonexistent_revision_404(db, client):
+    token = _register(client, "s3_t15_erin")
+    pid = _create_project(client, token, "T15Proj")
+    _import(client, token, pid, "hello")
+    rid = "02" * 13
+    r = _get_source(client, token, pid, rid)
+    assert r.status_code == 404, r.text
+    err = r.json()["error"]
+    assert err["code"] == "not_found"
+    assert err["details"] == {"kind": "source", "id": rid}
+
+
+# T16 跨项目：账号 A 项目 PA、账号 C 项目 PC（C 已导入一版 r）；
+# A 请求 GET /projects/{PA}/sources/{r} → 404 details kind=source（r 存在但不在 PA——不泄漏）
+def test_t16_cross_project_revision_404(db, client):
+    ta = _register(client, "s3_t16_alice")
+    tc = _register(client, "s3_t16_carol")
+    pa = _create_project(client, ta, "T16ProjA")
+    pc = _create_project(client, tc, "T16ProjC")
+    r1 = _import(client, tc, pc, "carol content")
+    assert r1.status_code == 201, r1.text
+    rid = r1.json()["id"]
+    # 对照：C 能读自己项目内的 r
+    r_own = _get_source(client, tc, pc, rid)
+    assert r_own.status_code == 200, r_own.text
+    # A 在 A 的项目下请求 C 的 r → 404 kind=source（不区分"不存在"与"属别的项目"）
+    r = _get_source(client, ta, pa, rid)
+    assert r.status_code == 404, r.text
+    err = r.json()["error"]
+    assert err["code"] == "not_found"
+    assert err["details"] == {"kind": "source", "id": rid}
+
+
+# T17 无副作用：对同一 revisionId 连发 3 次 GET → 200×3，
+# studio_command_records 行数不变、studio_source_revisions 行数不变
+def test_t17_no_side_effects(db, client):
+    token = _register(client, "s3_t17_grace")
+    pid = _create_project(client, token, "T17Proj")
+    r1 = _import(client, token, pid, "no side effects")
+    assert r1.status_code == 201, r1.text
+    rid = r1.json()["id"]
+    cmds_before = _command_count()
+    revs_before = _revision_count(pid)
+    for _ in range(3):
+        r = _get_source(client, token, pid, rid)
+        assert r.status_code == 200, r.text
+    assert _command_count() == cmds_before
+    assert _revision_count(pid) == revs_before
