@@ -756,11 +756,45 @@
         "R09",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "backend/studio/projects/models.py、backend/studio/sources/models.py、tests/studio/test_source_models.py",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/projects/{__init__,models}.py、backend/studio/sources/{__init__,models}.py、backend/studio/contracts/models.py（BASE-01-b 注记遗留的 command_records 模型并入本卡）+ tests/studio/test_source_models.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.3",
+        "tested_baseline": "5c1b14a + 6 新文件 + 主模型测试框架统一（本卡提交）",
+        "scope": "projects_sources_command_records_models",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 36/36 全绿（8 新 + 28 既有）；data/ 无残留。",
+          "StudioProject 8 列（UQ owner+name、CK visibility、无 stage/封面列）；SourceRevision 11 列（CK offset_policy=lf-utf16-v1、自引用 FK 链）；CommandRecord 6 列（UQ owner+command_id，附录 00 §3 冻结字段）。",
+          "负例：重名/非法 visibility/悬空 FK×2/非法 offset_policy/重复幂等键 → 全 IntegrityError。"
+        ],
+        "harness_unification_by_main": [
+          "tests/studio/conftest.py：session 级丢弃库统一 setdefault（engine 进程单例，测试文件不得各自改写 STUDIO_* env）+ collection 期预创建空 sqlite 文件（sandbox 适配）+ atexit 清理 + 模型注册表 import（后续 DB 卡验收时追加）。",
+          "test_accounts.py：移除模块级 env 写入；T5 由\"表集合=={users}\"放宽为\"users 存在 ∧ 无旧表 records/tasks\"（session 并集表）。",
+          "test_source_models.py：移除模块级 env 写入；T1 由精确集合放宽为\"期望表 ⊆ 实际 ∧ 无旧表\"。"
+        ],
+        "evidence": [
+          "backend/studio/projects/models.py",
+          "backend/studio/sources/models.py",
+          "backend/studio/contracts/models.py",
+          "tests/studio/test_source_models.py",
+          "tests/studio/conftest.py",
+          "tests/studio/test_accounts.py"
+        ],
+        "limitations": [
+          "执行器报告的全套件 3 失败 = 各文件各自设 env 打单例 engine 的设计缺陷（主模型责任）→ 已按上述统一修复，复验全绿。"
+        ]
+      }
     },
     {
       "id": "DB-02",

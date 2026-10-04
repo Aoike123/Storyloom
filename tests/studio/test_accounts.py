@@ -1,44 +1,10 @@
 """BASE-03-b — 账号身份模型验证。
 
-模块级 env 在 import backend.core.db 之前设置，确保本进程 engine 绑定丢弃库。
-DSH sandbox 限制：collection 期可创建文件/目录，test 执行期 mkdir 被拦截。
-因此 fixture setup 中若目录缺失则重建（collection 期已创建的文件仍可用），
-teardown 仅 dispose engine，最终清理由 session 级 hook 执行。
+丢弃库由 tests/studio/conftest.py 在 session 级统一设定（engine 是进程单例，
+各文件不得各自改写 STUDIO_* env）；本文件只做防御断言。
 """
-import atexit
 import os
 import re
-import shutil
-import sqlite3
-import uuid as _uuid
-
-# ---------------------------------------------------------------------------
-# 模块级 env（在任何 backend.* import 之前）
-# ---------------------------------------------------------------------------
-_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-_TMP = f"data/studio-test-{_uuid.uuid4().hex[:8]}"
-_TMP_ABS = os.path.join(_ROOT, _TMP)
-os.makedirs(_TMP_ABS, exist_ok=True)
-_DB_FILE = os.path.join(_TMP_ABS, "accounts.db")
-os.environ["STUDIO_DATA_DIR"] = _TMP_ABS
-os.environ["STUDIO_DATABASE_URL"] = f"sqlite:///{_DB_FILE}"
-
-
-def _ensure_db_file():
-    """确保丢弃库目录与文件存在（DSH sandbox 下 test 执行期 mkdir 可能受限）。"""
-    if not os.path.isdir(_TMP_ABS):
-        os.makedirs(_TMP_ABS, exist_ok=True)
-    if not os.path.isfile(_DB_FILE):
-        conn = sqlite3.connect(_DB_FILE)
-        conn.execute("CREATE TABLE _init(x)")
-        conn.commit()
-        conn.execute("DROP TABLE _init")
-        conn.commit()
-        conn.close()
-
-
-# 注册进程退出时的最终清理
-atexit.register(shutil.rmtree, _TMP_ABS, ignore_errors=True)
 
 import pytest
 import sqlalchemy
@@ -61,7 +27,6 @@ from backend.core.accounts import (
 def db():
     from backend.core.db import Base, engine
 
-    _ensure_db_file()
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     yield
@@ -167,9 +132,14 @@ def test_t4_id_format() -> None:
 # ---------------------------------------------------------------------------
 
 def test_t5_table_isolation(db) -> None:
-    """本进程丢弃库中表集合 == {users}（不出现 records/tasks/studio_projects 等）。"""
+    """丢弃库中新系统表存在且不出现旧系统表（records/tasks）。
+
+    注意：session 级 Base 注册了多个模型（见 conftest），表集合是它们的并集，
+    不能断言"仅 users"；隔离性 = 无旧表。
+    """
     with _db.engine.connect() as conn:
         tables = {r[0] for r in conn.execute(text(
             "SELECT name FROM sqlite_master WHERE type='table'"
         ))}
-    assert tables == {"users"}, f"表集合不符（期望仅 users）: {tables}"
+    assert "users" in tables, f"users 表缺失: {tables}"
+    assert not (tables & {"records", "tasks"}), f"出现旧系统表: {tables}"
