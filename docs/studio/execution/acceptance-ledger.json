@@ -824,11 +824,40 @@
         "R09",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "backend/studio/sources/fragment_models.py、tests/studio/test_fragment_models.py",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/sources/fragment_models.py + tests/studio/test_fragment_models.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.3",
+        "tested_baseline": "4826151 + 2 新文件 + 主模型注册表追加（本卡提交）",
+        "scope": "range_set_fragment_fragment_revision_models",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 52/52（8 新 + 44 既有）；data/ 无残留。",
+          "三表与附录 02 §1 逐列一致（UQ/CHECK/双索引/pending_review 拒收/predecessor 默认 []）；FK 环 commit 时校验（bogus 对照失败）。"
+        ],
+        "contract_question_ruling": [
+          "裁定：ForeignKey(deferrable=True, initially=\"DEFERRED\") 接受为冻结实现细节。依据：SQLAlchemy 2.0.52 裸 deferrable 渲染 DEFERRABLE，SQLite 中 = INITIALLY IMMEDIATE（执行器首轮实测 T3/T4/T5 全挂），不满足卡面\"事务内先后插入、commit 校验\"行为契约；initially=\"DEFERRED\" 渲染 DEFERRABLE INITIALLY DEFERRED 达成该契约，列/约束冻结语义不变。后续 DB 卡的 FK 环一律用此写法。",
+          "观察项裁定：drop_all 的 SAWarning（Can't sort tables for DROP）无害（FK 环不可排序 + SQLite 无 ALTER）——保持现状，不引入 use_alter（其 DDL 策略在 SQLite 上有额外风险，收益仅是消除一条 warning）。"
+        ],
+        "integration_by_main": [
+          "conftest 模型注册表追加 backend.studio.sources.fragment_models"
+        ],
+        "evidence": [
+          "backend/studio/sources/fragment_models.py",
+          "tests/studio/test_fragment_models.py",
+          "tests/studio/conftest.py"
+        ]
+      }
     },
     {
       "id": "DB-03",
