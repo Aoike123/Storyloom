@@ -44,11 +44,21 @@
   text-decoration: none;
   white-space: nowrap;
   box-shadow: none;
-  transition: background var(--motion-hover) var(--ease-out), border-color var(--motion-hover) var(--ease-out), color var(--motion-hover) var(--ease-out);
+  transition:
+    background var(--motion-hover) var(--ease-out),
+    border-color var(--motion-hover) var(--ease-out),
+    color var(--motion-hover) var(--ease-out);
 }
 
-.button > svg { flex-shrink: 0; }
-.button.icon { width: 40px; min-height: 40px; padding: 0; flex: 0 0 40px; }
+.button > svg {
+  flex-shrink: 0;
+}
+.button.icon {
+  width: 40px;
+  min-height: 40px;
+  padding: 0;
+  flex: 0 0 40px;
+}
 .button.tab-control {
   min-height: 40px;
   padding: 8px 15px;
@@ -83,13 +93,29 @@
   color: var(--control-text);
 }
 @media (hover: hover) {
-  .button.primary:hover:not(:disabled) { background: var(--control-primary-hover); border-color: var(--control-primary-hover); }
-  .button.secondary:hover:not(:disabled) { background: var(--control-hover); border-color: var(--control-focus); }
-  .button.is-danger:hover:not(:disabled) { background: #fdf1ea; border-color: #bb826b; }
-  .button.link:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 4px; }
+  .button.primary:hover:not(:disabled) {
+    background: var(--control-primary-hover);
+    border-color: var(--control-primary-hover);
+  }
+  .button.secondary:hover:not(:disabled) {
+    background: var(--control-hover);
+    border-color: var(--control-focus);
+  }
+  .button.is-danger:hover:not(:disabled) {
+    background: #fdf1ea;
+    border-color: #bb826b;
+  }
+  .button.link:hover:not(:disabled) {
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
 }
-.button:focus-visible { outline: 2px solid var(--control-focus); outline-offset: 3px; }
-.button:disabled, .button[aria-disabled="true"] {
+.button:focus-visible {
+  outline: 2px solid var(--control-focus);
+  outline-offset: 3px;
+}
+.button:disabled,
+.button[aria-disabled="true"] {
   background: var(--control-disabled-bg);
   border-color: var(--control-disabled-border);
   color: var(--control-disabled-text);
@@ -98,8 +124,13 @@
   box-shadow: none;
 }
 @media (max-width: 620px) {
-  .button { white-space: normal; text-align: center; }
+  .button {
+    white-space: normal;
+    text-align: center;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .button { transition: none; }
+  .button {
+    transition: none;
+  }
 }

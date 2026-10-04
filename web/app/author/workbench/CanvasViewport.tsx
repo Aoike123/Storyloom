@@ -1,11 +1,19 @@
-'use client';
-import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, useReactFlow, useNodesState, type Node } from '@xyflow/react';
-import '@xyflow/react/dist/style.css';
-import { Maximize } from 'lucide-react';
-import SceneFrameNode from './SceneFrame';
-import PreviewNode from './PreviewNode';
-import { type DisplayNode } from './display-model';
-import { type Viewport } from './workspace-state';
+"use client";
+import {
+  ReactFlow,
+  ReactFlowProvider,
+  Background,
+  BackgroundVariant,
+  useReactFlow,
+  useNodesState,
+  type Node,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import { Maximize } from "lucide-react";
+import SceneFrameNode from "./SceneFrame";
+import PreviewNode from "./PreviewNode";
+import { type DisplayNode } from "./display-model";
+import { type Viewport } from "./workspace-state";
 
 // 只暴露画布能力：平移(拖空白) / 缩放(滚轮) / 适配(自有按钮) / 节点自由摆放 / 单选。
 // 明确禁用：连线(nodesConnectable=false)、多选(selectionKeyCode/multiSelectionKeyCode=null)、删除(deleteKeyCode=null)、
@@ -22,9 +30,15 @@ function toRfNode(
 ): Node {
   return {
     id: n.id,
-    type: n.kind === 'scene' ? 'scene' : 'preview',
+    type: n.kind === "scene" ? "scene" : "preview",
     position: layout?.[n.id] ?? fallback,
-    data: { title: n.title, kind: n.kind, body: n.body, fields: n.fields, isExample: n.isExample ?? false },
+    data: {
+      title: n.title,
+      kind: n.kind,
+      body: n.body,
+      fields: n.fields,
+      isExample: n.isExample ?? false,
+    },
   };
 }
 
@@ -46,7 +60,9 @@ function FitViewButton() {
 
 // 按场整齐排列：同 group 的节点排成一行（场次节点在前、其余横排），行与行纵向堆叠；
 // 用户自由摆卡（layout）优先于这里的默认坐标。
-function defaultLayout(nodes: DisplayNode[]): Record<string, { x: number; y: number }> {
+function defaultLayout(
+  nodes: DisplayNode[],
+): Record<string, { x: number; y: number }> {
   const groups = new Map<string, DisplayNode[]>();
   for (const n of nodes) {
     const key = n.group ?? n.kind;
@@ -61,7 +77,12 @@ function defaultLayout(nodes: DisplayNode[]): Record<string, { x: number; y: num
     let x = 80;
     for (const n of gns) {
       out[n.id] = { x, y };
-      x += (n.kind === 'scene' ? 320 : n.kind === 'script' || n.kind === 'cut' ? 230 : 150) + 24;
+      x +=
+        (n.kind === "scene"
+          ? 320
+          : n.kind === "script" || n.kind === "cut"
+            ? 230
+            : 150) + 24;
     }
     row += 1;
   }
@@ -80,12 +101,23 @@ interface Props {
   emptyHint?: string;
 }
 
-function CanvasInner({ nodes, layout, viewport, onViewportChange, onSelect, onNodeDragStop, emptyHint }: Props) {
+function CanvasInner({
+  nodes,
+  layout,
+  viewport,
+  onViewportChange,
+  onSelect,
+  onNodeDragStop,
+  emptyHint,
+}: Props) {
   const defaults = defaultLayout(nodes);
-  const initial = nodes.map((n) => toRfNode(n, defaults[n.id] ?? { x: 80, y: 80 }, layout));
+  const initial = nodes.map((n) =>
+    toRfNode(n, defaults[n.id] ?? { x: 80, y: 80 }, layout),
+  );
   const [rfNodes, , onNodesChange] = useNodesState(initial);
   // 首次进入该工作区（视口仍为默认 {0,0,1}）时自动适配视野；之后恢复已保存的视野
-  const isPristine = !!viewport && viewport.x === 0 && viewport.y === 0 && viewport.scale === 1;
+  const isPristine =
+    !!viewport && viewport.x === 0 && viewport.y === 0 && viewport.scale === 1;
 
   return (
     <div className="workbench-canvas">
@@ -96,12 +128,20 @@ function CanvasInner({ nodes, layout, viewport, onViewportChange, onSelect, onNo
         onNodesChange={onNodesChange}
         onNodeClick={(_e, node) => onSelect?.(node.id)}
         onPaneClick={() => onSelect?.(null)}
-        onNodeDragStop={(_e, node) => onNodeDragStop?.(node.id, node.position.x, node.position.y)}
-        onMove={(_e, vp) => onViewportChange?.({ x: vp.x, y: vp.y, scale: vp.zoom })}
+        onNodeDragStop={(_e, node) =>
+          onNodeDragStop?.(node.id, node.position.x, node.position.y)
+        }
+        onMove={(_e, vp) =>
+          onViewportChange?.({ x: vp.x, y: vp.y, scale: vp.zoom })
+        }
         onInit={(instance) => {
           if (isPristine && nodes.length > 0) instance.fitView({ duration: 0 });
         }}
-        defaultViewport={viewport ? { x: viewport.x, y: viewport.y, zoom: viewport.scale } : undefined}
+        defaultViewport={
+          viewport
+            ? { x: viewport.x, y: viewport.y, zoom: viewport.scale }
+            : undefined
+        }
         nodesDraggable
         nodesConnectable={false}
         elementsSelectable
@@ -113,11 +153,22 @@ function CanvasInner({ nodes, layout, viewport, onViewportChange, onSelect, onNo
         minZoom={0.2}
         maxZoom={2}
       >
-        <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="var(--line)" />
+        <Background
+          variant={BackgroundVariant.Dots}
+          gap={22}
+          size={1}
+          color="var(--line)"
+        />
       </ReactFlow>
       <FitViewButton />
-      {nodes.length === 0 ? <div className="workbench-canvas-empty">{emptyHint ?? '本工作区暂无内容'}</div> : null}
-      {nodes.length > 0 ? <div className="workbench-canvas-tag">{nodes.length} 个节点</div> : null}
+      {nodes.length === 0 ? (
+        <div className="workbench-canvas-empty">
+          {emptyHint ?? "本工作区暂无内容"}
+        </div>
+      ) : null}
+      {nodes.length > 0 ? (
+        <div className="workbench-canvas-tag">{nodes.length} 个节点</div>
+      ) : null}
     </div>
   );
 }

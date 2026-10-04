@@ -61,62 +61,60 @@ curl -sSL -o ./<persona-slug>/<file>.<ext> "$URL"
 
 ## Style routing
 
-| Style | Model | For | Cost |
-|---|---|---|---|
+| Style                 | Model                    | For                                                                | Cost  |
+| --------------------- | ------------------------ | ------------------------------------------------------------------ | ----- |
 | `realistic` (default) | `gemini-3.1-flash-image` | photoreal humans + photoreal common pets / anthropomorphic animals | ~3 cr |
-| `stylized` | `grok-imagine` | anime, 3D-animated fruit/object/character, illustration | ~1 cr |
+| `stylized`            | `grok-imagine`           | anime, 3D-animated fruit/object/character, illustration            | ~1 cr |
 
 **Cross-provider fallback:** primary fails → retry with `flux-2-max` (~3 cr, supports `imageUrls`). Both fail → surface error.
 
 ### Style inference (read the brief)
 
-| Brief contains | Style → opening |
-|---|---|
-| Fruit/veggie/food + "character" / "anthropomorphic" / "brainrot" | stylized → fruit/object |
-| Animal name + "pet" / "influencer" / "creator" / breed (NOT "real form" / "four-legged") | realistic → **anthropomorphic humanoid pet** (default for animal/pet briefs — fluffy biped in cute clothes, matches project's `pets` category vibe) |
-| Animal name + explicit "real form" / "four-legged" / "on all fours" / "real cat / dog / animal" | realistic → real-form quadruped pet (opt-in) |
-| "Anime", "manga", "magical girl", "kawaii", "shoujo", "shonen" | stylized → anime |
-| "3D rendered", "stylized 3D", "claymation", "feature-film animation" | stylized → 3D character |
-| "Illustrated", "painted", "watercolor", "comic book" | stylized → illustration |
-| Human profession + demographic, no style cue | realistic → photoreal human |
+| Brief contains                                                                                  | Style → opening                                                                                                                                     |
+| ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fruit/veggie/food + "character" / "anthropomorphic" / "brainrot"                                | stylized → fruit/object                                                                                                                             |
+| Animal name + "pet" / "influencer" / "creator" / breed (NOT "real form" / "four-legged")        | realistic → **anthropomorphic humanoid pet** (default for animal/pet briefs — fluffy biped in cute clothes, matches project's `pets` category vibe) |
+| Animal name + explicit "real form" / "four-legged" / "on all fours" / "real cat / dog / animal" | realistic → real-form quadruped pet (opt-in)                                                                                                        |
+| "Anime", "manga", "magical girl", "kawaii", "shoujo", "shonen"                                  | stylized → anime                                                                                                                                    |
+| "3D rendered", "stylized 3D", "claymation", "feature-film animation"                            | stylized → 3D character                                                                                                                             |
+| "Illustrated", "painted", "watercolor", "comic book"                                            | stylized → illustration                                                                                                                             |
+| Human profession + demographic, no style cue                                                    | realistic → photoreal human                                                                                                                         |
 
 Both anthropomorphic-humanoid and real-form-quadruped are supported, but **anthropomorphic is the default** for pet briefs — that matches the Picsart project's `pets` category which is fluffy biped influencers in cute clothes (tiny sweaters, mini hoodies, bow ties), with food-themed names (Biscuit, Mochi, Nugget, Bean, Waffles, Tofu, Pickle) and gen-z bios ("professional napper | treat negotiator | certified good boy/girl"). Real-form four-legged is the opt-in for creators who explicitly say so. Style conflict (e.g. "anime fitness coach") → prefer the **stylistic** cue.
 
 **Most creators want stylized.** Don't blindly default to realistic.
 
-**IP-safe wording (mandatory):** never name studios / franchises in prompts sent to the model — no "Pixar", "Disney", "Toy Story", "Studio Ghibli", "Marvel", etc. Recognize creator phrasing like "Pixar-style" as a 3D-animated *intent* (route to stylized 3D) but use generic descriptors in the actual prompt: "3D-animated", "feature-film animation aesthetic", "stylized 3D rendering", "anime cel-shaded illustration". Studio names trigger content policies + downstream IP risk.
+**IP-safe wording (mandatory):** never name studios / franchises in prompts sent to the model — no "Pixar", "Disney", "Toy Story", "Studio Ghibli", "Marvel", etc. Recognize creator phrasing like "Pixar-style" as a 3D-animated _intent_ (route to stylized 3D) but use generic descriptors in the actual prompt: "3D-animated", "feature-film animation aesthetic", "stylized 3D rendering", "anime cel-shaded illustration". Studio names trigger content policies + downstream IP risk.
 
 ## What creators express in their brief (natural language)
 
 The agent extracts intent — no CLI flags to learn:
 
-- **Reference image** (*"from /path/photo.png"*) → adds `-i` to casting-card call
-- **Reel** (*"add a tiktok reel"*, *"with motion"*) → triggers Step 4 (~11 extra cr)
-- **Platform** (*"for tiktok"*, *"instagram reel"*, *"linkedin"*) → drives reel AR + caption tuning
-- **Style** (*"anime"*, *"3D"*, *"painted"*, *"photoreal"*) → routes realistic / stylized
-- **Name** (*"named Nova"*) → sets persona name
-- **Character type** (*"strawberry character"*, *"golden retriever pet"*, *"magical girl"*) → picks subject opening
+- **Reference image** (_"from /path/photo.png"_) → adds `-i` to casting-card call
+- **Reel** (_"add a tiktok reel"_, _"with motion"_) → triggers Step 4 (~11 extra cr)
+- **Platform** (_"for tiktok"_, _"instagram reel"_, _"linkedin"_) → drives reel AR + caption tuning
+- **Style** (_"anime"_, _"3D"_, _"painted"_, _"photoreal"_) → routes realistic / stylized
+- **Name** (_"named Nova"_) → sets persona name
+- **Character type** (_"strawberry character"_, _"golden retriever pet"_, _"magical girl"_) → picks subject opening
 
 ## Quick start
 
 Plain English. Examples:
 
-- *"Create a persona for: fitness coach, gen-z, neon vibe"* (realistic human)
-- *"Create a fluffy golden puppy pet influencer, sassy queen energy, mini hoodie"* (anthropomorphic pet — DEFAULT for pet briefs: fluffy biped in cute clothes)
-- *"Create a calico kitten content creator, sleepy baby vibe, tiny knitted sweater"* (anthropomorphic pet)
-- *"Create a real four-legged tortoiseshell cat in a sunlit Tokyo apartment"* (real-form pet — opt-in only with explicit "real form / four-legged" cue)
-- *"Make me an anime magical-girl librarian"* (stylized)
-- *"Create a strawberry character, brainrot 3D-animated vibe"* (stylized fruit)
-- *"Create a persona based on /path/photo.png — indie folk musician"* (reference)
-- *"Create a persona for: fitness coach — and add a tiktok reel"* (with reel)
+- _"Create a persona for: fitness coach, gen-z, neon vibe"_ (realistic human)
+- _"Create a fluffy golden puppy pet influencer, sassy queen energy, mini hoodie"_ (anthropomorphic pet — DEFAULT for pet briefs: fluffy biped in cute clothes)
+- _"Create a calico kitten content creator, sleepy baby vibe, tiny knitted sweater"_ (anthropomorphic pet)
+- _"Create a real four-legged tortoiseshell cat in a sunlit Tokyo apartment"_ (real-form pet — opt-in only with explicit "real form / four-legged" cue)
+- _"Make me an anime magical-girl librarian"_ (stylized)
+- _"Create a strawberry character, brainrot 3D-animated vibe"_ (stylized fruit)
+- _"Create a persona based on /path/photo.png — indie folk musician"_ (reference)
+- _"Create a persona for: fitness coach — and add a tiktok reel"_ (with reel)
 
 Output: `casting.png`, `persona.md`, `_meta.json` (+ `reel-hero.png` + `reel.mp4` if reel requested).
 
 Cost: **~3 cr** lean / **~14 cr** with reel.
 
 ## Pipeline
-
-
 
 ### Step 1 — Intent
 
@@ -159,13 +157,13 @@ curl -sSL -o ./<persona-slug>/casting.png "$URL"
 
 #### Subject openings (replace `<subject-opening>` above)
 
-- **Photoreal human** *(default)* — *"Professional fashion photograph head-to-toe casting card / model sheet, shot on 85mm lens, RAW photo, 8k UHD, crisp focus, photorealistic, natural skin texture with visible pores, no AI smoothing."*
-- **Anthropomorphic humanoid pet** *(DEFAULT for pet/animal briefs — fluffy biped in cute clothes, project's `pets` category)* — *"An anthropomorphic [puppy / kitten / bunny / hamster / duckling / fox cub / baby panda / hedgehog / penguin / monkey] character standing upright on two legs like a human, full body visible head to toe, humanoid body proportions, expressive face, [coat detail — e.g. warm golden honey-colored fur / pure snow white fluffy fur / deep midnight black sleek fur / warm ginger orange fur / chocolate brown fur / shimmering silver grey fur / patchy calico orange-white-black fur / soft cream colored fur], adorable, looking directly at camera, professional fashion photograph, shot on 85mm lens, shallow depth of field, cinematic studio lighting with soft key light, photorealistic, RAW photo, 8k ultra high definition, crisp focus."* Wardrobe options the agent can pick from when composing the casting card outfit: tiny knitted sweater | mini oversized hoodie | dapper bow tie + collar | flower crown of daisies and roses | tiny stylish sunglasses | flowing superhero cape | stylish bandana around neck | au naturel (no clothing, just fluffy fur). Vibe options for expression / pose: Sassy Queen (hand on hip, serving looks, unbothered) | Silly King (goofy, tongue out, awkward funny pose) | Sleepy Baby (drowsy half-asleep, leaning) | Zoomies Mode (excited, arms up, chaotic joy) | Distinguished (regal, arms crossed, noble) | Mischief Maker (sneaky, hands behind back, guilty-not-sorry). Suggested name (food-themed, project's pool): Biscuit, Mochi, Nugget, Bean, Waffles, Tofu, Dumpling, Peanut, Pickle, Noodle, Churro, Pretzel, Taco, Maple, Truffle, Sesame, Crouton, Muffin, Cupcake, Boba. Suggested bio style (gen-z internet humor, pipe-separated): "professional napper | treat negotiator | certified good boy/girl" / "fluffy & unbothered | snack motivated | full-time cuddle bug" / "chaos gremlin | zoomies champion | will boop for treats".
-- **Real-form quadruped pet** *(opt-in only — creator explicitly said "real form / four-legged / real cat / on all fours")* — *"Professional pet portrait photograph head-to-toe model sheet of a [breed] [animal] in their natural anatomical form (four-legged / quadruped, NOT humanoid), full body nose-to-tail visible, shot on 85mm with shallow depth of field, RAW, 8k UHD, photorealistic natural fur with visible individual hairs, no AI smoothing. Pet may wear simple accessories (collar, bandana, harness) but never humanoid clothing — the character is the animal in real anatomical form."*
-- **3D-animated anthropomorphic fruit / object** — *"High quality 3D-animated head-to-toe character sheet of an anthropomorphic [fruit/object] character, feature-film animation aesthetic, [fruit/object] serves as the head on a full human-proportioned athletic body, [skin/surface] texture extending naturally to arms and hands, ultra-high resolution, brainrot character-drama vibe, dramatic cinematic studio lighting with soft fill + subtle ground shadow."*
-- **Anime / manga** — *"High quality anime / manga style head-to-toe character sheet, cel-shaded illustration, clean line art, vibrant saturated colors, soft anime lighting, expressive eyes, [shoujo/shonen/kawaii] aesthetic, magazine character reference sheet composition."*
-- **Stylized 3D-animated human / fantasy** — *"High quality stylized 3D-animated head-to-toe character sheet, feature-film animation aesthetic, soft global illumination, slightly exaggerated proportions, expressive features, character-animation art direction."*
-- **Painted / illustrated** — *"Hand-painted editorial illustration head-to-toe character sheet, [watercolor/gouache/digital painting] aesthetic, painterly brushwork, layered soft light, magazine illustration composition."*
+- **Photoreal human** _(default)_ — _"Professional fashion photograph head-to-toe casting card / model sheet, shot on 85mm lens, RAW photo, 8k UHD, crisp focus, photorealistic, natural skin texture with visible pores, no AI smoothing."_
+- **Anthropomorphic humanoid pet** _(DEFAULT for pet/animal briefs — fluffy biped in cute clothes, project's `pets` category)_ — _"An anthropomorphic [puppy / kitten / bunny / hamster / duckling / fox cub / baby panda / hedgehog / penguin / monkey] character standing upright on two legs like a human, full body visible head to toe, humanoid body proportions, expressive face, [coat detail — e.g. warm golden honey-colored fur / pure snow white fluffy fur / deep midnight black sleek fur / warm ginger orange fur / chocolate brown fur / shimmering silver grey fur / patchy calico orange-white-black fur / soft cream colored fur], adorable, looking directly at camera, professional fashion photograph, shot on 85mm lens, shallow depth of field, cinematic studio lighting with soft key light, photorealistic, RAW photo, 8k ultra high definition, crisp focus."_ Wardrobe options the agent can pick from when composing the casting card outfit: tiny knitted sweater | mini oversized hoodie | dapper bow tie + collar | flower crown of daisies and roses | tiny stylish sunglasses | flowing superhero cape | stylish bandana around neck | au naturel (no clothing, just fluffy fur). Vibe options for expression / pose: Sassy Queen (hand on hip, serving looks, unbothered) | Silly King (goofy, tongue out, awkward funny pose) | Sleepy Baby (drowsy half-asleep, leaning) | Zoomies Mode (excited, arms up, chaotic joy) | Distinguished (regal, arms crossed, noble) | Mischief Maker (sneaky, hands behind back, guilty-not-sorry). Suggested name (food-themed, project's pool): Biscuit, Mochi, Nugget, Bean, Waffles, Tofu, Dumpling, Peanut, Pickle, Noodle, Churro, Pretzel, Taco, Maple, Truffle, Sesame, Crouton, Muffin, Cupcake, Boba. Suggested bio style (gen-z internet humor, pipe-separated): "professional napper | treat negotiator | certified good boy/girl" / "fluffy & unbothered | snack motivated | full-time cuddle bug" / "chaos gremlin | zoomies champion | will boop for treats".
+- **Real-form quadruped pet** _(opt-in only — creator explicitly said "real form / four-legged / real cat / on all fours")_ — _"Professional pet portrait photograph head-to-toe model sheet of a [breed] [animal] in their natural anatomical form (four-legged / quadruped, NOT humanoid), full body nose-to-tail visible, shot on 85mm with shallow depth of field, RAW, 8k UHD, photorealistic natural fur with visible individual hairs, no AI smoothing. Pet may wear simple accessories (collar, bandana, harness) but never humanoid clothing — the character is the animal in real anatomical form."_
+- **3D-animated anthropomorphic fruit / object** — _"High quality 3D-animated head-to-toe character sheet of an anthropomorphic [fruit/object] character, feature-film animation aesthetic, [fruit/object] serves as the head on a full human-proportioned athletic body, [skin/surface] texture extending naturally to arms and hands, ultra-high resolution, brainrot character-drama vibe, dramatic cinematic studio lighting with soft fill + subtle ground shadow."_
+- **Anime / manga** — _"High quality anime / manga style head-to-toe character sheet, cel-shaded illustration, clean line art, vibrant saturated colors, soft anime lighting, expressive eyes, [shoujo/shonen/kawaii] aesthetic, magazine character reference sheet composition."_
+- **Stylized 3D-animated human / fantasy** — _"High quality stylized 3D-animated head-to-toe character sheet, feature-film animation aesthetic, soft global illumination, slightly exaggerated proportions, expressive features, character-animation art direction."_
+- **Painted / illustrated** — _"Hand-painted editorial illustration head-to-toe character sheet, [watercolor/gouache/digital painting] aesthetic, painterly brushwork, layered soft light, magazine illustration composition."_
 
 **Casting-card rules — non-negotiable:** identical bg / wardrobe-or-accessories / lighting / expression / hair-fur across all 4 panels — only angle differs | bg flat plain gray | full body (head-to-toe humans/bipeds INCLUDING anthropomorphic humanoid pets, nose-to-tail quadrupeds for real-form pet opt-in) | wardrobe stays same in all panels (same outfit for humans + anthropomorphic pets — yes, anthropomorphic pets wear humanoid clothing like tiny sweaters/mini hoodies/bow ties; only real-form quadruped pets are limited to simple accessories like collar/bandana/harness) | expression and pose match the chosen vibe (Sassy Queen / Silly King / etc. for anthropomorphic pets) — neutral default for humans, eyes at camera (or off per profile/back).
 
@@ -202,11 +200,11 @@ Cost: ~3 cr. Apply fallback to `flux-2-max`.
 
 Platform → AR + duration:
 
-| Platform | AR | Duration |
-|---|---|---|
-| tiktok / instagram-reel / instagram-story / youtube-shorts | 9:16 | 8s |
-| instagram-feed | 1:1 (Seedance has no 4:5; closest universal) | 6s |
-| youtube / linkedin / x / twitter | 16:9 | 8–10s |
+| Platform                                                   | AR                                           | Duration |
+| ---------------------------------------------------------- | -------------------------------------------- | -------- |
+| tiktok / instagram-reel / instagram-story / youtube-shorts | 9:16                                         | 8s       |
+| instagram-feed                                             | 1:1 (Seedance has no 4:5; closest universal) | 6s       |
+| youtube / linkedin / x / twitter                           | 16:9                                         | 8–10s    |
 
 ```bash
 URL=$(gen-ai generate -m seedance-2.0 -i ./<persona-slug>/reel-hero.png -p "<subject-opening>. <frozen appearance block>. Wearing same signature wardrobe. <single action from vocabulary matching the concept — strong language here, this is where action actually lands>. <same atmospheric environment + lighting as hero>. <single camera move from vocabulary>. Audio: <ambient soundscape matching scene — environmental sounds, mood-appropriate underscore; no spoken dialogue, no voiceover, no music vocals>. Single continuous moment, no scene changes, no multiple sequential actions, no fast or chaotic movement. No text, no captions, no watermarks, no logos, no UI, no phone, no device, no screen, no social media overlays." --aspect-ratio <platform-AR> --duration <platform-duration> --generate-audio --json --no-input | grep -oE 'https?://[^"]+' | head -1)
@@ -225,14 +223,14 @@ Seedance prompt order (verified KLING_RULES): Subject → Action → Environment
 
 Append captions to `persona.md` — 3 by default, in persona's voice. Hashtag block ALWAYS leads with `#picsart #picsartcreator`, then platform-specific niche tags.
 
-| Platform | Length | Niche tags after Picsart pair |
-|---|---|---|
-| tiktok / youtube-shorts | 80–150 chars, single hook | 4–6 trending |
-| instagram (reel/story/feed) | 150–300 chars, hook + story | 6–10 |
-| youtube standard | 300–500 chars, keyword-dense | 3–5 keyword |
-| linkedin | 500–1000 chars, professional | 3–5 industry |
-| x / twitter | ≤280 chars total (incl tags) | 1–2 |
-| (no platform) | ~150 chars, balanced | 4–6 generic |
+| Platform                    | Length                       | Niche tags after Picsart pair |
+| --------------------------- | ---------------------------- | ----------------------------- |
+| tiktok / youtube-shorts     | 80–150 chars, single hook    | 4–6 trending                  |
+| instagram (reel/story/feed) | 150–300 chars, hook + story  | 6–10                          |
+| youtube standard            | 300–500 chars, keyword-dense | 3–5 keyword                   |
+| linkedin                    | 500–1000 chars, professional | 3–5 industry                  |
+| x / twitter                 | ≤280 chars total (incl tags) | 1–2                           |
+| (no platform)               | ~150 chars, balanced         | 4–6 generic                   |
 
 Print final summary: `✓ Persona "Lena" delivered. Local: ./lena/. Spent: ~3 credits. Files: casting.png, persona.md (+ _meta.json)`. Add `reel-hero.png` + `reel.mp4` to file list if reel was generated.
 
@@ -265,8 +263,8 @@ Continue? [Y/n]
 
 Natural language. Agent reads `_meta.json` and reruns the right step:
 
-- *"Regenerate Lena with darker hair"* (~3 cr)
-- *"Redo the reel with a slow camera push instead of static"* (~8 cr)
+- _"Regenerate Lena with darker hair"_ (~3 cr)
+- _"Redo the reel with a slow camera push instead of static"_ (~8 cr)
 
 Confirm spend before re-running.
 

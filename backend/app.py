@@ -64,7 +64,7 @@ def _loopback_origin(origin: str) -> bool:
         return False
     if not host:
         return False
-    if host == 'localhost' or host.endswith('.localhost'):
+    if host == "localhost" or host.endswith(".localhost"):
         return True
     try:
         return ipaddress.ip_address(host).is_loopback
@@ -81,8 +81,12 @@ async def local_only(request: Request, call_next):
     path = request.url.path
     response = await call_next(request)
     if path.startswith("/api/"):
-        streaming = response.headers.get("content-type", "").startswith("text/event-stream")
-        response.headers["Cache-Control"] = "no-store, no-transform" if streaming else "no-store"
+        streaming = response.headers.get("content-type", "").startswith(
+            "text/event-stream"
+        )
+        response.headers["Cache-Control"] = (
+            "no-store, no-transform" if streaming else "no-store"
+        )
     elif path.startswith("/media/clips/") or path.startswith("/media/clip_uses/"):
         # These paths are content-addressed/immutable. Browser caching and range
         # reuse prevent a branch transition from downloading the same clip twice.
@@ -109,7 +113,11 @@ def health():
         return {
             "ok": True,
             "worker_online": bool(worker and time.time() - worker.data["at"] < 120),
-            "database": "PostgreSQL" if db.bind.dialect.name == "postgresql" else "SQLite 本地模式",
+            "database": (
+                "PostgreSQL"
+                if db.bind.dialect.name == "postgresql"
+                else "SQLite 本地模式"
+            ),
         }
 
 
@@ -170,15 +178,23 @@ def platform():
         works = [
             record_dict(row)
             for row in db.scalars(
-                select(Record).where(Record.kind == "author_project").order_by(Record.created.desc())
+                select(Record)
+                .where(Record.kind == "author_project")
+                .order_by(Record.created.desc())
             )
         ]
         published_count = db.scalar(
-            select(func.count()).select_from(Record).where(Record.kind == "reader_release")
+            select(func.count())
+            .select_from(Record)
+            .where(Record.kind == "reader_release")
         )
-        project_works = {work["director_id"]: work["id"] for work in works if work.get("director_id")}
+        project_works = {
+            work["director_id"]: work["id"] for work in works if work.get("director_id")
+        }
         recommendation_works = {
-            work["recommend_task"]: work["id"] for work in works if work.get("recommend_task")
+            work["recommend_task"]: work["id"]
+            for work in works
+            if work.get("recommend_task")
         }
         tasks = []
         for task in db.scalars(select(Task).order_by(Task.created.desc())):
@@ -187,7 +203,12 @@ def platform():
                 work_id = next(
                     (
                         project_works[task.payload[key]]
-                        for key in ("creative_id", "director_id", "preproduction_id", "project_id")
+                        for key in (
+                            "creative_id",
+                            "director_id",
+                            "preproduction_id",
+                            "project_id",
+                        )
                         if task.payload.get(key) in project_works
                     ),
                     None,

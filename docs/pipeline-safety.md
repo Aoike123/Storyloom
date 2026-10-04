@@ -4,21 +4,21 @@
 
 ## 由代码保证
 
-| 不变量 | 实现位置 |
-| --- | --- |
-| 模型只能使用已确认的素材 ID；未知、重复、缺场景、人物与服装不匹配都会失败 | `preproduction.validate_board`、`asset_workflow.validate_shot_identities` |
-| 镜号按整片时间轴连续，片段不能各自从 S01 重新开始；错号会被退回重做，不会被静默改写 | `segments.shot_ids_for`、`segments.merge_chunks`、`director.segment_board` |
-| 跨片段承接只能引用调用方给出的 `segment.referenceable_shot_ids`，其它片段范围内的编号一律报错 | `segments.earlier_shot_ids`、`director.check_board(external_ids=…)` |
-| 模型自己写的原文引文会被核对；原文中查不到即拒绝，属于其它 P 编号则改绑并记录为代码校正 | `director.bind_sources(..., content=…)` |
-| 每个镜头必须绑定 1–9 张已审核参考图；超限要求拆镜，不会丢弃多余参考图 | `preproduction.validate_board`、`production.reviewed_references` |
-| 角色 → 服装 → 环境对所有角色都跑完：每个角色至少一条服装记录，不着衣物的天然体表用空衣服模式（`mode=bare`），人类与任何带人类身体分区的角色（如兽首人身）都不能用它顶替服装 | `asset_sheets.AssetSheetPlan`、`visual_specs.CostumeSheet` |
-| 身份图的遮盖按解剖分区决定：人类躯干、臂手、腿足始终以中性基础短装覆盖，只有无人类分区的身体才展示自然体表；否则会要求裸露的人类身体并被供应商按违规内容拒绝（HTTP 451） | `asset_sheets.human_body_regions`、`asset_sheets.frame` |
-| 空衣服模式不生成服装图，也不会被绑进分镜的服装参考；分镜契约用 `bare_characters` 明确告知模型 | `creative.run_design`、`preproduction.storyboard_asset_contract` |
-| 参考图、身份、服装、场景的版本变化会使下游分镜、视频和门失效 | `preproduction.invalidate_downstream_references`、`consistency.stamp` |
-| 旧轮次（重做前的作品）不能作为当前制作的参考 | `asset_workflow.validate_asset_origin` |
-| 视频只能引用它提交时冻结的那一版参考图 | `production.validate_references` |
-| 调用前先检查本地设置文件中对应模型的 Key 是否已配置；未配置直接拒绝并记录，补齐 Key 后可重跑，且从未计费 | `providers.reserve_call`、`providers.payment_message`、`providers.note_refusal` |
-| 追加型历史（事件、分镜历史、重做历史、节点调用轨迹）有固定上限 | `db.bounded`、`skill_runtime.TRACE_LIMIT` |
+| 不变量                                                                                                                                                                      | 实现位置                                                                        |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| 模型只能使用已确认的素材 ID；未知、重复、缺场景、人物与服装不匹配都会失败                                                                                                   | `preproduction.validate_board`、`asset_workflow.validate_shot_identities`       |
+| 镜号按整片时间轴连续，片段不能各自从 S01 重新开始；错号会被退回重做，不会被静默改写                                                                                         | `segments.shot_ids_for`、`segments.merge_chunks`、`director.segment_board`      |
+| 跨片段承接只能引用调用方给出的 `segment.referenceable_shot_ids`，其它片段范围内的编号一律报错                                                                               | `segments.earlier_shot_ids`、`director.check_board(external_ids=…)`             |
+| 模型自己写的原文引文会被核对；原文中查不到即拒绝，属于其它 P 编号则改绑并记录为代码校正                                                                                     | `director.bind_sources(..., content=…)`                                         |
+| 每个镜头必须绑定 1–9 张已审核参考图；超限要求拆镜，不会丢弃多余参考图                                                                                                       | `preproduction.validate_board`、`production.reviewed_references`                |
+| 角色 → 服装 → 环境对所有角色都跑完：每个角色至少一条服装记录，不着衣物的天然体表用空衣服模式（`mode=bare`），人类与任何带人类身体分区的角色（如兽首人身）都不能用它顶替服装 | `asset_sheets.AssetSheetPlan`、`visual_specs.CostumeSheet`                      |
+| 身份图的遮盖按解剖分区决定：人类躯干、臂手、腿足始终以中性基础短装覆盖，只有无人类分区的身体才展示自然体表；否则会要求裸露的人类身体并被供应商按违规内容拒绝（HTTP 451）    | `asset_sheets.human_body_regions`、`asset_sheets.frame`                         |
+| 空衣服模式不生成服装图，也不会被绑进分镜的服装参考；分镜契约用 `bare_characters` 明确告知模型                                                                               | `creative.run_design`、`preproduction.storyboard_asset_contract`                |
+| 参考图、身份、服装、场景的版本变化会使下游分镜、视频和门失效                                                                                                                | `preproduction.invalidate_downstream_references`、`consistency.stamp`           |
+| 旧轮次（重做前的作品）不能作为当前制作的参考                                                                                                                                | `asset_workflow.validate_asset_origin`                                          |
+| 视频只能引用它提交时冻结的那一版参考图                                                                                                                                      | `production.validate_references`                                                |
+| 调用前先检查本地设置文件中对应模型的 Key 是否已配置；未配置直接拒绝并记录，补齐 Key 后可重跑，且从未计费                                                                    | `providers.reserve_call`、`providers.payment_message`、`providers.note_refusal` |
+| 追加型历史（事件、分镜历史、重做历史、节点调用轨迹）有固定上限                                                                                                              | `db.bounded`、`skill_runtime.TRACE_LIMIT`                                       |
 
 ## 由代码校正，但会在界面上标明
 

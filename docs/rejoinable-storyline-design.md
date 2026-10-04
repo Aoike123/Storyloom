@@ -10,23 +10,23 @@
 
 懒加载分为三个层次：
 
-| 层次 | 可行性与实际含义 |
-| --- | --- |
-| 不等整部作品下载 | 按播放位置下载已有片段；本项目可实现 |
-| 不等整条改写分支生成 | 第一镜通过必要检查后先播放，同时生成后续镜头；本项目应实现 |
+| 层次                         | 可行性与实际含义                                               |
+| ---------------------------- | -------------------------------------------------------------- |
+| 不等整部作品下载             | 按播放位置下载已有片段；本项目可实现                           |
+| 不等整条改写分支生成         | 第一镜通过必要检查后先播放，同时生成后续镜头；本项目应实现     |
 | 单个任务未完成就播放其生成帧 | 必须有供应商媒体流协议；不能由队列进度、SSE 或视频切片自行获得 |
 
 fal 普通 H3 系列按任务返回完成的视频；Director 返回 WebRTC 音视频流。fal 通用 SSE 仅对声明支持流式输出的端点生效，事件也可能只有进度与最终结果。[Director 产品说明](https://fal.ai/h3-max-director)、[fal Streaming](https://fal.ai/docs/documentation/model-apis/inference/streaming)。
 
 ## 当前接口能做什么
 
-| 服务 | 已核对的能力 | 对本项目的含义 |
-| --- | --- | --- |
-| MiniMax 官方 V2，MiniMax-H3-Max | 5–15 秒；480P/768P；首尾帧；不支持参考素材模式 | 能生成局部桥接片段，但不能直接把多张角色图、场景图与首尾帧混传 |
-| MiniMax 官方 V2，MiniMax-H3 | 支持参考素材模式；参考模式与首尾帧模式互斥 | 需要在素材一致性与精确边界约束之间选路 |
-| fal，minimax/h3-max-turbo/image-to-video | image_url、end_image_url；返回 video 文件 | 适合首帧起步、尾帧接回的短片段实验 |
-| fal，minimax/h3-max/reference-to-video | 角色/风格图片及视频、音频参考 | 可直接验证素材绑定；公开输入未列首尾帧字段，不能假设兼得 |
-| fal，minimax/h3-max/director | 实时媒体轨、初始帧、结束帧、按时间编排 script、替换待执行方向 | 可实验连续分支与指定画面收束；没有因此自动完成剧情状态校验或原片复用 |
+| 服务                                     | 已核对的能力                                                  | 对本项目的含义                                                       |
+| ---------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------- |
+| MiniMax 官方 V2，MiniMax-H3-Max          | 5–15 秒；480P/768P；首尾帧；不支持参考素材模式                | 能生成局部桥接片段，但不能直接把多张角色图、场景图与首尾帧混传       |
+| MiniMax 官方 V2，MiniMax-H3              | 支持参考素材模式；参考模式与首尾帧模式互斥                    | 需要在素材一致性与精确边界约束之间选路                               |
+| fal，minimax/h3-max-turbo/image-to-video | image_url、end_image_url；返回 video 文件                     | 适合首帧起步、尾帧接回的短片段实验                                   |
+| fal，minimax/h3-max/reference-to-video   | 角色/风格图片及视频、音频参考                                 | 可直接验证素材绑定；公开输入未列首尾帧字段，不能假设兼得             |
+| fal，minimax/h3-max/director             | 实时媒体轨、初始帧、结束帧、按时间编排 script、替换待执行方向 | 可实验连续分支与指定画面收束；没有因此自动完成剧情状态校验或原片复用 |
 
 依据：[MiniMax V2 创建](https://platform.minimax.io/docs/api-reference/video-generation-v2-create)、[MiniMax V2 查询](https://platform.minimax.io/docs/api-reference/video-generation-v2-query)、[fal Turbo 图生视频](https://fal.ai/models/minimax/h3-max-turbo/image-to-video/api)、[fal 参考视频](https://fal.ai/models/minimax/h3-max/reference-to-video/api)、[Director API](https://fal.ai/models/minimax/h3-max/director/api)。
 
@@ -67,15 +67,15 @@ flowchart LR
 
 建议新增或扩展：
 
-| 对象 | 核心内容 |
-| --- | --- |
-| StoryRelease | story_id、release_version、世界规则、原版分镜图、素材快照 |
-| ShotSpec | 稳定 shot_id、revision、剧情目的、前置条件、预期事件、后置条件、连续性信息、可切点 |
-| AssetBinding | 角色/服装/场景/道具/声音的 asset_id 与版本、引用角色、文件摘要 |
-| ClipArtifact | 独立 clip_id、来源 shot_id/revision、模型任务、视频地址、真实时长、剪辑区间、首尾帧、质检状态 |
-| RejoinAnchor | 下游 shot_id、叙事条件、视觉/声音接入条件、后续依赖、可接受差异、目标画面 |
-| BranchPatch | session_id、base_release、branch_version、替换起止位置、用户意图、候选回归点、新镜头计划 |
-| PlaybackManifest | 清单版本、当前片段与偏移、不可更改的已看前缀、已就绪后续、待生成占位和任务状态 |
+| 对象             | 核心内容                                                                                      |
+| ---------------- | --------------------------------------------------------------------------------------------- |
+| StoryRelease     | story_id、release_version、世界规则、原版分镜图、素材快照                                     |
+| ShotSpec         | 稳定 shot_id、revision、剧情目的、前置条件、预期事件、后置条件、连续性信息、可切点            |
+| AssetBinding     | 角色/服装/场景/道具/声音的 asset_id 与版本、引用角色、文件摘要                                |
+| ClipArtifact     | 独立 clip_id、来源 shot_id/revision、模型任务、视频地址、真实时长、剪辑区间、首尾帧、质检状态 |
+| RejoinAnchor     | 下游 shot_id、叙事条件、视觉/声音接入条件、后续依赖、可接受差异、目标画面                     |
+| BranchPatch      | session_id、base_release、branch_version、替换起止位置、用户意图、候选回归点、新镜头计划      |
+| PlaybackManifest | 清单版本、当前片段与偏移、不可更改的已看前缀、已就绪后续、待生成占位和任务状态                |
 
 镜头身份由业务 ID 与版本确定，不靠文件名或可变顺序索引。ID 保存在清单和媒体旁的元数据中，读者播放器可以显示“镜头 03 / 分支 B”；不必烧录到画面而影响复用。
 
@@ -153,17 +153,17 @@ fal 公布的 0.44 秒对应 5 秒 480p 文生视频的 GPU 去噪耗时，不�
 
 ## 与当前代码衔接
 
-| 当前证据 | 已有基础与下一步 |
-| --- | --- |
-| backend/production.py，publish | 已按 shot_id、clip_id、media、start/end 发布清单；继续保留独立片段，加回归条件与会话分支覆盖 |
-| backend/production.py，save_wish；web/app/ReaderExperience.tsx | 当前只保存愿望，尚不生成/播放真实分支；新增分支任务与动态清单 |
-| backend/consistency.py，image_context | 已有参考素材、资产版本和连续性状态；扩展为入口、出口和可检索回归约束 |
-| backend/director.py，Shot | 已有连续性、人物认知和生成/剪辑时长；补结构化事件、依赖条件和切点 |
-| backend/providers.py，chat_json | 当前服务于作者制作节点；未来若实现互动规划，应新建独立的小范围路径，不把整个导演制作流程放入实时请求 |
-| backend/providers.py，submit_video | 当前视频请求只传首帧；补尾帧与供应商专用适配，不能只换 URL 接 fal |
-| 新的互动领域模型 | 按每部作品、每个节点保存可检验条件与已看事件，不复用已删除的固定演示状态 |
-| backend/worker.py，video 等待分支 | 未完成后等待 10 秒才可再次查询；交互任务需独立优先级、适当并发、完成通知或符合供应商限制的短轮询 |
-| backend/worker.py，视频入库 | 目前完整下载、探测再入库，且待审核；需逐镜媒体就绪和质量门槛，不能仅删等待就称为实时 |
-| web/app/ReaderExperience.tsx，video key={index} | 当前逐镜重建 video 元素，未预加载下一镜；改为就绪事件驱动的预加载与切换 |
+| 当前证据                                                       | 已有基础与下一步                                                                                     |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| backend/production.py，publish                                 | 已按 shot_id、clip_id、media、start/end 发布清单；继续保留独立片段，加回归条件与会话分支覆盖         |
+| backend/production.py，save_wish；web/app/ReaderExperience.tsx | 当前只保存愿望，尚不生成/播放真实分支；新增分支任务与动态清单                                        |
+| backend/consistency.py，image_context                          | 已有参考素材、资产版本和连续性状态；扩展为入口、出口和可检索回归约束                                 |
+| backend/director.py，Shot                                      | 已有连续性、人物认知和生成/剪辑时长；补结构化事件、依赖条件和切点                                    |
+| backend/providers.py，chat_json                                | 当前服务于作者制作节点；未来若实现互动规划，应新建独立的小范围路径，不把整个导演制作流程放入实时请求 |
+| backend/providers.py，submit_video                             | 当前视频请求只传首帧；补尾帧与供应商专用适配，不能只换 URL 接 fal                                    |
+| 新的互动领域模型                                               | 按每部作品、每个节点保存可检验条件与已看事件，不复用已删除的固定演示状态                             |
+| backend/worker.py，video 等待分支                              | 未完成后等待 10 秒才可再次查询；交互任务需独立优先级、适当并发、完成通知或符合供应商限制的短轮询     |
+| backend/worker.py，视频入库                                    | 目前完整下载、探测再入库，且待审核；需逐镜媒体就绪和质量门槛，不能仅删等待就称为实时                 |
+| web/app/ReaderExperience.tsx，video key={index}                | 当前逐镜重建 video 元素，未预加载下一镜；改为就绪事件驱动的预加载与切换                              |
 
 先实现分镜状态与回归条件、逐镜完成通知、版本化动态清单，再接视频端点测速。原版仍经过作者制作和审片；读者在线分支需要明确的自动检查边界，不能把原有人工审片步骤计为零耗时，也不能将跳过它当成质量已验证。

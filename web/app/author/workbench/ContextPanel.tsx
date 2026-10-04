@@ -1,6 +1,6 @@
-'use client';
-import { X } from 'lucide-react';
-import { NODE_KIND_LABELS, type DisplayNode } from './display-model';
+"use client";
+import { X } from "lucide-react";
+import { NODE_KIND_LABELS, type DisplayNode } from "./display-model";
 
 interface Props {
   open: boolean;
@@ -17,20 +17,35 @@ export default function ContextPanel({ open, selectedNode, onClose }: Props) {
     <aside className="workbench-panel" aria-label="属性">
       <div className="workbench-panel-head">
         <span className="workbench-panel-title">属性</span>
-        <button type="button" className="button icon" aria-label="关闭属性面板" onClick={onClose}>
+        <button
+          type="button"
+          className="button icon"
+          aria-label="关闭属性面板"
+          onClick={onClose}
+        >
           <X size={16} />
         </button>
       </div>
 
       {!n ? (
-        <p className="workbench-panel-empty">未选择对象。点击画布中的节点，在此查看它的字段、来源与版本。</p>
+        <p className="workbench-panel-empty">
+          未选择对象。点击画布中的节点，在此查看它的字段、来源与版本。
+        </p>
       ) : (
         <div className="workbench-inspector">
           <div className="workbench-inspector-identity">
-            <span className="workbench-panel-kind">{NODE_KIND_LABELS[n.kind]}</span>
+            <span className="workbench-panel-kind">
+              {NODE_KIND_LABELS[n.kind]}
+            </span>
             <strong className="workbench-panel-node-title">{n.title}</strong>
-            {n.group ? <small className="workbench-panel-group">归属：{n.group}</small> : null}
-            {n.isExample ? <small className="workbench-panel-example">示例数据 · 未写库</small> : null}
+            {n.group ? (
+              <small className="workbench-panel-group">归属：{n.group}</small>
+            ) : null}
+            {n.isExample ? (
+              <small className="workbench-panel-example">
+                示例数据 · 未写库
+              </small>
+            ) : null}
           </div>
 
           {n.fields && n.fields.length > 0 ? (
@@ -39,8 +54,18 @@ export default function ContextPanel({ open, selectedNode, onClose }: Props) {
               <ul className="workbench-inspector-fields">
                 {n.fields.map((f) => (
                   <li key={f.label} className="workbench-inspector-field">
-                    <span className="workbench-inspector-field-label">{f.label}</span>
-                    {f.value ? <span className="workbench-inspector-field-value">{f.value}</span> : <span className="workbench-inspector-field-empty">待填写</span>}
+                    <span className="workbench-inspector-field-label">
+                      {f.label}
+                    </span>
+                    {f.value ? (
+                      <span className="workbench-inspector-field-value">
+                        {f.value}
+                      </span>
+                    ) : (
+                      <span className="workbench-inspector-field-empty">
+                        待填写
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -53,7 +78,8 @@ export default function ContextPanel({ open, selectedNode, onClose }: Props) {
               <p className="workbench-inspector-src">
                 来自片段「{n.sourceRef.fragmentName}」
                 <small>
-                  正文 {n.sourceRef.sourceRevision} · 第 {n.sourceRef.rangeStart}–{n.sourceRef.rangeEnd} 字
+                  正文 {n.sourceRef.sourceRevision} · 第{" "}
+                  {n.sourceRef.rangeStart}–{n.sourceRef.rangeEnd} 字
                 </small>
               </p>
             ) : (

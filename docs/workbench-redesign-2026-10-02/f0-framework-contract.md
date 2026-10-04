@@ -24,7 +24,7 @@
 工作台以**项目（project）为核心单位**：入口绑定一个项目，故事／制作／素材／成片是该项目的四个视图；**故事是项目的来源素材**，不是组织核心或归属根。
 
 ```ts
-type Workspace = 'story' | 'production' | 'assets' | 'release';
+type Workspace = "story" | "production" | "assets" | "release";
 // 显示名：故事 / 制作 / 素材 / 成片
 ```
 
@@ -35,19 +35,20 @@ type Workspace = 'story' | 'production' | 'assets' | 'release';
 
 ## 3. 组件边界
 
-| 模块 | 文件 | 单一职责 | 关键 props / 暴露 |
-| --- | --- | --- | --- |
-| 入口 | `page.tsx` | 读取 `?work`，装配 Shell，持有 `WorkbenchViewState` | `<WorkbenchShell view data />` |
-| 外壳 | `WorkbenchShell.tsx` | 顶栏 + 四标签 + 主内容区 + 右侧区域布局与主题根 | 接收 view 与 adapter 数据；装配当前 Workspace 组件与 ContextPanel |
-| 标签 | `WorkspaceTabs.tsx` | 用户主动切换工作区 | `active`, `onSelect(w: Workspace)`；不承载阶段语义 |
-| 画布视野 | `CanvasViewport.tsx` | **封装 React Flow** 的平移/缩放/适配/自由摆卡/按场排列 | 接收 `viewport` 与节点渲染器；`onViewportChange`（F2 实现，F1 先占位） |
-| 节点 | `SceneFrame.tsx`、`PreviewNode.tsx` | React Flow **自定义节点**：场景分组框 / 展示节点，纯展示不写业务 | 渲染 `DisplayNode`；选中态回调 |
-| 右侧面板 | `ContextPanel.tsx` | 开合 + 选中摘要 + 内容插槽（属性/引用/任务/定位的**占位**） | `open`, `selectedId`, `onClose`；插槽接口 |
-| 视图状态 | `workspace-state.ts` | `WorkbenchViewState` 最小契约与 reducer | 见 §5 |
-| 只读适配 | `project-adapter.ts` | 现有 `work` 对象 → 展示模型的只读映射 + 空态 | 见 §4 |
-| 样式 | `workbench.css` | 工作台专属布局，复用全局 token/控件/动效 | 规则限定在工作台根节点 `.workbench` |
+| 模块     | 文件                                | 单一职责                                                         | 关键 props / 暴露                                                      |
+| -------- | ----------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| 入口     | `page.tsx`                          | 读取 `?work`，装配 Shell，持有 `WorkbenchViewState`              | `<WorkbenchShell view data />`                                         |
+| 外壳     | `WorkbenchShell.tsx`                | 顶栏 + 四标签 + 主内容区 + 右侧区域布局与主题根                  | 接收 view 与 adapter 数据；装配当前 Workspace 组件与 ContextPanel      |
+| 标签     | `WorkspaceTabs.tsx`                 | 用户主动切换工作区                                               | `active`, `onSelect(w: Workspace)`；不承载阶段语义                     |
+| 画布视野 | `CanvasViewport.tsx`                | **封装 React Flow** 的平移/缩放/适配/自由摆卡/按场排列           | 接收 `viewport` 与节点渲染器；`onViewportChange`（F2 实现，F1 先占位） |
+| 节点     | `SceneFrame.tsx`、`PreviewNode.tsx` | React Flow **自定义节点**：场景分组框 / 展示节点，纯展示不写业务 | 渲染 `DisplayNode`；选中态回调                                         |
+| 右侧面板 | `ContextPanel.tsx`                  | 开合 + 选中摘要 + 内容插槽（属性/引用/任务/定位的**占位**）      | `open`, `selectedId`, `onClose`；插槽接口                              |
+| 视图状态 | `workspace-state.ts`                | `WorkbenchViewState` 最小契约与 reducer                          | 见 §5                                                                  |
+| 只读适配 | `project-adapter.ts`                | 现有 `work` 对象 → 展示模型的只读映射 + 空态                     | 见 §4                                                                  |
+| 样式     | `workbench.css`                     | 工作台专属布局，复用全局 token/控件/动效                         | 规则限定在工作台根节点 `.workbench`                                    |
 
 规则：
+
 - 各工作区是**独立组件**，避免一个巨型条件渲染页面；`WorkbenchShell` 只按 `activeWorkspace` 装配对应工作区组件与右侧面板。
 - 组件之间只通过 `WorkbenchViewState` 与 adapter 展示数据通信；**不得**在组件内直接读 `work` 业务字段做流程判断。
 - 右侧面板本期**只放只读摘要/占位**，不移植样式稿里的任何编辑表单、生成表单或版本浏览器。
@@ -58,13 +59,13 @@ type Workspace = 'story' | 'production' | 'assets' | 'release';
 框架只定义**轻量展示字段**，不复刻 [设计规范 §11](design-spec.md#11-拟新增的数据契约) 的完整业务契约（那是数据层，留待后续）：
 
 ```ts
-type NodeKind = 'source' | 'script' | 'scene' | 'shot' | 'asset' | 'clip';
+type NodeKind = "source" | "script" | "scene" | "shot" | "asset" | "clip";
 interface DisplayNode {
-  id: string;           // 稳定对象 id（取自 work 数据，或示例标记）
+  id: string; // 稳定对象 id（取自 work 数据，或示例标记）
   kind: NodeKind;
-  title: string;        // 展示标题；缺失显示空态，不伪造
-  group?: string;       // 场景/分组 id（用于按场整齐排列）
-  isExample?: boolean;  // 隔离示例数据标记，见下
+  title: string; // 展示标题；缺失显示空态，不伪造
+  group?: string; // 场景/分组 id（用于按场整齐排列）
+  isExample?: boolean; // 隔离示例数据标记，见下
 }
 interface WorkspaceContent {
   workspace: Workspace;
@@ -74,6 +75,7 @@ interface WorkspaceContent {
 ```
 
 适配规则（`mapProject(work): Record<Workspace, WorkspaceContent>`，只读纯函数、不写库）：
+
 - 数据源为现有 `GET /api/author/projects/{id}` 返回的 `work`（结构见 §7）。
 - **真实数据映射**：`source`←`work.source`/`title`；`shot`←`work.creative.production.shots[].shot`；`asset`←`work.creative.items[]`（`role: character|costume|scene`）及其 `asset` 记录；`clip`←`shots[].clip`（`media`/`duration`）。
 - **空态优先**：现有数据没有的"剧本/场次/篇章"结构 → `script`/`scene` 走明确空态（"该故事尚未编排场次/剧本"），**不创建临时业务记录**补齐。
@@ -86,11 +88,15 @@ interface WorkspaceContent {
 框架（前端）拥有的状态，与业务状态严格分离：
 
 ```ts
-interface Viewport { x: number; y: number; scale: number; }
+interface Viewport {
+  x: number;
+  y: number;
+  scale: number;
+}
 interface WorkspaceView {
-  viewport: Viewport;         // 平移/缩放（F2 与 React Flow 视野双向同步）
-  selectedId: string | null;  // 当前查看对象，至多一个
-  panelOpen: boolean;         // 右侧面板开合
+  viewport: Viewport; // 平移/缩放（F2 与 React Flow 视野双向同步）
+  selectedId: string | null; // 当前查看对象，至多一个
+  panelOpen: boolean; // 右侧面板开合
   layout?: Record<string, { x: number; y: number }>; // 自由摆卡坐标（视图偏好）
 }
 interface WorkbenchViewState {
@@ -120,57 +126,130 @@ interface WorkbenchViewState {
 
 ```ts
 type Work = {
-  id: string;                 // 'work_story_<sha256[:32]>'
+  id: string; // 'work_story_<sha256[:32]>'
   version: number;
   title: string;
-  stage: AuthorStage;         // 与 display_stage 一致
+  stage: AuthorStage; // 与 display_stage 一致
   display_stage: AuthorStage;
-  source_id?: string; source_work_id?: string; run_id?: string;
-  art?: string; tone?: string;
+  source_id?: string;
+  source_work_id?: string;
+  run_id?: string;
+  art?: string;
+  tone?: string;
   worker_online: boolean;
-  source?: {                  // 来源微小说
-    title: string; work_id: string; author_name: string;
-    labels: string[]; content: string;
-    source?: string; source_url?: string; fetched_at?: number; completeness?: string;
+  source?: {
+    // 来源微小说
+    title: string;
+    work_id: string;
+    author_name: string;
+    labels: string[];
+    content: string;
+    source?: string;
+    source_url?: string;
+    fetched_at?: number;
+    completeness?: string;
   };
-  task?: Task; recommend_task_status?: Task; jobs: Task[];
-  production_steps: Array<{ id: 'storyboarding'|'rendering'; name: string; hint: string; task?: Task }>;
-  outputs: Array<{ id: string; kind: 'image'|'video'; title: string; media: string; production_phase?: string }>;
-  episodes: Episode[];        // 分段/集 进度
+  task?: Task;
+  recommend_task_status?: Task;
+  jobs: Task[];
+  production_steps: Array<{
+    id: "storyboarding" | "rendering";
+    name: string;
+    hint: string;
+    task?: Task;
+  }>;
+  outputs: Array<{
+    id: string;
+    kind: "image" | "video";
+    title: string;
+    media: string;
+    production_phase?: string;
+  }>;
+  episodes: Episode[]; // 分段/集 进度
   storyboard_review?: { approved?: boolean; issues?: string[] };
   creative?: {
-    stage?: AuthorStage; art?: string; tone?: string;
-    items?: Array<{                       // 资产（角色/服装/场景）
-      role: 'character'|'costume'|'scene'; name: string;
-      task_id?: string; design?: string;
-      character_id?: string; character_ref?: string; costume_id?: string;
-      task?: Task; asset?: Asset;
+    stage?: AuthorStage;
+    art?: string;
+    tone?: string;
+    items?: Array<{
+      // 资产（角色/服装/场景）
+      role: "character" | "costume" | "scene";
+      name: string;
+      task_id?: string;
+      design?: string;
+      character_id?: string;
+      character_ref?: string;
+      costume_id?: string;
+      task?: Task;
+      asset?: Asset;
     }>;
     production?: {
-      project_id: string; version: number; approved?: boolean;
+      project_id: string;
+      version: number;
+      approved?: boolean;
       shots?: Array<{
-        shot: Shot;              // { id, dramatic_action, generation_seconds, edit_seconds, assets, continuity_in, continuity_out, … }
+        shot: Shot; // { id, dramatic_action, generation_seconds, edit_seconds, assets, continuity_in, continuity_out, … }
         video_task?: Task;
-        clip?: Clip;             // { id, version, media, duration }
+        clip?: Clip; // { id, version, media, duration }
         storage?: unknown;
       }>;
     };
   };
 };
-type AuthorStage = 'style'|'segments_review'|'preparing'|'assets_review'|'storyboarding'|'rendering'|'episode_review'|'film_review'|'published';
+type AuthorStage =
+  | "style"
+  | "segments_review"
+  | "preparing"
+  | "assets_review"
+  | "storyboarding"
+  | "rendering"
+  | "episode_review"
+  | "film_review"
+  | "published";
 type Task = {
-  id: string; kind: string; status: TaskStatus;
-  production_phase?: string|null; production_node?: string|null;
-  progress?: number; message?: string; label?: string; created?: number;
-  session_id?: string; revision?: number; mode?: string;
-  generation?: unknown; provider_error?: unknown; skill_calls?: unknown[];
-  activity?: unknown; preview?: string|null; revision_of?: string|null; failure_code?: string|null;
+  id: string;
+  kind: string;
+  status: TaskStatus;
+  production_phase?: string | null;
+  production_node?: string | null;
+  progress?: number;
+  message?: string;
+  label?: string;
+  created?: number;
+  session_id?: string;
+  revision?: number;
+  mode?: string;
+  generation?: unknown;
+  provider_error?: unknown;
+  skill_calls?: unknown[];
+  activity?: unknown;
+  preview?: string | null;
+  revision_of?: string | null;
+  failure_code?: string | null;
 };
-type TaskStatus = 'queued'|'running'|'waiting'|'completed'|'failed'|'needs_review'|'cancelled'|'superseded';
+type TaskStatus =
+  | "queued"
+  | "running"
+  | "waiting"
+  | "completed"
+  | "failed"
+  | "needs_review"
+  | "cancelled"
+  | "superseded";
 //  前三个=BUSY(activeStatuses)；failed/needs_review=PROBLEM(problemStatuses)；其余=终态
-type Asset = { id: string; version: number; name: string; type: string; asset_kind?: string; description?: string; status?: string; media: string; layout?: unknown };
+type Asset = {
+  id: string;
+  version: number;
+  name: string;
+  type: string;
+  asset_kind?: string;
+  description?: string;
+  status?: string;
+  media: string;
+  layout?: unknown;
+};
 type Clip = { id: string; version: number; media: string; duration?: number };
-type Episode = { /* episode_progress：分段/集 的发布与进度字段 */ };
+type Episode = {/* episode_progress：分段/集 的发布与进度字段 */};
 ```
 
 > 字段以 `backend/authors.py` 实际返回为准（F0 一手核对 + 只读勘察）。**任何缺失字段一律在 §4 走空态**，不伪造。`Task.status` 取值沿用现有 `ProgressFeedback` 的 `activeStatuses`（`queued/running/waiting`）与 `problemStatuses`（`failed/needs_review`）。

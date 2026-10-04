@@ -38,26 +38,26 @@ flowchart TD
 
 ## 节点及专业来源
 
-| 节点 | 专业能力来源 | 输出 |
-| --- | --- | --- |
-| style_options | NolanX director-visual-language | 电影视觉方向、剧情气质、适配原因、全片镜头/光影/调色规则 |
-| story_treatment | structure-screenplay + shape-story-blueprint | 有原文依据的剧情阐述 |
-| style_spec | Replicate prompt-images + Picsart style routing | 区分写实摄影、绘画与三维的基础成像参数 |
-| identity_spec | design-production-assets + Picsart gen-ai-persona-creation | 带 frozen appearance block 式头身分区的人类及神话角色唯一身份 |
-| costume_spec | design-production-assets + prompt-images | 独立服装及身份绑定 |
-| scene_spec | design-production-assets + prompt-images | 静态物理场景 |
-| character_prompts | Picsart gen-ai-persona-creation | 保留人身/兽身/妖身分区与媒介路由的角色身份图 Prompt |
-| asset_prompts | prompt-images + compile-generation-prompts | 服装与场景逐项生图 Prompt |
-| identity_revision / costume_revision / scene_revision | design-production-assets + prompt-images | 按意见修订完整静态规格，再按角色或非角色类型交给对应提示词节点重新生图 |
-| shot_revision / video_revision | compile-generation-prompts | 把意见整合进完整镜头图或视频 Prompt，创建新的生成任务 |
-| fitting | prompt-images 的参考图一致性方法 | 仅供历史流程兼容；新流程不调用 AI 定装或 scene_trial |
-| story_segments | shape-story-blueprint + structure-screenplay | 按原文编号连续切分的片段、剧情功能、镜头上限与结尾状态 |
-| storyboard | plan-camera-shots | 单个片段的机位、动作、连续性、时长和资产绑定 |
-| shot_prompts | compile-generation-prompts + prompt-images | 单镜构图说明、视频运动 Prompt |
-| storyboard_review | plan-camera-shots 的预检规则 | 文字预审结论和具体问题 |
-| reader_branch_plan | shape-story-blueprint + plan-camera-shots | 锁定视觉资产内的一至三镜因果分支与可用回归点 |
-| video_render | compile-generation-prompts | 图片参考视频请求编排模板 |
-| asset_review / film_review | 资产检查与 review-and-assemble | 作者查看真实素材后执行的验收清单 |
+| 节点                                                  | 专业能力来源                                               | 输出                                                                   |
+| ----------------------------------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------- |
+| style_options                                         | NolanX director-visual-language                            | 电影视觉方向、剧情气质、适配原因、全片镜头/光影/调色规则               |
+| story_treatment                                       | structure-screenplay + shape-story-blueprint               | 有原文依据的剧情阐述                                                   |
+| style_spec                                            | Replicate prompt-images + Picsart style routing            | 区分写实摄影、绘画与三维的基础成像参数                                 |
+| identity_spec                                         | design-production-assets + Picsart gen-ai-persona-creation | 带 frozen appearance block 式头身分区的人类及神话角色唯一身份          |
+| costume_spec                                          | design-production-assets + prompt-images                   | 独立服装及身份绑定                                                     |
+| scene_spec                                            | design-production-assets + prompt-images                   | 静态物理场景                                                           |
+| character_prompts                                     | Picsart gen-ai-persona-creation                            | 保留人身/兽身/妖身分区与媒介路由的角色身份图 Prompt                    |
+| asset_prompts                                         | prompt-images + compile-generation-prompts                 | 服装与场景逐项生图 Prompt                                              |
+| identity_revision / costume_revision / scene_revision | design-production-assets + prompt-images                   | 按意见修订完整静态规格，再按角色或非角色类型交给对应提示词节点重新生图 |
+| shot_revision / video_revision                        | compile-generation-prompts                                 | 把意见整合进完整镜头图或视频 Prompt，创建新的生成任务                  |
+| fitting                                               | prompt-images 的参考图一致性方法                           | 仅供历史流程兼容；新流程不调用 AI 定装或 scene_trial                   |
+| story_segments                                        | shape-story-blueprint + structure-screenplay               | 按原文编号连续切分的片段、剧情功能、镜头上限与结尾状态                 |
+| storyboard                                            | plan-camera-shots                                          | 单个片段的机位、动作、连续性、时长和资产绑定                           |
+| shot_prompts                                          | compile-generation-prompts + prompt-images                 | 单镜构图说明、视频运动 Prompt                                          |
+| storyboard_review                                     | plan-camera-shots 的预检规则                               | 文字预审结论和具体问题                                                 |
+| reader_branch_plan                                    | shape-story-blueprint + plan-camera-shots                  | 锁定视觉资产内的一至三镜因果分支与可用回归点                           |
+| video_render                                          | compile-generation-prompts                                 | 图片参考视频请求编排模板                                               |
+| asset_review / film_review                            | 资产检查与 review-and-assemble                             | 作者查看真实素材后执行的验收清单                                       |
 
 人物、服装和场景修订另有各自的绑定，不共用一个全能角色。
 

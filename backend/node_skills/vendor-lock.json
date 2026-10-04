@@ -50,9 +50,7 @@
       "repo": "nolanx-ai/nolanx.ai",
       "commit": "595d86364377f654e24ddf2c9e875496d85e8246",
       "license": "MIT",
-      "skills": [
-        "director-visual-language"
-      ],
+      "skills": ["director-visual-language"],
       "files": {
         "LICENSE": "207872ca8a98ec049530932e768c30a34e7b225d709c92d22329c82b8c96778a",
         "skills/director-visual-language/SKILL.md": "0177c2997d852c8fe89f2e9859ae0a1966156fe6cb7673347bc6c4a480473d95"
@@ -62,9 +60,7 @@
       "repo": "PicsArt/gen-ai-skills",
       "commit": "37b71319c93f47ae8493bedb9167e12920bc915e",
       "license": "MIT",
-      "skills": [
-        "gen-ai-persona-creation"
-      ],
+      "skills": ["gen-ai-persona-creation"],
       "files": {
         "LICENSE": "86eaafb76f5bc3b920c0e3761cd1e841b1880422fc11b3591bae449437d72cb4",
         "skills/gen-ai-persona-creation/SKILL.md": "c06899eefebb894138baae46ef4f22b83a761550bbd3b2f53452e93f535a39bf"
@@ -74,9 +70,7 @@
       "repo": "replicate/skills",
       "commit": "2f36e415965ae63baa1c9f6635888092bcd771d3",
       "license": "Apache-2.0",
-      "skills": [
-        "prompt-images"
-      ],
+      "skills": ["prompt-images"],
       "files": {
         "LICENSE": "f7fe9e559ee33341e61df0bc9c31b7bcf967a4350feeb9d8cbb48bf3ea5f8a6a",
         "skills/prompt-images/SKILL.md": "fd20fc7552f7ca550776bd320de028ae0fd222a038cb14ebb2943b231099b3ae"

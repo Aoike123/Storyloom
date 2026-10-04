@@ -1,5 +1,9 @@
-'use client';
-import { WORKSPACES, WORKSPACE_LABELS, type Workspace } from './workspace-state';
+"use client";
+import {
+  WORKSPACES,
+  WORKSPACE_LABELS,
+  type Workspace,
+} from "./workspace-state";
 
 interface Props {
   active: Workspace;
@@ -14,7 +18,7 @@ export default function WorkspaceTabs({ active, onSelect }: Props) {
         <button
           key={w}
           type="button"
-          className={'button tab-control' + (w === active ? ' selected' : '')}
+          className={"button tab-control" + (w === active ? " selected" : "")}
           aria-pressed={w === active}
           onClick={() => onSelect(w)}
         >

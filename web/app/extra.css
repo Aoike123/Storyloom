@@ -1,5 +1,33 @@
-.reader-entry-links{display:flex;align-items:center;flex:0 0 auto}
-.reader-entry-links>a{gap:8px}
-.reader-entry-links>a svg{color:currentColor}
-@media(max-width:600px){.reader-nav{gap:10px;flex-wrap:nowrap;padding-inline:18px}.reader-entry-links>a{padding-inline:12px}}
-@media(max-width:360px){.reader-nav{padding-inline:14px}.reader-brand{font-size:23px!important;letter-spacing:3px}.reader-entry-links>a{padding-inline:10px}}
+.reader-entry-links {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.reader-entry-links > a {
+  gap: 8px;
+}
+.reader-entry-links > a svg {
+  color: currentColor;
+}
+@media (max-width: 600px) {
+  .reader-nav {
+    gap: 10px;
+    flex-wrap: nowrap;
+    padding-inline: 18px;
+  }
+  .reader-entry-links > a {
+    padding-inline: 12px;
+  }
+}
+@media (max-width: 360px) {
+  .reader-nav {
+    padding-inline: 14px;
+  }
+  .reader-brand {
+    font-size: 23px !important;
+    letter-spacing: 3px;
+  }
+  .reader-entry-links > a {
+    padding-inline: 10px;
+  }
+}

@@ -1,13 +1,21 @@
-'use client';
-import { useEffect, useState } from 'react';
-import { Play, Pause, Film, Plus, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
-import { type DisplayNode } from './display-model';
+"use client";
+import { useEffect, useState } from "react";
+import {
+  Play,
+  Pause,
+  Film,
+  Plus,
+  Trash2,
+  ArrowUp,
+  ArrowDown,
+} from "lucide-react";
+import { type DisplayNode } from "./display-model";
 
-type TrackId = 'video' | 'audio' | 'text';
+type TrackId = "video" | "audio" | "text";
 const TRACKS: { id: TrackId; label: string }[] = [
-  { id: 'video', label: '视频' },
-  { id: 'audio', label: '音频' },
-  { id: 'text', label: '字幕' },
+  { id: "video", label: "视频" },
+  { id: "audio", label: "音频" },
+  { id: "text", label: "字幕" },
 ];
 
 interface PlacedClip {
@@ -23,7 +31,8 @@ interface Props {
 }
 
 const TOTAL = 96; // 秒（示例时长；真实时长来自成片元数据，D07 待定）
-const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const fmt = (s: number) =>
+  `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 // 成片工作区：全尺寸剪辑组件（独立实例，非画布）。
 // 16:9 监视器 + 播放/seek；多轨时间轴（视频/音频/字幕）+ 播放头；来源资源区插入/重排/删除。
@@ -31,12 +40,20 @@ const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${Str
 export default function FilmEditor({ clips, resources, isExample }: Props) {
   const seeded: PlacedClip[] =
     clips.length > 0
-      ? clips.map((c) => ({ id: c.id, name: c.title, isExample: c.isExample ?? false }))
+      ? clips.map((c) => ({
+          id: c.id,
+          name: c.title,
+          isExample: c.isExample ?? false,
+        }))
       : [
-          { id: 'ex-clip-1', name: '示例镜头 · 开场', isExample: true },
-          { id: 'ex-clip-2', name: '示例镜头 · 对白', isExample: true },
+          { id: "ex-clip-1", name: "示例镜头 · 开场", isExample: true },
+          { id: "ex-clip-2", name: "示例镜头 · 对白", isExample: true },
         ];
-  const [tracks, setTracks] = useState<Record<TrackId, PlacedClip[]>>({ video: seeded, audio: [], text: [] });
+  const [tracks, setTracks] = useState<Record<TrackId, PlacedClip[]>>({
+    video: seeded,
+    audio: [],
+    text: [],
+  });
   const [playhead, setPlayhead] = useState(0); // 0..1
   const [playing, setPlaying] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -44,12 +61,19 @@ export default function FilmEditor({ clips, resources, isExample }: Props) {
   // 播放：推进播放头（前端模拟；无真实媒体内核）
   useEffect(() => {
     if (!playing) return;
-    const timer = setInterval(() => setPlayhead((p) => (p + 0.5 / TOTAL >= 1 ? 0 : p + 0.5 / TOTAL)), 500);
+    const timer = setInterval(
+      () => setPlayhead((p) => (p + 0.5 / TOTAL >= 1 ? 0 : p + 0.5 / TOTAL)),
+      500,
+    );
     return () => clearInterval(timer);
   }, [playing]);
 
   function insert(r: { id: string; name: string }) {
-    const clip: PlacedClip = { id: `rc-${r.id}-${Date.now()}`, name: r.name, isExample: true };
+    const clip: PlacedClip = {
+      id: `rc-${r.id}-${Date.now()}`,
+      name: r.name,
+      isExample: true,
+    };
     setTracks((t) => ({ ...t, video: [...t.video, clip] }));
     setSelectedId(clip.id);
   }
@@ -84,22 +108,32 @@ export default function FilmEditor({ clips, resources, isExample }: Props) {
     setSelectedId(null);
   }
 
-  const currentClip = tracks.video.find((c) => c.id === selectedId) ?? tracks.video[0] ?? null;
+  const currentClip =
+    tracks.video.find((c) => c.id === selectedId) ?? tracks.video[0] ?? null;
 
   return (
     <div className="workbench-film">
       <div className="workbench-film-bar">
         <strong>成片剪辑</strong>
-        {isExample ? <small className="workbench-film-note">示例剪辑 · 未写库（D03/D07 待定）</small> : null}
+        {isExample ? (
+          <small className="workbench-film-note">
+            示例剪辑 · 未写库（D03/D07 待定）
+          </small>
+        ) : null}
       </div>
 
       <div className="workbench-film-monitor">
         <div className="workbench-film-screen">
           <Film size={34} />
-          <span>{currentClip ? currentClip.name : '预览画面'}</span>
+          <span>{currentClip ? currentClip.name : "预览画面"}</span>
         </div>
         <div className="workbench-film-transport">
-          <button type="button" className="workbench-film-play" onClick={() => setPlaying((p) => !p)} aria-label={playing ? '暂停' : '播放'}>
+          <button
+            type="button"
+            className="workbench-film-play"
+            onClick={() => setPlaying((p) => !p)}
+            aria-label={playing ? "暂停" : "播放"}
+          >
             {playing ? <Pause size={16} /> : <Play size={16} />}
           </button>
           <span className="workbench-film-time">
@@ -127,7 +161,12 @@ export default function FilmEditor({ clips, resources, isExample }: Props) {
               {resources.map((r) => (
                 <li key={r.id}>
                   <span className="workbench-film-res-name">{r.name}</span>
-                  <button type="button" className="workbench-film-res-add" onClick={() => insert(r)} aria-label={`插入 ${r.name}`}>
+                  <button
+                    type="button"
+                    className="workbench-film-res-add"
+                    onClick={() => insert(r)}
+                    aria-label={`插入 ${r.name}`}
+                  >
                     <Plus size={14} />
                     插入
                   </button>
@@ -138,7 +177,11 @@ export default function FilmEditor({ clips, resources, isExample }: Props) {
         </div>
 
         <div className="workbench-film-timeline">
-          <div className="workbench-film-playhead" style={{ left: `${playhead * 100}%` }} aria-hidden="true" />
+          <div
+            className="workbench-film-playhead"
+            style={{ left: `${playhead * 100}%` }}
+            aria-hidden="true"
+          />
           {TRACKS.map((t) => (
             <div key={t.id} className="workbench-film-track">
               <span className="workbench-film-track-label">{t.label}</span>
@@ -148,23 +191,26 @@ export default function FilmEditor({ clips, resources, isExample }: Props) {
                     key={c.id}
                     type="button"
                     className={
-                      'workbench-film-clip' +
-                      (selectedId === c.id ? ' is-selected' : '') +
-                      (c.isExample ? ' is-example' : '')
+                      "workbench-film-clip" +
+                      (selectedId === c.id ? " is-selected" : "") +
+                      (c.isExample ? " is-example" : "")
                     }
                     onClick={() => setSelectedId(c.id)}
                   >
                     {c.name}
                   </button>
                 ))}
-                {tracks[t.id].length === 0 ? <span className="workbench-film-track-empty">（空）</span> : null}
+                {tracks[t.id].length === 0 ? (
+                  <span className="workbench-film-track-empty">（空）</span>
+                ) : null}
               </div>
             </div>
           ))}
           {selected ? (
             <div className="workbench-film-clip-tools">
               <span>
-                已选「{selected.clip.name}」 · {TRACKS.find((t) => t.id === selected.track)?.label}轨
+                已选「{selected.clip.name}」 ·{" "}
+                {TRACKS.find((t) => t.id === selected.track)?.label}轨
               </span>
               <button type="button" onClick={() => move(-1)} aria-label="上移">
                 <ArrowUp size={14} />
@@ -172,7 +218,12 @@ export default function FilmEditor({ clips, resources, isExample }: Props) {
               <button type="button" onClick={() => move(1)} aria-label="下移">
                 <ArrowDown size={14} />
               </button>
-              <button type="button" className="is-danger" onClick={remove} aria-label="删除">
+              <button
+                type="button"
+                className="is-danger"
+                onClick={remove}
+                aria-label="删除"
+              >
                 <Trash2 size={14} />
               </button>
             </div>

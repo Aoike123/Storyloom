@@ -57,14 +57,14 @@
               "capabilities": {
                 "type": "object",
                 "properties": {
-                  "text_to_image": {"type": "boolean"},
-                  "text_to_video": {"type": "boolean"},
-                  "image_to_video": {"type": "boolean"},
-                  "first_frame": {"type": "boolean"},
-                  "last_frame": {"type": "boolean"},
-                  "multi_reference": {"type": "boolean"},
-                  "character_reference": {"type": "boolean"},
-                  "audio_generation": {"type": "boolean"}
+                  "text_to_image": { "type": "boolean" },
+                  "text_to_video": { "type": "boolean" },
+                  "image_to_video": { "type": "boolean" },
+                  "first_frame": { "type": "boolean" },
+                  "last_frame": { "type": "boolean" },
+                  "multi_reference": { "type": "boolean" },
+                  "character_reference": { "type": "boolean" },
+                  "audio_generation": { "type": "boolean" }
                 },
                 "additionalProperties": false
               },
@@ -77,12 +77,12 @@
                   },
                   "supported_durations": {
                     "type": "array",
-                    "items": {"type": "number", "exclusiveMinimum": 0},
+                    "items": { "type": "number", "exclusiveMinimum": 0 },
                     "uniqueItems": true
                   },
                   "supported_aspect_ratios": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": { "type": "string" },
                     "uniqueItems": true
                   }
                 },

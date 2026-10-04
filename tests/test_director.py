@@ -1,162 +1,450 @@
 import copy
 import pytest
-from backend import director as d,worker
-from backend.db import Session,Record,Task
+from backend import director as d, worker
+from backend.db import Session, Record, Task
 
-TEXT='女主看不清鬼怪。她伸手打招呼。鬼怪愣住了。女主继续向前走。'
+TEXT = "女主看不清鬼怪。她伸手打招呼。鬼怪愣住了。女主继续向前走。"
+
 
 def board():
     """One episode's board. Shot ids carry the episode prefix, and each episode restarts at S01."""
-    shots=[]
-    for i,quote in enumerate(['女主看不清鬼怪','她伸手打招呼','鬼怪愣住了','女主继续向前走']):
-        s={k:'明确的镜头设计说明' for k in ['scene','dramatic_action','camera','composition','blocking','continuity_in','continuity_out','viewer_knows','character_knows','withhold','sound','transition','first_frame','motion_prompt','generation_risk']}
-        s.update(id=f'G01-S{i+1:02}',purpose=['hook','setup','reaction','payoff'][i],source_quote=quote,size='MS',setup_ids=['G01-S02'] if i==3 else [],edit_seconds=3,generation_seconds=5,dialogue='',assets=['女主','站台'])
+    shots = []
+    for i, quote in enumerate(
+        ["女主看不清鬼怪", "她伸手打招呼", "鬼怪愣住了", "女主继续向前走"]
+    ):
+        s = {
+            k: "明确的镜头设计说明"
+            for k in [
+                "scene",
+                "dramatic_action",
+                "camera",
+                "composition",
+                "blocking",
+                "continuity_in",
+                "continuity_out",
+                "viewer_knows",
+                "character_knows",
+                "withhold",
+                "sound",
+                "transition",
+                "first_frame",
+                "motion_prompt",
+                "generation_risk",
+            ]
+        }
+        s.update(
+            id=f"G01-S{i+1:02}",
+            purpose=["hook", "setup", "reaction", "payoff"][i],
+            source_quote=quote,
+            size="MS",
+            setup_ids=["G01-S02"] if i == 3 else [],
+            edit_seconds=3,
+            generation_seconds=5,
+            dialogue="",
+            assets=["女主", "站台"],
+        )
         shots.append(s)
-    return {'title':'脑洞短场景','scope_note':'只改编已有片段','shots':shots}
+    return {"title": "脑洞短场景", "scope_note": "只改编已有片段", "shots": shots}
 
 
 def reference_prep():
-    return {'stamp':'reference-stamp','assets':{
-        'actor':{'role':'character','name':'女主','notes':'固定身份','identity_asset_id':'actor','requires_costume':True},
-        'costume':{'role':'costume','name':'日常定装','notes':'固定服装','identity_asset_id':'actor','requires_costume':False},
-        'restroom':{'role':'scene','name':'公司洗手间','notes':'固定空间','identity_asset_id':None,'requires_costume':False},
-        'apartment':{'role':'scene','name':'公寓卧室','notes':'固定空间','identity_asset_id':None,'requires_costume':False},
-    }}
+    return {
+        "stamp": "reference-stamp",
+        "assets": {
+            "actor": {
+                "role": "character",
+                "name": "女主",
+                "notes": "固定身份",
+                "identity_asset_id": "actor",
+                "requires_costume": True,
+            },
+            "costume": {
+                "role": "costume",
+                "name": "日常定装",
+                "notes": "固定服装",
+                "identity_asset_id": "actor",
+                "requires_costume": False,
+            },
+            "restroom": {
+                "role": "scene",
+                "name": "公司洗手间",
+                "notes": "固定空间",
+                "identity_asset_id": None,
+                "requires_costume": False,
+            },
+            "apartment": {
+                "role": "scene",
+                "name": "公寓卧室",
+                "notes": "固定空间",
+                "identity_asset_id": None,
+                "requires_costume": False,
+            },
+        },
+    }
 
 
 def recoverable_board():
-    raw=board()
-    for shot in raw['shots']:
-        shot['scene']='公司洗手间，西侧隔间内向东望向洗手台'
-        shot['assets']=['actor','costume','restroom']
-    raw['shots'][1]['assets']=['actor','costume','costume']
+    raw = board()
+    for shot in raw["shots"]:
+        shot["scene"] = "公司洗手间，西侧隔间内向东望向洗手台"
+        shot["assets"] = ["actor", "costume", "restroom"]
+    raw["shots"][1]["assets"] = ["actor", "costume", "costume"]
     return raw
 
 
-def segment_plan(groups=(('P001',),),shot_budget=4):
+def segment_plan(groups=(("P001",),), shot_budget=4):
     """A saved微小说切割 result so storyboard tests exercise chunked generation."""
-    return {'title':'原文片段切割','overall_arc':'按原文顺序串联全部片段',
-            'segments':[{'id':f'G{index+1:02}','title':f'片段 {index+1}','source_refs':list(refs),
-                         'beat':'setup' if index==0 else 'development','purpose':'交代本片段信息，并把悬念留给下一片段',
-                         'characters':['女主'],'location':'公司洗手间','shot_budget':shot_budget,
-                         'continuity_out':'人物留在原地，异常尚未解释'} for index,refs in enumerate(groups)]}
+    return {
+        "title": "原文片段切割",
+        "overall_arc": "按原文顺序串联全部片段",
+        "segments": [
+            {
+                "id": f"G{index+1:02}",
+                "title": f"片段 {index+1}",
+                "source_refs": list(refs),
+                "beat": "setup" if index == 0 else "development",
+                "purpose": "交代本片段信息，并把悬念留给下一片段",
+                "characters": ["女主"],
+                "location": "公司洗手间",
+                "shot_budget": shot_budget,
+                "continuity_out": "人物留在原地，异常尚未解释",
+            }
+            for index, refs in enumerate(groups)
+        ],
+    }
+
 
 @pytest.fixture
-def setup_source(client,monkeypatch):
-    with Session.begin() as db:db.add(Record(id='source_test',kind='story_source',data={'title':'脑洞','labels':['脑洞'],'content':TEXT,'content_hash':'testhash','completeness':'unknown'}))
-    monkeypatch.setattr(d,'settings',lambda:{'paid_enabled':True,'llm_configured':True,'image_configured':True})
+def setup_source(client, monkeypatch):
+    with Session.begin() as db:
+        db.add(
+            Record(
+                id="source_test",
+                kind="story_source",
+                data={
+                    "title": "脑洞",
+                    "labels": ["脑洞"],
+                    "content": TEXT,
+                    "content_hash": "testhash",
+                    "completeness": "unknown",
+                },
+            )
+        )
+    monkeypatch.setattr(
+        d,
+        "settings",
+        lambda: {
+            "paid_enabled": True,
+            "llm_configured": True,
+            "image_configured": True,
+        },
+    )
     return client
 
 
-def test_director_three_stages_persist_and_approval_gates_images(setup_source,monkeypatch):
-    client=setup_source
-    treatment={k:'设计依据' for k in ['premise','dramatic_question','protagonist_goal','excerpt_scope','visual_strategy','information_strategy']}
-    treatment.update(rules=[{'rule':'女主看不清','quote':'女主看不清鬼怪','consequence':'认知错位'}],boundaries=['完整结局未知'])
-    review={'approved':True,'issues':[],'continuity':'可衔接','dramatic_logic':'成立','editability':'可剪辑','production_feasibility':'待视觉审核'}
+def test_director_three_stages_persist_and_approval_gates_images(
+    setup_source, monkeypatch
+):
+    client = setup_source
+    treatment = {
+        k: "设计依据"
+        for k in [
+            "premise",
+            "dramatic_question",
+            "protagonist_goal",
+            "excerpt_scope",
+            "visual_strategy",
+            "information_strategy",
+        ]
+    }
+    treatment.update(
+        rules=[
+            {"rule": "女主看不清", "quote": "女主看不清鬼怪", "consequence": "认知错位"}
+        ],
+        boundaries=["完整结局未知"],
+    )
+    review = {
+        "approved": True,
+        "issues": [],
+        "continuity": "可衔接",
+        "dramatic_logic": "成立",
+        "editability": "可剪辑",
+        "production_feasibility": "待视觉审核",
+    }
     # The cut now happens in the same task as the treatment, before any artwork exists.
-    answers=iter([treatment,segment_plan(),board(),{'shots':[{k:s[k] for k in ('id','first_frame','motion_prompt')} for s in board()['shots']]},review]);calls=[]
-    def chat(*args):calls.append(args);return next(answers),{}
-    monkeypatch.setattr(d,'chat_json',chat)
-    response=client.post('/api/director',json={'source_id':'source_test','confirm_paid':True});assert response.status_code==200
-    pid=response.json()['project_id']
-    assert client.post('/api/director',json={'source_id':'source_test','confirm_paid':True}).status_code==409
-    assert worker.process_one('director_worker')
-    p=client.get('/api/director/source_test').json()[0]
-    assert len(calls)==2 and p['status']=='awaiting_preproduction' and 'board' not in p
+    answers = iter(
+        [
+            treatment,
+            segment_plan(),
+            board(),
+            {
+                "shots": [
+                    {k: s[k] for k in ("id", "first_frame", "motion_prompt")}
+                    for s in board()["shots"]
+                ]
+            },
+            review,
+        ]
+    )
+    calls = []
+
+    def chat(*args):
+        calls.append(args)
+        return next(answers), {}
+
+    monkeypatch.setattr(d, "chat_json", chat)
+    response = client.post(
+        "/api/director", json={"source_id": "source_test", "confirm_paid": True}
+    )
+    assert response.status_code == 200
+    pid = response.json()["project_id"]
+    assert (
+        client.post(
+            "/api/director", json={"source_id": "source_test", "confirm_paid": True}
+        ).status_code
+        == 409
+    )
+    assert worker.process_one("director_worker")
+    p = client.get("/api/director/source_test").json()[0]
+    assert (
+        len(calls) == 2 and p["status"] == "awaiting_preproduction" and "board" not in p
+    )
     # The cut is saved before the artwork stage, so the design only draws what a scene needs.
-    assert [segment['id'] for segment in p['segments']['segments']]==['G01']
-    assert client.post('/api/director/projects/'+pid+'/storyboard',json={'version':p['version'],'confirm_paid':True}).status_code==409
+    assert [segment["id"] for segment in p["segments"]["segments"]] == ["G01"]
+    assert (
+        client.post(
+            "/api/director/projects/" + pid + "/storyboard",
+            json={"version": p["version"], "confirm_paid": True},
+        ).status_code
+        == 409
+    )
     from backend.db import DATA
     from PIL import Image
-    Image.new('RGB',(256,256)).save(DATA/'media'/'prep.png')
+
+    Image.new("RGB", (256, 256)).save(DATA / "media" / "prep.png")
     with Session.begin() as db:
-        for aid in ('actor','set'):
-            db.add(Record(id=aid,kind='asset',data={'name':aid,'media':'/media/prep.png','status':'approved'}))
-    config={'style':'固定二维漫画画风和冷色光线','assets':{'actor':{'role':'character','name':'主角','notes':'固定短发和灰色服装'},'set':{'role':'scene','name':'影棚','notes':'门在左侧，窗在右侧，光源来自右侧'} }}
-    assert client.post('/api/preproduction/'+pid,json=config).status_code==200
-    token=client.get('/api/preproduction/'+pid).json()['stamp']
+        for aid in ("actor", "set"):
+            db.add(
+                Record(
+                    id=aid,
+                    kind="asset",
+                    data={
+                        "name": aid,
+                        "media": "/media/prep.png",
+                        "status": "approved",
+                    },
+                )
+            )
+    config = {
+        "style": "固定二维漫画画风和冷色光线",
+        "assets": {
+            "actor": {
+                "role": "character",
+                "name": "主角",
+                "notes": "固定短发和灰色服装",
+            },
+            "set": {
+                "role": "scene",
+                "name": "影棚",
+                "notes": "门在左侧，窗在右侧，光源来自右侧",
+            },
+        },
+    }
+    assert client.post("/api/preproduction/" + pid, json=config).status_code == 200
+    token = client.get("/api/preproduction/" + pid).json()["stamp"]
     # 定装与试拍已移除：直接用已确认的人物身份与场景参考图锁定输入。
     from backend.preproduction import approve_references
-    assert approve_references(pid,token)=={'approved':True,'mode':'reference_images'}
-    b=board()
-    for shot in b['shots']:shot['assets']=['actor','set']
-    answers=iter([b,{'shots':[{k:s[k] for k in ('id','first_frame','motion_prompt')} for s in b['shots']]},review])
-    assert client.post('/api/director/projects/'+pid+'/storyboard',json={'version':p['version'],'confirm_paid':True,'segment_id':'G01'}).status_code==200
+
+    assert approve_references(pid, token) == {
+        "approved": True,
+        "mode": "reference_images",
+    }
+    b = board()
+    for shot in b["shots"]:
+        shot["assets"] = ["actor", "set"]
+    answers = iter(
+        [
+            b,
+            {
+                "shots": [
+                    {k: s[k] for k in ("id", "first_frame", "motion_prompt")}
+                    for s in b["shots"]
+                ]
+            },
+            review,
+        ]
+    )
+    assert (
+        client.post(
+            "/api/director/projects/" + pid + "/storyboard",
+            json={"version": p["version"], "confirm_paid": True, "segment_id": "G01"},
+        ).status_code
+        == 200
+    )
     for _ in range(6):
-        if not worker.process_one('board_worker'):break
-    p=client.get('/api/director/source_test').json()[0]
-    assert len(calls)==5 and p['status']=='pending_review'
-    assert calls[2][1]['preproduction']['assets']['set']['notes']==config['assets']['set']['notes']
-    path='/api/director/projects/'+pid
+        if not worker.process_one("board_worker"):
+            break
+    p = client.get("/api/director/source_test").json()[0]
+    assert len(calls) == 5 and p["status"] == "pending_review"
+    assert (
+        calls[2][1]["preproduction"]["assets"]["set"]["notes"]
+        == config["assets"]["set"]["notes"]
+    )
+    path = "/api/director/projects/" + pid
     # 镜头参考图步骤已移除：分镜不再接受单镜图片生成请求。
-    assert client.post(path+'/shots/S01/image',json={'version':p['version'],'confirm_paid':True}).status_code==404
-    r=client.post(path+'/approve',json={'version':p['version'],'confirm':True,'note':'已核对所有镜头的连续性'})
-    assert r.status_code==200
-    assert client.post(path+'/shots/S01/image',json={'version':r.json()['version'],'confirm_paid':True}).status_code==404
-    edited=client.post(path+'/edit',json={'version':r.json()['version'],'board':b})
-    assert edited.status_code==200 and edited.json()['status']=='pending_review'
-    assert edited.json()['review']['approved'] is False
+    assert (
+        client.post(
+            path + "/shots/S01/image",
+            json={"version": p["version"], "confirm_paid": True},
+        ).status_code
+        == 404
+    )
+    r = client.post(
+        path + "/approve",
+        json={
+            "version": p["version"],
+            "confirm": True,
+            "note": "已核对所有镜头的连续性",
+        },
+    )
+    assert r.status_code == 200
+    assert (
+        client.post(
+            path + "/shots/S01/image",
+            json={"version": r.json()["version"], "confirm_paid": True},
+        ).status_code
+        == 404
+    )
+    edited = client.post(
+        path + "/edit", json={"version": r.json()["version"], "board": b}
+    )
+    assert edited.status_code == 200 and edited.json()["status"] == "pending_review"
+    assert edited.json()["review"]["approved"] is False
 
 
 def test_causality_and_source_checks():
-    b=board();b['shots'][0]['setup_ids']=['S04'];b['shots'][1]['source_quote']='不存在的原文';b['shots'][2]['edit_seconds']=9
-    issues=d.check_board(d.Board.model_validate(b),TEXT)
-    assert len(issues)==3
+    b = board()
+    b["shots"][0]["setup_ids"] = ["S04"]
+    b["shots"][1]["source_quote"] = "不存在的原文"
+    b["shots"][2]["edit_seconds"] = 9
+    issues = d.check_board(d.Board.model_validate(b), TEXT)
+    assert len(issues) == 3
 
 
 def test_causality_error_gives_a_concrete_model_correction():
-    b=board();b['shots'][1]['purpose']='reveal';b['shots'][1]['setup_ids']=[]
-    issues=d.check_board(d.Board.model_validate(b),TEXT)
-    issue=next(item for item in issues if '揭示或回收缺少前序铺垫' in item)
-    assert 'setup_ids' in issue and 'S01' in issue
-    assert 'purpose' in issue and 'rule' in issue
+    b = board()
+    b["shots"][1]["purpose"] = "reveal"
+    b["shots"][1]["setup_ids"] = []
+    issues = d.check_board(d.Board.model_validate(b), TEXT)
+    issue = next(item for item in issues if "揭示或回收缺少前序铺垫" in item)
+    assert "setup_ids" in issue and "S01" in issue
+    assert "purpose" in issue and "rule" in issue
 
 
 def test_board_rejects_source_order_rollback():
-    b=board()
-    for shot,source_ref in zip(b['shots'],['P001','P004','P002','P003']):shot['source_ref']=source_ref
-    issues=d.check_board(d.Board.model_validate(b),TEXT)
-    assert any('S03 原文顺序倒退' in issue and 'S02（P004）' in issue for issue in issues)
-    assert any('S04 原文顺序倒退' in issue and '保持原著因果顺序' in issue for issue in issues)
+    b = board()
+    for shot, source_ref in zip(b["shots"], ["P001", "P004", "P002", "P003"]):
+        shot["source_ref"] = source_ref
+    issues = d.check_board(d.Board.model_validate(b), TEXT)
+    assert any(
+        "S03 原文顺序倒退" in issue and "S02（P004）" in issue for issue in issues
+    )
+    assert any(
+        "S04 原文顺序倒退" in issue and "保持原著因果顺序" in issue for issue in issues
+    )
 
 
 def test_other_tags_and_paid_gate(setup_source):
-    client=setup_source
-    assert client.post('/api/director',json={'source_id':'source_test'}).status_code==422
-    with Session.begin() as db:db.get(Record,'source_test').data={'labels':['言情']}
-    assert client.post('/api/director',json={'source_id':'source_test','confirm_paid':True}).status_code==422
+    client = setup_source
+    assert (
+        client.post("/api/director", json={"source_id": "source_test"}).status_code
+        == 422
+    )
+    with Session.begin() as db:
+        db.get(Record, "source_test").data = {"labels": ["言情"]}
+    assert (
+        client.post(
+            "/api/director", json={"source_id": "source_test", "confirm_paid": True}
+        ).status_code
+        == 422
+    )
 
 
-def test_unfounded_rule_stops_later_calls(setup_source,monkeypatch):
-    t={k:'设计依据' for k in ['premise','dramatic_question','protagonist_goal','excerpt_scope','visual_strategy','information_strategy']}
-    t.update(rules=[{'rule':'凭空能力','quote':'她会瞬间移动','consequence':'无代价'}],boundaries=['未知'])
-    calls=[]
-    def chat(*args):calls.append(1);return t,{}
-    monkeypatch.setattr(d,'chat_json',chat)
-    with pytest.raises(d.ProviderError,match='依据'):d.run_director({'source':{'content':TEXT},'brief':'测试'},'t',lambda *x:None)
-    assert len(calls)==4
+def test_unfounded_rule_stops_later_calls(setup_source, monkeypatch):
+    t = {
+        k: "设计依据"
+        for k in [
+            "premise",
+            "dramatic_question",
+            "protagonist_goal",
+            "excerpt_scope",
+            "visual_strategy",
+            "information_strategy",
+        ]
+    }
+    t.update(
+        rules=[{"rule": "凭空能力", "quote": "她会瞬间移动", "consequence": "无代价"}],
+        boundaries=["未知"],
+    )
+    calls = []
+
+    def chat(*args):
+        calls.append(1)
+        return t, {}
+
+    monkeypatch.setattr(d, "chat_json", chat)
+    with pytest.raises(d.ProviderError, match="依据"):
+        d.run_director(
+            {"source": {"content": TEXT}, "brief": "测试"}, "t", lambda *x: None
+        )
+    assert len(calls) == 4
+
 
 def test_typographic_quote_changes_without_semantic_fuzzy_matching():
-    assert d.quote_exists('“她看不清”', '「她\n看不清」')
-    assert not d.quote_exists('她看得清', '她看不清')
-    assert not d.quote_exists('她已经死了', '她没有死')
+    assert d.quote_exists("“她看不清”", "「她\n看不清」")
+    assert not d.quote_exists("她看得清", "她看不清")
+    assert not d.quote_exists("她已经死了", "她没有死")
+
 
 def test_reference_binding_uses_actual_source():
-    rule=d.Rule(rule='规则',quote='模型摘要不是引文',consequence='后果',source_ref='P001')
-    d.bind_sources([rule],d.source_passages(TEXT),'quote')
-    assert rule.quote==TEXT
-    rule.source_ref='P999'
-    with pytest.raises(d.ProviderError):d.bind_sources([rule],d.source_passages(TEXT),'quote')
+    rule = d.Rule(
+        rule="规则", quote="模型摘要不是引文", consequence="后果", source_ref="P001"
+    )
+    d.bind_sources([rule], d.source_passages(TEXT), "quote")
+    assert rule.quote == TEXT
+    rule.source_ref = "P999"
+    with pytest.raises(d.ProviderError):
+        d.bind_sources([rule], d.source_passages(TEXT), "quote")
 
-def test_failed_quote_keeps_treatment_draft(setup_source,monkeypatch):
-    t={k:'设计依据' for k in ['premise','dramatic_question','protagonist_goal','excerpt_scope','visual_strategy','information_strategy']}
-    t.update(rules=[{'rule':'规则','quote':'错误引用不会消失','consequence':'后果'}],boundaries=['未知'])
-    monkeypatch.setattr(d,'chat_json',lambda *args:(t,{}))
-    saved=[]
-    with pytest.raises(d.ProviderError):d.run_director({'source':{'content':TEXT},'brief':'测试'},'t',lambda *args:saved.append(args))
-    diagnostic=[x for x in saved if x[0]=='treatment_diagnostics'][-1][1]
-    assert diagnostic['raw']['rules'][0]['quote']=='错误引用不会消失'
-    assert len(diagnostic['attempts'])==4
+
+def test_failed_quote_keeps_treatment_draft(setup_source, monkeypatch):
+    t = {
+        k: "设计依据"
+        for k in [
+            "premise",
+            "dramatic_question",
+            "protagonist_goal",
+            "excerpt_scope",
+            "visual_strategy",
+            "information_strategy",
+        ]
+    }
+    t.update(
+        rules=[{"rule": "规则", "quote": "错误引用不会消失", "consequence": "后果"}],
+        boundaries=["未知"],
+    )
+    monkeypatch.setattr(d, "chat_json", lambda *args: (t, {}))
+    saved = []
+    with pytest.raises(d.ProviderError):
+        d.run_director(
+            {"source": {"content": TEXT}, "brief": "测试"},
+            "t",
+            lambda *args: saved.append(args),
+        )
+    diagnostic = [x for x in saved if x[0] == "treatment_diagnostics"][-1][1]
+    assert diagnostic["raw"]["rules"][0]["quote"] == "错误引用不会消失"
+    assert len(diagnostic["attempts"]) == 4
+
 
 # 旧架构的测试已删除：一次调用同时产出 treatment、切割与整片分镜、整片连续镜号、
 # saved_board 整片恢复——这些路径在逐情节产出后都不存在了。逐情节行为由
@@ -165,37 +453,91 @@ def test_failed_quote_keeps_treatment_draft(setup_source,monkeypatch):
 
 def test_shot_reference_image_endpoint_is_removed(client):
     with Session.begin() as db:
-        db.add(Record(id='frame-project',kind='director',version=2,data={
-            'status':'approved','board':{'title':'当前分镜','shots':[{'id':'S01'}]}}))
-    response=client.post('/api/director/projects/frame-project/shots/S01/image',json={
-        'version':2,'remake':True,'confirm_paid':True})
-    assert response.status_code==404
+        db.add(
+            Record(
+                id="frame-project",
+                kind="director",
+                version=2,
+                data={
+                    "status": "approved",
+                    "board": {"title": "当前分镜", "shots": [{"id": "S01"}]},
+                },
+            )
+        )
+    response = client.post(
+        "/api/director/projects/frame-project/shots/S01/image",
+        json={"version": 2, "remake": True, "confirm_paid": True},
+    )
+    assert response.status_code == 404
 
 
 def test_invented_source_quote_is_rejected_and_precise_citation_is_kept():
     """Replacing the quote before validation is what used to make this check unable to fire."""
-    passages=d.source_passages(TEXT)
-    shot={'id':'G01-S01','scene':'a','purpose':'hook','source_quote':'编剧自己编的一句台词',
-        'dramatic_action':'a','size':'MS','camera':'a','composition':'a','blocking':'a',
-        'continuity_in':'a','continuity_out':'a','viewer_knows':'a','character_knows':'a',
-        'withhold':'a','setup_ids':[],'edit_seconds':3,'generation_seconds':5,'dialogue':'',
-        'sound':'a','transition':'a','reference_prompt':'abcde','motion_prompt':'abcde',
-        'assets':['a'],'generation_risk':'a','source_ref':'P001'}
-    board=d.Board.model_validate({'title':'t','scope_note':'s','shots':[shot]})
-    with pytest.raises(d.ProviderError,match='在原文中找不到'):
-        d.bind_sources(board.shots,passages,'source_quote',TEXT)
+    passages = d.source_passages(TEXT)
+    shot = {
+        "id": "G01-S01",
+        "scene": "a",
+        "purpose": "hook",
+        "source_quote": "编剧自己编的一句台词",
+        "dramatic_action": "a",
+        "size": "MS",
+        "camera": "a",
+        "composition": "a",
+        "blocking": "a",
+        "continuity_in": "a",
+        "continuity_out": "a",
+        "viewer_knows": "a",
+        "character_knows": "a",
+        "withhold": "a",
+        "setup_ids": [],
+        "edit_seconds": 3,
+        "generation_seconds": 5,
+        "dialogue": "",
+        "sound": "a",
+        "transition": "a",
+        "reference_prompt": "abcde",
+        "motion_prompt": "abcde",
+        "assets": ["a"],
+        "generation_risk": "a",
+        "source_ref": "P001",
+    }
+    board = d.Board.model_validate({"title": "t", "scope_note": "s", "shots": [shot]})
+    with pytest.raises(d.ProviderError, match="在原文中找不到"):
+        d.bind_sources(board.shots, passages, "source_quote", TEXT)
 
     # A quote that really exists in the story, but under a different P number, is rebound and
     # reported instead of being passed off as a faithful citation.
-    longer='甲'*260+'女主看不清鬼怪。'
-    long_passages=d.source_passages(longer)
-    assert len(long_passages)>1
-    faithful=d.Board.model_validate({'title':'t','scope_note':'s','shots':[{
-        **{k:v for k,v in shot.items()},'source_quote':'女主看不清鬼怪','source_ref':'P001'}]})
-    changes=d.bind_sources(faithful.shots,long_passages,'source_quote',longer)
-    assert faithful.shots[0].source_quote==long_passages['P001']
-    assert [change['action'] for change in changes]==['source_quote_rebound']
+    longer = "甲" * 260 + "女主看不清鬼怪。"
+    long_passages = d.source_passages(longer)
+    assert len(long_passages) > 1
+    faithful = d.Board.model_validate(
+        {
+            "title": "t",
+            "scope_note": "s",
+            "shots": [
+                {
+                    **{k: v for k, v in shot.items()},
+                    "source_quote": "女主看不清鬼怪",
+                    "source_ref": "P001",
+                }
+            ],
+        }
+    )
+    changes = d.bind_sources(faithful.shots, long_passages, "source_quote", longer)
+    assert faithful.shots[0].source_quote == long_passages["P001"]
+    assert [change["action"] for change in changes] == ["source_quote_rebound"]
 
-    exact=d.Board.model_validate({'title':'t','scope_note':'s','shots':[{
-        **{k:v for k,v in shot.items()},'source_quote':'女主看不清鬼怪','source_ref':'P001'}]})
-    assert d.bind_sources(exact.shots,passages,'source_quote',TEXT)==[]
+    exact = d.Board.model_validate(
+        {
+            "title": "t",
+            "scope_note": "s",
+            "shots": [
+                {
+                    **{k: v for k, v in shot.items()},
+                    "source_quote": "女主看不清鬼怪",
+                    "source_ref": "P001",
+                }
+            ],
+        }
+    )
+    assert d.bind_sources(exact.shots, passages, "source_quote", TEXT) == []

@@ -1,6 +1,6 @@
-'use client';
-import {useEffect,useRef,useState} from 'react';
-import {reducedMotion} from './reader-types';
+"use client";
+import { useEffect, useRef, useState } from "react";
+import { reducedMotion } from "./reader-types";
 
 /**
  * One-time arrival for a section: it reveals on its first intersection with the viewport and
@@ -13,18 +13,21 @@ export function useReveal<T extends HTMLElement>() {
   useEffect(() => {
     const element = ref.current;
     if (!element || revealed) return;
-    if (reducedMotion() || typeof IntersectionObserver === 'undefined') {
+    if (reducedMotion() || typeof IntersectionObserver === "undefined") {
       setRevealed(true);
       return;
     }
-    const observer = new IntersectionObserver(entries => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) {
-          setRevealed(true);
-          observer.unobserve(entry.target);
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            setRevealed(true);
+            observer.unobserve(entry.target);
+          }
         }
-      }
-    }, {threshold: 0.15});
+      },
+      { threshold: 0.15 },
+    );
     observer.observe(element);
     return () => observer.disconnect();
   }, [revealed]);

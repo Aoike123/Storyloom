@@ -9,17 +9,27 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 ROOT = Path(__file__).resolve().parents[1]
 load_bootstrap_environment()
-DATA = Path(os.getenv('DATA_DIR', str(ROOT / 'data'))).resolve()
+DATA = Path(os.getenv("DATA_DIR", str(ROOT / "data"))).resolve()
 DATA.mkdir(parents=True, exist_ok=True)
-(DATA / 'media').mkdir(exist_ok=True)
-URL = os.getenv('DATABASE_URL', f'sqlite:///{DATA / "story.db"}')
-engine = create_engine(URL, connect_args={'check_same_thread': False, 'timeout': 30} if URL.startswith('sqlite') else {}, pool_pre_ping=True)
-if URL.startswith('sqlite'):
-    @event.listens_for(engine, 'connect')
+(DATA / "media").mkdir(exist_ok=True)
+URL = os.getenv("DATABASE_URL", f'sqlite:///{DATA / "story.db"}')
+engine = create_engine(
+    URL,
+    connect_args=(
+        {"check_same_thread": False, "timeout": 30} if URL.startswith("sqlite") else {}
+    ),
+    pool_pre_ping=True,
+)
+if URL.startswith("sqlite"):
+
+    @event.listens_for(engine, "connect")
     def sqlite_setup(connection, _):
-        connection.execute('PRAGMA journal_mode=WAL')
-        connection.execute('PRAGMA foreign_keys=ON')
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA foreign_keys=ON")
+
+
 Session = sessionmaker(engine, expire_on_commit=False)
+
 
 class Base(DeclarativeBase):
     pass
@@ -27,52 +37,52 @@ class Base(DeclarativeBase):
 
 # Identity of the pre-account single local maker. Records written without a logged-in user are
 # owned by this sentinel; it is wiped with the rest of legacy content (D09 clean break).
-LOCAL_OWNER = 'local'
+LOCAL_OWNER = "local"
 
 
 class Record(Base):
-    __tablename__ = 'records'
+    __tablename__ = "records"
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
     kind: Mapped[str] = mapped_column(String(32), index=True)
     data: Mapped[dict] = mapped_column(JSON, default=dict)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created: Mapped[float] = mapped_column(Float, default=time.time)
     owner_id: Mapped[str] = mapped_column(String(80), default=LOCAL_OWNER, index=True)
-    visibility: Mapped[str] = mapped_column(String(16), default='private')
+    visibility: Mapped[str] = mapped_column(String(16), default="private")
 
 
 class Task(Base):
-    __tablename__ = 'tasks'
+    __tablename__ = "tasks"
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
     kind: Mapped[str] = mapped_column(String(32))
-    status: Mapped[str] = mapped_column(String(32), default='queued', index=True)
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     revision: Mapped[int] = mapped_column(Integer, default=0)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     result: Mapped[dict] = mapped_column(JSON, default=dict)
-    message: Mapped[str] = mapped_column(String(1000), default='等待执行')
+    message: Mapped[str] = mapped_column(String(1000), default="等待执行")
     progress: Mapped[int] = mapped_column(Integer, default=0)
     lease: Mapped[float] = mapped_column(Float, default=0)
-    owner: Mapped[str] = mapped_column(String(80), default='')
+    owner: Mapped[str] = mapped_column(String(80), default="")
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     created: Mapped[float] = mapped_column(Float, default=time.time)
 
 
 class User(Base):
-    __tablename__ = 'users'
+    __tablename__ = "users"
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
     username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
-    email: Mapped[str] = mapped_column(String(200), default='')
-    password_hash: Mapped[str] = mapped_column(String(256), default='')
+    email: Mapped[str] = mapped_column(String(200), default="")
+    password_hash: Mapped[str] = mapped_column(String(256), default="")
     # Single active session token (opaque, rotated on each login).
-    auth_token: Mapped[str] = mapped_column(String(128), default='', index=True)
+    auth_token: Mapped[str] = mapped_column(String(128), default="", index=True)
     created: Mapped[float] = mapped_column(Float, default=time.time)
 
 
-ACTIVE_TASK_STATUSES = frozenset({'queued', 'running', 'waiting'})
+ACTIVE_TASK_STATUSES = frozenset({"queued", "running", "waiting"})
 
 
 def uid(prefix):
-    return f'{prefix}_{uuid.uuid4().hex[:16]}'
+    return f"{prefix}_{uuid.uuid4().hex[:16]}"
 
 
 # Append-only histories are capped so a long-running demo cannot grow one record without bound.
@@ -86,75 +96,169 @@ def bounded(items, item, limit):
 
 
 def record_dict(row):
-    return {'id': row.id, 'version': row.version, **row.data}
+    return {"id": row.id, "version": row.version, **row.data}
 
 
-def save_generation_request(task_id,*,model,prompt,image_size=None,reference_count=0,input_mode=None,inference_steps=None):
+def save_generation_request(
+    task_id,
+    *,
+    model,
+    prompt,
+    image_size=None,
+    reference_count=0,
+    input_mode=None,
+    inference_steps=None,
+):
     # Save the text actually submitted, without credentials or signed reference URLs.
     with Session.begin() as db:
-        task=db.get(Task,task_id)
+        task = db.get(Task, task_id)
         if task:
-            task.result={**task.result,'generation_request':{'model':model,'prompt':prompt,
-                'image_size':image_size,'reference_count':reference_count,**({'input_mode':input_mode} if input_mode else {}),
-                **({'inference_steps':inference_steps} if inference_steps is not None else {})}}
+            task.result = {
+                **task.result,
+                "generation_request": {
+                    "model": model,
+                    "prompt": prompt,
+                    "image_size": image_size,
+                    "reference_count": reference_count,
+                    **({"input_mode": input_mode} if input_mode else {}),
+                    **(
+                        {"inference_steps": inference_steps}
+                        if inference_steps is not None
+                        else {}
+                    ),
+                },
+            }
 
 
 def generation_debug(task):
-    if task.kind not in ('image','video'):return None
-    metadata={k:task.payload.get(k) for k in ('asset_kind','asset_schema','character_key','costume_key','identity_asset_id','costume_asset_id','node_skill','prompt_source','revision_instruction','regeneration_mode')}
-    if task.payload.get('edit_instruction'):metadata['edit_instruction']=task.payload['edit_instruction']
-    if task.payload.get('rendering_style'):metadata['rendering_style']=task.payload['rendering_style']
-    if task.payload.get('reference_roles'):metadata['reference_roles']=task.payload['reference_roles']
-    style_reference=task.payload.get('style_reference') or {}
-    if style_reference.get('file',{}).get('media'):
-        metadata['style_reference_media']=(style_reference.get('texture_file') or style_reference['file'])['media']
-    request=task.result.get('generation_request')
-    if isinstance(request,dict) and isinstance(request.get('prompt'),str):
-        return {**{k:request.get(k) for k in ('prompt','model','image_size','reference_count','inference_steps')},
-                **({'input_mode':request['input_mode']} if request.get('input_mode') else {}),'source':'request',**metadata}
-    prompt=task.payload.get('prompt')
-    return {'prompt':prompt,'source':'task',**metadata} if isinstance(prompt,str) else None
+    if task.kind not in ("image", "video"):
+        return None
+    metadata = {
+        k: task.payload.get(k)
+        for k in (
+            "asset_kind",
+            "asset_schema",
+            "character_key",
+            "costume_key",
+            "identity_asset_id",
+            "costume_asset_id",
+            "node_skill",
+            "prompt_source",
+            "revision_instruction",
+            "regeneration_mode",
+        )
+    }
+    if task.payload.get("edit_instruction"):
+        metadata["edit_instruction"] = task.payload["edit_instruction"]
+    if task.payload.get("rendering_style"):
+        metadata["rendering_style"] = task.payload["rendering_style"]
+    if task.payload.get("reference_roles"):
+        metadata["reference_roles"] = task.payload["reference_roles"]
+    style_reference = task.payload.get("style_reference") or {}
+    if style_reference.get("file", {}).get("media"):
+        metadata["style_reference_media"] = (
+            style_reference.get("texture_file") or style_reference["file"]
+        )["media"]
+    request = task.result.get("generation_request")
+    if isinstance(request, dict) and isinstance(request.get("prompt"), str):
+        return {
+            **{
+                k: request.get(k)
+                for k in (
+                    "prompt",
+                    "model",
+                    "image_size",
+                    "reference_count",
+                    "inference_steps",
+                )
+            },
+            **(
+                {"input_mode": request["input_mode"]}
+                if request.get("input_mode")
+                else {}
+            ),
+            "source": "request",
+            **metadata,
+        }
+    prompt = task.payload.get("prompt")
+    return (
+        {"prompt": prompt, "source": "task", **metadata}
+        if isinstance(prompt, str)
+        else None
+    )
+
 
 def task_dict(row):
     from .task_activity import activity_data
     from .image_errors import task_error
     from .image_messages import completed_message
     from sqlalchemy.orm import object_session
-    session=object_session(row)
-    trace=session.get(Record,'skill_trace_'+row.id) if session else None
-    references=row.payload.get('reference_media')
-    preview=row.payload.get('frame_media') or (references[0] if isinstance(references,list) and references else None)
-    preview=preview if isinstance(preview,str) and preview.startswith('/media/') else None
-    return {'id': row.id, 'kind': row.kind, 'status': row.status,
-            'production_phase':row.payload.get('production_phase') or row.payload.get('phase'),
-            'production_node':row.payload.get('production_node'),
-            'revision': row.revision, 'progress': row.progress, 'message': completed_message(row.payload) if row.kind=='image' and row.status=='completed' else row.message,
-            'result': row.result, 'created': row.created, 'attempts': row.attempts,
-            'mode': row.payload.get('mode', 'demo'), 'label': row.payload.get('title') or row.payload.get('shot_id'),
-            'generation':generation_debug(row),'provider_error':task_error(row),'skill_calls':trace.data['calls'] if trace else [],
-            'activity': activity_data(row),'preview':preview,'revision_of':row.payload.get('revision_of'),
-            'failure_code':row.result.get('failure_code') if isinstance(row.result,dict) else None}
+
+    session = object_session(row)
+    trace = session.get(Record, "skill_trace_" + row.id) if session else None
+    references = row.payload.get("reference_media")
+    preview = row.payload.get("frame_media") or (
+        references[0] if isinstance(references, list) and references else None
+    )
+    preview = (
+        preview if isinstance(preview, str) and preview.startswith("/media/") else None
+    )
+    return {
+        "id": row.id,
+        "kind": row.kind,
+        "status": row.status,
+        "production_phase": row.payload.get("production_phase")
+        or row.payload.get("phase"),
+        "production_node": row.payload.get("production_node"),
+        "revision": row.revision,
+        "progress": row.progress,
+        "message": (
+            completed_message(row.payload)
+            if row.kind == "image" and row.status == "completed"
+            else row.message
+        ),
+        "result": row.result,
+        "created": row.created,
+        "attempts": row.attempts,
+        "mode": row.payload.get("mode", "demo"),
+        "label": row.payload.get("title") or row.payload.get("shot_id"),
+        "generation": generation_debug(row),
+        "provider_error": task_error(row),
+        "skill_calls": trace.data["calls"] if trace else [],
+        "activity": activity_data(row),
+        "preview": preview,
+        "revision_of": row.payload.get("revision_of"),
+        "failure_code": (
+            row.result.get("failure_code") if isinstance(row.result, dict) else None
+        ),
+    }
+
 
 def apply_migrations():
     """Idempotent, dialect-agnostic schema migrations layered on top of create_all.
 
     create_all only ever adds *missing* tables, so pre-existing databases need explicit
     ALTER TABLE steps here: the new owner/visibility columns on records, and the removal of
-    the legacy per-visitor task session_id (D09: the anonymous payer/session is dropped)."""
+    the legacy per-visitor task session_id (D09: the anonymous payer/session is dropped).
+    """
     from sqlalchemy import inspect
 
     insp = inspect(engine)
     tables = set(insp.get_table_names())
     with engine.begin() as conn:
-        if 'records' in tables:
-            rec_cols = {c['name'] for c in insp.get_columns('records')}
-            if 'owner_id' not in rec_cols:
-                conn.exec_driver_sql(f"ALTER TABLE records ADD COLUMN owner_id VARCHAR(80) DEFAULT '{LOCAL_OWNER}'")
-            if 'visibility' not in rec_cols:
-                conn.exec_driver_sql("ALTER TABLE records ADD COLUMN visibility VARCHAR(16) DEFAULT 'private'")
-        if 'tasks' in tables:
-            task_cols = {c['name'] for c in insp.get_columns('tasks')}
-            if 'session_id' in task_cols:
+        if "records" in tables:
+            rec_cols = {c["name"] for c in insp.get_columns("records")}
+            if "owner_id" not in rec_cols:
+                conn.exec_driver_sql(
+                    f"ALTER TABLE records ADD COLUMN owner_id VARCHAR(80) DEFAULT '{LOCAL_OWNER}'"
+                )
+            if "visibility" not in rec_cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE records ADD COLUMN visibility VARCHAR(16) DEFAULT 'private'"
+                )
+        if "tasks" in tables:
+            task_cols = {c["name"] for c in insp.get_columns("tasks")}
+            if "session_id" in task_cols:
                 conn.exec_driver_sql("ALTER TABLE tasks DROP COLUMN session_id")
 
 

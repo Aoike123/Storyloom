@@ -1,5 +1,5 @@
-'use client';
-import { useEffect, useRef, useState, type RefObject } from 'react';
+"use client";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
 interface Props {
   bodyRef: RefObject<HTMLDivElement | null>; // .workbench-body 元素（来源区 + 画布的共同父级）
@@ -32,8 +32,12 @@ export default function SourceLines({ bodyRef, regionActive, nodeId }: Props) {
     const measure = () => {
       const body = bodyRef.current;
       if (body) {
-        const region = body.querySelector<HTMLElement>('.workbench-region.is-active');
-        const node = body.querySelector<HTMLElement>('#react-flow__node-' + nodeId);
+        const region = body.querySelector<HTMLElement>(
+          ".workbench-region.is-active",
+        );
+        const node = body.querySelector<HTMLElement>(
+          "#react-flow__node-" + nodeId,
+        );
         if (region && node) {
           const b = body.getBoundingClientRect();
           const r = region.getBoundingClientRect();
@@ -45,7 +49,14 @@ export default function SourceLines({ bodyRef, regionActive, nodeId }: Props) {
             y2: n.top + n.height / 2 - b.top,
           };
           const p = last.current;
-          if (!p || Math.abs(p.x1 - next.x1) + Math.abs(p.y1 - next.y1) + Math.abs(p.x2 - next.x2) + Math.abs(p.y2 - next.y2) > 1) {
+          if (
+            !p ||
+            Math.abs(p.x1 - next.x1) +
+              Math.abs(p.y1 - next.y1) +
+              Math.abs(p.x2 - next.x2) +
+              Math.abs(p.y2 - next.y2) >
+              1
+          ) {
             last.current = next;
             setLine(next);
           }
@@ -60,7 +71,8 @@ export default function SourceLines({ bodyRef, regionActive, nodeId }: Props) {
     return () => cancelAnimationFrame(raf);
   }, [active, nodeId, bodyRef]);
 
-  if (!line) return <svg className="workbench-source-lines" aria-hidden="true" />;
+  if (!line)
+    return <svg className="workbench-source-lines" aria-hidden="true" />;
   return (
     <svg className="workbench-source-lines" aria-hidden="true">
       <line x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} />

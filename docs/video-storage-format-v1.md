@@ -15,10 +15,10 @@
 
 本轮验证：89 项后端测试通过，TypeScript 类型检查通过。新增检查使用本地生成的测试视频和真实 FFmpeg，覆盖有声视频、源文件保留、Range 下载、准确边界帧、非标准编码、可变帧率、非零起始时间、素材历史、文件变更拦截、发布兼容与中断恢复；模型服务由测试替身代替，未发起收费调用。运行中的 API 和执行器需要重新加载代码后启用新流程。
 
-| 接口 | 用途 |
-| --- | --- |
-| `GET /api/clips/{clip_id}/storage` | 读取素材登记与当前选用区间 |
-| `GET /api/reader/releases/{release_id}/manifest` | 读取发布清单 |
+| 接口                                             | 用途                       |
+| ------------------------------------------------ | -------------------------- |
+| `GET /api/clips/{clip_id}/storage`               | 读取素材登记与当前选用区间 |
+| `GET /api/reader/releases/{release_id}/manifest` | 读取发布清单               |
 
 发布 JSON 快照写入 `data/manifests/releases/{release_id}/v{revision}.json`，缺失时可通过同一发布请求从已提交数据库记录恢复。动态分支、pending 槽位以及实时播放通知尚未接入，本轮不会因此开始生成读者改写视频。
 
@@ -30,16 +30,16 @@
 
 ## 1. 视频文件
 
-| 项目 | v1 约定 |
-| --- | --- |
-| 供应商原始结果 | 保存实际返回的原始文件，按探测到的容器确定扩展名，不直接把任意返回内容改名为 MP4 |
-| 浏览器播放版本 | MP4 容器，H.264/AVC 视频，yuv420p；存在音轨时使用 AAC-LC |
-| 音频 | 播放版目标 48 kHz 双声道；源文件无音轨时明确记为无音轨，不声称已有配音；保存原有声音 |
-| 提前开始下载播放 | 普通 MP4 启用 faststart，并验证媒体服务的 Range 请求；不等整部作品下载 |
-| 帧率 | 播放版本采用项目级恒定帧率，v1 默认 24/1 fps；每个素材记录实际探测值 |
-| 画幅和尺寸 | 在作品制作配置中确定，保存精确宽高；保持比例，不把所有作品强制成横屏，不盲目放大小分辨率素材 |
-| 参考图片 | 关键帧、实际剪辑边界帧保存 PNG；列表封面可另存 WebP/JPEG |
-| 可选交付版本 | 后续从播放素材生成 fMP4/HLS 等传输版本，继续引用同一素材身份 |
+| 项目             | v1 约定                                                                                      |
+| ---------------- | -------------------------------------------------------------------------------------------- |
+| 供应商原始结果   | 保存实际返回的原始文件，按探测到的容器确定扩展名，不直接把任意返回内容改名为 MP4             |
+| 浏览器播放版本   | MP4 容器，H.264/AVC 视频，yuv420p；存在音轨时使用 AAC-LC                                     |
+| 音频             | 播放版目标 48 kHz 双声道；源文件无音轨时明确记为无音轨，不声称已有配音；保存原有声音         |
+| 提前开始下载播放 | 普通 MP4 启用 faststart，并验证媒体服务的 Range 请求；不等整部作品下载                       |
+| 帧率             | 播放版本采用项目级恒定帧率，v1 默认 24/1 fps；每个素材记录实际探测值                         |
+| 画幅和尺寸       | 在作品制作配置中确定，保存精确宽高；保持比例，不把所有作品强制成横屏，不盲目放大小分辨率素材 |
+| 参考图片         | 关键帧、实际剪辑边界帧保存 PNG；列表封面可另存 WebP/JPEG                                     |
+| 可选交付版本     | 后续从播放素材生成 fMP4/HLS 等传输版本，继续引用同一素材身份                                 |
 
 MP4 只是容器，仍需明确内部编码。H.264 与 AAC 的 MP4 是适合本项目首版浏览器播放的兼容性选择。[MDN 容器说明](https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Formats/Containers)、[MDN 编码说明](https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Formats/Video_codecs)。
 
@@ -49,14 +49,14 @@ faststart 将普通 MP4 的索引移到文件前部，有利于开始播放；�
 
 ## 2. 数据对象与不可变边界
 
-| 对象 | 保存内容 | 修改方式 |
-| --- | --- | --- |
-| ShotRevision：分镜版本 | story_id、shot_id、revision、剧情目的、预期事件、入口/出口条件、回归候选、素材快照 | 新增版本，历史版本保留 |
-| ClipArtifact：生成素材 | clip_id、分镜来源、供应商/模型/任务、实际生成输入的引用、原始及播放文件、摘要、媒体实测属性 | 完成登记后不覆盖；重新生成获得新 ID，新增播放规格获得新文件记录 |
-| AssetRevision：素材版本 | 角色、服装、场景、道具、声音的 asset_id/revision、不可变文件引用与 SHA-256 | 新增版本，不只改一条记录的版本数字 |
-| ClipUse：一次选用 | use_id、clip_id、使用的播放文件 ID、分镜版本、入点/出点、实际边界帧、事件标注版本 | 调整选取区间产生新 use_id，不裁坏源文件 |
-| StoryRelease：原版发布 | release_id、精确分镜与素材版本、原版顺序、回归节点与依赖 | 发布快照不可变，新发布生成新版本 |
-| BranchManifest：分支清单 | session_id、branch_id、revision、base_release_id、已看前缀、新片段槽位、回归位置 | 生成下一版本，旧清单保留 |
+| 对象                     | 保存内容                                                                                    | 修改方式                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| ShotRevision：分镜版本   | story_id、shot_id、revision、剧情目的、预期事件、入口/出口条件、回归候选、素材快照          | 新增版本，历史版本保留                                          |
+| ClipArtifact：生成素材   | clip_id、分镜来源、供应商/模型/任务、实际生成输入的引用、原始及播放文件、摘要、媒体实测属性 | 完成登记后不覆盖；重新生成获得新 ID，新增播放规格获得新文件记录 |
+| AssetRevision：素材版本  | 角色、服装、场景、道具、声音的 asset_id/revision、不可变文件引用与 SHA-256                  | 新增版本，不只改一条记录的版本数字                              |
+| ClipUse：一次选用        | use_id、clip_id、使用的播放文件 ID、分镜版本、入点/出点、实际边界帧、事件标注版本           | 调整选取区间产生新 use_id，不裁坏源文件                         |
+| StoryRelease：原版发布   | release_id、精确分镜与素材版本、原版顺序、回归节点与依赖                                    | 发布快照不可变，新发布生成新版本                                |
+| BranchManifest：分支清单 | session_id、branch_id、revision、base_release_id、已看前缀、新片段槽位、回归位置            | 生成下一版本，旧清单保留                                        |
 
 剧情“预期事件”与“画面已验证事件”分开。审核或事件时间修正产生独立标注版本，由 ClipUse/发布快照引用；不能修改不可变视频文件，也不能把提示词当作画面事实。
 
@@ -107,13 +107,13 @@ data/
 {
   "schema_version": 1,
   "use_id": "use_abc",
-  "shot": {"story_id": "story_abc", "shot_id": "S03", "revision": 2},
+  "shot": { "story_id": "story_abc", "shot_id": "S03", "revision": 2 },
   "clip_id": "clip_abc",
   "playback_file_id": "file_playback_abc_v1",
-  "range": {"in_frame": 24, "out_frame": 96},
+  "range": { "in_frame": 24, "out_frame": 96 },
   "boundaries": {
-    "first": {"frame_index": 24, "file_id": "file_in_abc"},
-    "last": {"frame_index": 95, "file_id": "file_out_abc"}
+    "first": { "frame_index": 24, "file_id": "file_in_abc" },
+    "last": { "frame_index": 95, "file_id": "file_out_abc" }
   },
   "annotation_revision_id": null
 }

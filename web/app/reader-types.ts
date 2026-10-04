@@ -5,8 +5,8 @@ export type ReleaseEntry = {
   start: number;
   end: number;
   shot_id: string;
-  status?: 'ready' | 'pending' | 'failed';
-  kind?: 'original' | 'branch';
+  status?: "ready" | "pending" | "failed";
+  kind?: "original" | "branch";
   label?: string;
   summary?: string;
   original_index?: number;
@@ -27,9 +27,14 @@ export type Release = {
   /** Publication time; the catalogue itself still defines display order. */
   created?: number;
   /** Public attribution snapshot for the maker of this particular version. */
-  creator?: {name: string; avatar_path?: string | null};
+  creator?: { name: string; avatar_path?: string | null };
   /** How much of the cut this release covers, e.g. 3 of 6 episodes. Public. */
-  progress?: {published_units: number; total_units: number; complete: boolean; next_unit?: string | null} | null;
+  progress?: {
+    published_units: number;
+    total_units: number;
+    complete: boolean;
+    next_unit?: string | null;
+  } | null;
 };
 
 export type ReaderBranch = {
@@ -38,7 +43,8 @@ export type ReaderBranch = {
   release_id: string;
   base_branch_id?: string;
   branch_version: number;
-  status: 'planning' | 'generating' | 'ready' | 'rejected' | 'failed' | 'superseded';
+  status:
+    "planning" | "generating" | "ready" | "rejected" | "failed" | "superseded";
   message: string;
   lock_forward_seek: boolean;
   intent: string;
@@ -47,7 +53,7 @@ export type ReaderBranch = {
     offset: number;
     original_index: number;
     original_shot_id?: string;
-    source_kind?: 'original' | 'branch';
+    source_kind?: "original" | "branch";
     at_story_end?: boolean;
   };
   summary?: string | null;
@@ -84,6 +90,6 @@ export type Catalog = {
   warning?: string;
 };
 
-
 export const canWatch = (item: CatalogItem) => !!item.release?.entries.length;
-export const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+export const reducedMotion = () =>
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;

@@ -1,11 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Review And Assemble Result",
-  "allOf": [
-    {"$ref": "../../../schemas/common/result-envelope.schema.json"}
-  ],
+  "allOf": [{ "$ref": "../../../schemas/common/result-envelope.schema.json" }],
   "properties": {
-    "skill": {"const": "review-and-assemble"},
+    "skill": { "const": "review-and-assemble" },
     "data": {
       "type": "object",
       "required": [
@@ -20,17 +18,28 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["id", "media_asset_id", "segment_id", "decision", "reason_codes"],
+            "required": [
+              "id",
+              "media_asset_id",
+              "segment_id",
+              "decision",
+              "reason_codes"
+            ],
             "properties": {
-              "id": {"type": "string"},
-              "media_asset_id": {"type": "string"},
-              "segment_id": {"type": "string"},
+              "id": { "type": "string" },
+              "media_asset_id": { "type": "string" },
+              "segment_id": { "type": "string" },
               "decision": {
-                "enum": ["selected", "rejected", "revision-needed", "unreviewed"]
+                "enum": [
+                  "selected",
+                  "rejected",
+                  "revision-needed",
+                  "unreviewed"
+                ]
               },
               "reason_codes": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": { "type": "string" },
                 "uniqueItems": true
               }
             },
@@ -43,9 +52,9 @@
             "type": "object",
             "required": ["segment_id", "media_asset_id", "role"],
             "properties": {
-              "segment_id": {"type": "string"},
-              "media_asset_id": {"type": "string"},
-              "role": {"enum": ["primary", "alternate"]}
+              "segment_id": { "type": "string" },
+              "media_asset_id": { "type": "string" },
+              "role": { "enum": ["primary", "alternate"] }
             },
             "additionalProperties": false
           }
@@ -54,16 +63,16 @@
           "type": "object",
           "required": ["frame_rate", "tracks", "duration_seconds"],
           "properties": {
-            "frame_rate": {"type": "number", "exclusiveMinimum": 0},
-            "duration_seconds": {"type": "number", "minimum": 0},
+            "frame_rate": { "type": "number", "exclusiveMinimum": 0 },
+            "duration_seconds": { "type": "number", "minimum": 0 },
             "tracks": {
               "type": "array",
               "items": {
                 "type": "object",
                 "required": ["id", "kind", "items"],
                 "properties": {
-                  "id": {"type": "string"},
-                  "kind": {"enum": ["video", "audio"]},
+                  "id": { "type": "string" },
+                  "kind": { "enum": ["video", "audio"] },
                   "items": {
                     "type": "array",
                     "items": {
@@ -76,11 +85,14 @@
                         "source_out"
                       ],
                       "properties": {
-                        "id": {"type": "string"},
-                        "media_asset_id": {"type": "string"},
-                        "timeline_start": {"type": "number", "minimum": 0},
-                        "source_in": {"type": "number", "minimum": 0},
-                        "source_out": {"type": "number", "exclusiveMinimum": 0}
+                        "id": { "type": "string" },
+                        "media_asset_id": { "type": "string" },
+                        "timeline_start": { "type": "number", "minimum": 0 },
+                        "source_in": { "type": "number", "minimum": 0 },
+                        "source_out": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        }
                       },
                       "additionalProperties": true
                     }
@@ -96,8 +108,8 @@
           "type": "object",
           "required": ["passed", "checks"],
           "properties": {
-            "passed": {"type": "boolean"},
-            "checks": {"type": "array", "items": {"type": "object"}}
+            "passed": { "type": "boolean" },
+            "checks": { "type": "array", "items": { "type": "object" } }
           },
           "additionalProperties": false
         },
@@ -105,9 +117,9 @@
           "type": "object",
           "required": ["ready", "files", "settings"],
           "properties": {
-            "ready": {"type": "boolean"},
-            "files": {"type": "array", "items": {"type": "object"}},
-            "settings": {"type": "object"}
+            "ready": { "type": "boolean" },
+            "files": { "type": "array", "items": { "type": "object" } },
+            "settings": { "type": "object" }
           },
           "additionalProperties": false
         }

@@ -15,7 +15,6 @@ This skill describes general prompting techniques. To choose a model, use the [f
 
 For pricing and feature comparison, see the [compare-models](../compare-models/SKILL.md) skill.
 
-
 ## Writing prompts
 
 ### Use natural language, not keyword lists
@@ -44,7 +43,6 @@ Most modern models accept thousands of tokens. Long descriptive prompts with cle
 
 Begin with basic changes. Test small edits first, then build on what works. Most editing models support iterative editing, so take advantage of that.
 
-
 ## Photographic language
 
 Modern image models understand camera and photography terminology deeply. Using this vocabulary gives you precise control over the look.
@@ -71,7 +69,6 @@ Modern image models understand camera and photography terminology deeply. Using 
 - High angle, low angle, eye level, bird's-eye view
 - Tilt-shift for miniature effects
 
-
 ## Text rendering
 
 Rendering text in images is a common task. These techniques improve accuracy across models.
@@ -84,7 +81,6 @@ Rendering text in images is a common task. These techniques improve accuracy acr
 - For complex typography (posters, editorial layouts), look for models that treat text as part of the composition rather than stamping it on top
 - Some models can inpaint text: mask the text region, prompt with new text, and it matches the original font and style
 
-
 ## Style transfer
 
 - Name the exact style: "impressionist painting," "1960s pop art," "Sumi-e ink wash"
@@ -93,7 +89,6 @@ Rendering text in images is a common task. These techniques improve accuracy acr
 - State what should stay the same: "keep the original composition"
 - When a style is hard to describe in words, some models support example-based editing: provide a before/after pair, then a third image. The model infers the transformation and applies it.
 - Some models accept style reference images: upload visuals capturing the color palette, texture, composition, and mood you want
-
 
 ## Character consistency
 
@@ -104,7 +99,6 @@ Maintaining the same character across multiple generations is one of the hardest
 - Use reference images when the model supports them. Some models handle multiple reference images simultaneously for stronger consistency.
 - Break complex character changes into steps: change outfit first, then change scene
 - Generate synthetic training data: create many images of a character, pick the best ones, and use them for fine-tuning or as references
-
 
 ## Image editing
 
@@ -136,7 +130,6 @@ Maintaining the same character across multiple generations is one of the hardest
 - Describing only the masked region makes the model emphasize the prompt more, which can produce better results for targeted edits
 - ControlNet-style conditioning (edge detection, depth maps) helps preserve structure during generation
 
-
 ## Multi-image and storyboard generation
 
 Some models can generate multiple related images in a single prompt.
@@ -146,7 +139,6 @@ Some models can generate multiple related images in a single prompt.
 - Maintain consistent style and character continuity by repeating exact descriptions
 - Some models support example-based editing: show a before/after pair for one image, then apply the same transformation to others
 
-
 ## Product photography and commercial work
 
 - Specify materials precisely: "brushed steel," "matte aluminum," "kraft paper," "frosted glass"
@@ -154,14 +146,12 @@ Some models can generate multiple related images in a single prompt.
 - For brand assets and icons, look for models that produce native SVG output (real editable vector files)
 - For layouts with branding and copy placement, look for models with strong typography and design composition
 
-
 ## Fine-tuning and LoRAs
 
 - Use trigger words from your trained model in every prompt
 - When combining multiple LoRAs, balance their influence with scale parameters (typically 0.9-1.1)
 - Generate synthetic training data: generate many images, pick the best, retrain
 - Use consistent-character workflows to generate training data from a single reference image
-
 
 ## Common pitfalls
 
@@ -184,7 +174,6 @@ Some models can generate multiple related images in a single prompt.
 9. **Wrong model for the task**: Not every model is good at every task. Some excel at text rendering but struggle with object removal. Some are great at style transfer but poor at background editing. If a model struggles with a specific edit type, try a different one rather than fighting the prompt. See the [compare-models](../compare-models/SKILL.md) skill for guidance.
 
 10. **Not iterating**: The best results come from iterative workflows. Make a small change, evaluate, refine, repeat. Don't try to get everything right in a single generation.
-
 
 ## Background reading
 

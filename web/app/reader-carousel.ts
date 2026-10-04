@@ -1,5 +1,5 @@
-import type {CatalogItem} from './reader-types';
-import {canWatch} from './reader-types';
+import type { CatalogItem } from "./reader-types";
+import { canWatch } from "./reader-types";
 
 const productionStages: Record<string, number> = {
   style: 1,
@@ -15,14 +15,17 @@ const productionStages: Record<string, number> = {
 
 export function productionRank(item: CatalogItem) {
   if (canWatch(item)) return 9;
-  return productionStages[item.stage || ''] || (item.project_id ? .5 : 0);
+  return productionStages[item.stage || ""] || (item.project_id ? 0.5 : 0);
 }
 
 export function rankByProduction(items: CatalogItem[]) {
   return items
-    .map((item, index) => ({item, index}))
-    .sort((a, b) => productionRank(b.item) - productionRank(a.item) || a.index - b.index)
-    .map(({item}) => item);
+    .map((item, index) => ({ item, index }))
+    .sort(
+      (a, b) =>
+        productionRank(b.item) - productionRank(a.item) || a.index - b.index,
+    )
+    .map(({ item }) => item);
 }
 
 export function wrapIndex(index: number, length: number) {
@@ -37,7 +40,11 @@ export function circularOffset(index: number, current: number, length: number) {
 }
 
 /** The cover one step away in a direction, wrapping at either end. */
-export function adjacentId(items: {id: string}[], current: number, direction: 1 | -1) {
-  if (items.length < 2) return '';
-  return items[wrapIndex(current + direction, items.length)]?.id || '';
+export function adjacentId(
+  items: { id: string }[],
+  current: number,
+  direction: 1 | -1,
+) {
+  if (items.length < 2) return "";
+  return items[wrapIndex(current + direction, items.length)]?.id || "";
 }

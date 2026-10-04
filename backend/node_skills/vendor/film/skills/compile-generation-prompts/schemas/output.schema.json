@@ -82,10 +82,10 @@
               "issues"
             ],
             "properties": {
-              "request_id": {"type": "string"},
-              "provider_id": {"type": "string"},
-              "model_id": {"type": "string"},
-              "media_type": {"enum": ["image", "video", "audio"]},
+              "request_id": { "type": "string" },
+              "provider_id": { "type": "string" },
+              "model_id": { "type": "string" },
+              "media_type": { "enum": ["image", "video", "audio"] },
               "generation_mode": {
                 "enum": [
                   "text-to-image",
@@ -96,37 +96,37 @@
                   "audio-generation"
                 ]
               },
-              "prompt": {"type": "string"},
+              "prompt": { "type": "string" },
               "asset_refs": {
                 "type": "array",
-                "items": {"type": "string"}
+                "items": { "type": "string" }
               },
               "reference_roles": {
                 "type": "object",
                 "properties": {
-                  "first_frame": {"type": "string"},
-                  "last_frame": {"type": "string"},
+                  "first_frame": { "type": "string" },
+                  "last_frame": { "type": "string" },
                   "multi_reference": {
                     "type": "array",
-                    "items": {"type": "string"}
+                    "items": { "type": "string" }
                   }
                 },
                 "additionalProperties": false
               },
-              "parameters": {"type": "object"},
-              "compatible": {"type": "boolean"},
+              "parameters": { "type": "object" },
+              "compatible": { "type": "boolean" },
               "issues": {
                 "type": "array",
                 "items": {
                   "type": "object",
                   "required": ["code", "field", "message", "alternatives"],
                   "properties": {
-                    "code": {"type": "string"},
-                    "field": {"type": "string"},
-                    "message": {"type": "string"},
+                    "code": { "type": "string" },
+                    "field": { "type": "string" },
+                    "message": { "type": "string" },
                     "alternatives": {
                       "type": "array",
-                      "items": {"type": "string"}
+                      "items": { "type": "string" }
                     }
                   },
                   "additionalProperties": false

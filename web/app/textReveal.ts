@@ -9,18 +9,32 @@ export class TextReveal {
   private finishBy = 0;
 
   constructor(text: string, key: string, active: boolean) {
-    this.target = text; this.shown = active ? '' : text; this.key = key; this.active = active;
+    this.target = text;
+    this.shown = active ? "" : text;
+    this.key = key;
+    this.active = active;
   }
 
-  update(text: string, key: string, active: boolean, now: number, instant = false) {
+  update(
+    text: string,
+    key: string,
+    active: boolean,
+    now: number,
+    instant = false,
+  ) {
     if (key !== this.key) {
-      this.key = key; this.shown = active && !instant ? '' : text;
-      this.credit = 0; this.last = now; this.finishBy = 0;
+      this.key = key;
+      this.shown = active && !instant ? "" : text;
+      this.credit = 0;
+      this.last = now;
+      this.finishBy = 0;
     } else if (!text.startsWith(this.shown)) {
-      const before = Array.from(this.shown), after = Array.from(text);
+      const before = Array.from(this.shown),
+        after = Array.from(text);
       let common = 0;
-      while (common < before.length && before[common] === after[common]) common++;
-      this.shown = after.slice(0, common).join('');
+      while (common < before.length && before[common] === after[common])
+        common++;
+      this.shown = after.slice(0, common).join("");
     }
     if (!active && this.active) this.finishBy = now + 320;
     if (active) this.finishBy = 0;
@@ -32,20 +46,38 @@ export class TextReveal {
     if (!this.last) this.last = now;
   }
 
-  finish() {this.shown = this.target; this.credit = 0; this.finishBy = 0;}
+  finish() {
+    this.shown = this.target;
+    this.credit = 0;
+    this.finishBy = 0;
+  }
 
   advance(now: number) {
     if (this.shown === this.target) return false;
-    if (this.finishBy && now >= this.finishBy) {this.finish(); return false;}
+    if (this.finishBy && now >= this.finishBy) {
+      this.finish();
+      return false;
+    }
     const pending = Array.from(this.target.slice(this.shown.length));
     const dt = Math.max(0, Math.min(64, now - this.last));
     this.last = now;
     // Normal text reads smoothly; large chunks catch up instead of forming a long queue.
-    const rate = Math.max(42, pending.length / (this.finishBy ? Math.max(.016, (this.finishBy - now) / 1000) : .22));
-    this.credit += dt * rate / 1000;
+    const rate = Math.max(
+      42,
+      pending.length /
+        (this.finishBy ? Math.max(0.016, (this.finishBy - now) / 1000) : 0.22),
+    );
+    this.credit += (dt * rate) / 1000;
     const count = Math.min(pending.length, Math.floor(this.credit));
-    if (count) {this.shown += pending.slice(0, count).join(''); this.credit -= count;}
-    if (this.shown === this.target) {this.credit = 0; this.finishBy = 0; return false;}
+    if (count) {
+      this.shown += pending.slice(0, count).join("");
+      this.credit -= count;
+    }
+    if (this.shown === this.target) {
+      this.credit = 0;
+      this.finishBy = 0;
+      return false;
+    }
     return true;
   }
 }

@@ -1,30 +1,35 @@
-'use client';
-import { useRef, useState } from 'react';
-import Link from 'next/link';
-import { ArrowLeft, PanelLeft, Info, ListTodo, FolderOpen } from 'lucide-react';
-import WorkspaceTabs from './WorkspaceTabs';
-import ContextPanel from './ContextPanel';
-import CanvasViewport from './CanvasViewport';
-import FilmEditor from './FilmEditor';
-import SourceArea from './SourceArea';
-import ConversationBar from './ConversationBar';
-import TaskQueue from './TaskQueue';
-import SourceLines from './SourceLines';
-import { WORKSPACE_LABELS, type WorkbenchState, type WorkbenchAction, type Workspace } from './workspace-state';
-import { type DisplayNode, type WorkspaceContent } from './display-model';
-import { type SourceFragment, type SourceModel } from './source-model';
+"use client";
+import { useRef, useState } from "react";
+import Link from "next/link";
+import { ArrowLeft, PanelLeft, Info, ListTodo, FolderOpen } from "lucide-react";
+import WorkspaceTabs from "./WorkspaceTabs";
+import ContextPanel from "./ContextPanel";
+import CanvasViewport from "./CanvasViewport";
+import FilmEditor from "./FilmEditor";
+import SourceArea from "./SourceArea";
+import ConversationBar from "./ConversationBar";
+import TaskQueue from "./TaskQueue";
+import SourceLines from "./SourceLines";
+import {
+  WORKSPACE_LABELS,
+  type WorkbenchState,
+  type WorkbenchAction,
+  type Workspace,
+} from "./workspace-state";
+import { type DisplayNode, type WorkspaceContent } from "./display-model";
+import { type SourceFragment, type SourceModel } from "./source-model";
 
 // 现有 9 个生产阶段的只读中文标签（顶栏进度用，非导航）
 const STAGE_LABELS: Record<string, string> = {
-  style: '选择风格',
-  segments_review: '确认情节',
-  preparing: '准备形象',
-  assets_review: '确认图片',
-  storyboarding: '分镜生成',
-  rendering: '漫剧生成',
-  episode_review: '本集发布',
-  film_review: '审片验收',
-  published: '发布作品',
+  style: "选择风格",
+  segments_review: "确认情节",
+  preparing: "准备形象",
+  assets_review: "确认图片",
+  storyboarding: "分镜生成",
+  rendering: "漫剧生成",
+  episode_review: "本集发布",
+  film_review: "审片验收",
+  published: "发布作品",
 };
 
 // 从片段正文里提取第一句引号对白（示例剧本用；真实对白拆分在 B 批）。
@@ -38,27 +43,41 @@ function firstDialogue(text: string): string | null {
 // 剧本 = 节点内含「动作 / 对白」两个可编辑字段；切分 = 节点内含「裁减正文」字段。
 // 片段是真实原文范围，正文取自真实文本；字段留空走空态，仅对白取自原文引号（非伪造）。
 // 片段未在服务端绑定（D03 待定）→ 标记 isExample（不伪造已保存记录）。
-function buildFragmentNode(task: 'script' | 'cut', frag: SourceFragment, source: SourceModel): DisplayNode {
+function buildFragmentNode(
+  task: "script" | "cut",
+  frag: SourceFragment,
+  source: SourceModel,
+): DisplayNode {
   const text = source.text.slice(frag.range.start, frag.range.end);
-  const body = text.length > 54 ? text.slice(0, 54) + '…' : text;
+  const body = text.length > 54 ? text.slice(0, 54) + "…" : text;
   const sourceRef = {
     fragmentName: frag.name,
     rangeStart: frag.range.start,
     rangeEnd: frag.range.end,
     sourceRevision: source.revision,
   };
-  if (task === 'cut') {
-    return { id: frag.id, kind: 'cut', title: frag.name, group: frag.name, body, fields: [{ label: '裁减正文', value: null }], version: null, sourceRef, isExample: true };
+  if (task === "cut") {
+    return {
+      id: frag.id,
+      kind: "cut",
+      title: frag.name,
+      group: frag.name,
+      body,
+      fields: [{ label: "裁减正文", value: null }],
+      version: null,
+      sourceRef,
+      isExample: true,
+    };
   }
   return {
     id: frag.id,
-    kind: 'script',
+    kind: "script",
     title: frag.name,
     group: frag.name,
     body,
     fields: [
-      { label: '动作', value: null },
-      { label: '对白', value: firstDialogue(text) },
+      { label: "动作", value: null },
+      { label: "对白", value: firstDialogue(text) },
     ],
     version: null,
     sourceRef,
@@ -84,7 +103,20 @@ interface Props {
 // 以「项目」为核心：项目顶栏 + 五个工作标签 + 三区主体（左：来源区｜中：任务画布/成片｜右：属性面板）。
 // 左侧来源区贯穿项目，跨工作区共享；点击荧光区域/片段 = 片段跳转（恢复目标片段的工作上下文）。
 // 未绑定项目（裸开 /author/workbench）时，主体整栏显示“进入项目入口”空态，不再向用户暴露内部路由。
-export default function WorkbenchShell({ view, dispatch, title, author, stage, readError, hasWork, source, content, onImportStory, importBusy, importError }: Props) {
+export default function WorkbenchShell({
+  view,
+  dispatch,
+  title,
+  author,
+  stage,
+  readError,
+  hasWork,
+  source,
+  content,
+  onImportStory,
+  importBusy,
+  importError,
+}: Props) {
   const active = view.activeWorkspace;
   const activeView = view.byWorkspace[active];
   const activeContent = content?.[active] ?? null;
@@ -92,27 +124,35 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
   const bodyRef = useRef<HTMLDivElement>(null);
   const noProject = !hasWork;
 
-  const allFragments = source ? [...source.fragments, ...view.candidateFragments].sort((a, b) => a.range.start - b.range.start) : [];
+  const allFragments = source
+    ? [...source.fragments, ...view.candidateFragments].sort(
+        (a, b) => a.range.start - b.range.start,
+      )
+    : [];
 
   // 中央节点：分镜/资产/成片用真实数据；切分/剧本每个片段各一个节点（剧本=动作/对白字段，切分=裁减字段）
   let nodes: DisplayNode[] = [];
-  const emptyReasons: Record<string, string> = activeContent?.emptyReasons ?? {};
-  if (active === 'board' || active === 'assets' || active === 'film') {
+  const emptyReasons: Record<string, string> =
+    activeContent?.emptyReasons ?? {};
+  if (active === "board" || active === "assets" || active === "film") {
     nodes = activeContent?.nodes ?? [];
   } else if (source) {
     nodes = allFragments.map((f) => buildFragmentNode(active, f, source));
   }
-  const selectedNode = nodes.find((n) => n.id === activeView.selectedId) ?? null;
+  const selectedNode =
+    nodes.find((n) => n.id === activeView.selectedId) ?? null;
   // 来源连线：仅剧本/裁减（节点 id = 片段 id）+ 来源区原文视图 + 有活跃片段时绘制
-  const sourceNodeId = active === 'script' || active === 'cut' ? view.activeFragmentId : null;
-  const regionActive = view.sourceOpen && view.sourceView === 'original' && !!sourceNodeId;
+  const sourceNodeId =
+    active === "script" || active === "cut" ? view.activeFragmentId : null;
+  const regionActive =
+    view.sourceOpen && view.sourceView === "original" && !!sourceNodeId;
   const emptyList = Object.values(emptyReasons).filter(Boolean) as string[];
   const loading = !!hasWork && !content;
   const emptyHint = loading
-    ? '正在读取项目…'
+    ? "正在读取项目…"
     : nodes.length === 0
       ? emptyList.length > 0
-        ? emptyList.join('；')
+        ? emptyList.join("；")
         : `「${WORKSPACE_LABELS[active]}」工作区暂无内容`
       : undefined;
 
@@ -120,20 +160,34 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
   function jump(f: SourceFragment) {
     const saved = view.contexts[f.id];
     const task: Workspace = saved?.task ?? f.task;
-    const selected = saved?.selected ?? (task === 'script' || task === 'cut' ? f.id : null);
-    dispatch({ type: 'JUMP_FRAGMENT', id: f.id, task, selected });
+    const selected =
+      saved?.selected ?? (task === "script" || task === "cut" ? f.id : null);
+    dispatch({ type: "JUMP_FRAGMENT", id: f.id, task, selected });
   }
 
   return (
-    <div className="workbench" data-noproject={noProject || undefined} data-source={noProject ? false : view.sourceOpen} data-inspector={noProject ? false : view.inspectorOpen}>
+    <div
+      className="workbench"
+      data-noproject={noProject || undefined}
+      data-source={noProject ? false : view.sourceOpen}
+      data-inspector={noProject ? false : view.inspectorOpen}
+    >
       <header className="workbench-topbar">
         <Link className="workbench-brand" href="/">
           叙间<span>STORYLOOM · WORKBENCH</span>
         </Link>
         <div className="workbench-topbar-project">
-          <span className="workbench-project-name">{title || '未绑定项目'}</span>
-          {stage ? <span className="workbench-project-stage">{STAGE_LABELS[stage] ?? stage}</span> : null}
-          {author ? <small className="workbench-project-author">{author}</small> : null}
+          <span className="workbench-project-name">
+            {title || "未绑定项目"}
+          </span>
+          {stage ? (
+            <span className="workbench-project-stage">
+              {STAGE_LABELS[stage] ?? stage}
+            </span>
+          ) : null}
+          {author ? (
+            <small className="workbench-project-author">{author}</small>
+          ) : null}
         </div>
         <div className="workbench-topbar-actions">
           <button
@@ -150,8 +204,10 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
             type="button"
             className="button secondary"
             aria-pressed={view.sourceOpen}
-            title={view.sourceOpen ? '收起来源区' : '展开来源区'}
-            onClick={() => dispatch({ type: 'SET_SOURCE_OPEN', open: !view.sourceOpen })}
+            title={view.sourceOpen ? "收起来源区" : "展开来源区"}
+            onClick={() =>
+              dispatch({ type: "SET_SOURCE_OPEN", open: !view.sourceOpen })
+            }
           >
             <PanelLeft size={15} />
             来源
@@ -160,8 +216,10 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
             type="button"
             className="button secondary"
             aria-pressed={view.inspectorOpen}
-            title={view.inspectorOpen ? '收起属性面板' : '展开属性面板'}
-            onClick={() => dispatch({ type: 'SET_INSPECTOR', open: !view.inspectorOpen })}
+            title={view.inspectorOpen ? "收起属性面板" : "展开属性面板"}
+            onClick={() =>
+              dispatch({ type: "SET_INSPECTOR", open: !view.inspectorOpen })
+            }
           >
             <Info size={15} />
             属性
@@ -173,16 +231,28 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
         </div>
       </header>
 
-      {taskQueueOpen ? <TaskQueue currentStage={stage ?? null} onClose={() => setTaskQueueOpen(false)} /> : null}
+      {taskQueueOpen ? (
+        <TaskQueue
+          currentStage={stage ?? null}
+          onClose={() => setTaskQueueOpen(false)}
+        />
+      ) : null}
 
-      <WorkspaceTabs active={active} onSelect={(w: Workspace) => dispatch({ type: 'SET_WORKSPACE', workspace: w })} />
+      <WorkspaceTabs
+        active={active}
+        onSelect={(w: Workspace) =>
+          dispatch({ type: "SET_WORKSPACE", workspace: w })
+        }
+      />
 
       <div className="workbench-body" ref={bodyRef}>
         {noProject ? (
           <div className="workbench-noproject">
             <FolderOpen size={42} />
             <strong>还没有打开项目</strong>
-            <p>从项目入口选择一个项目，或新建一个项目——然后在这里导入你的故事原文、切分片段、编排剧本、制作成片。</p>
+            <p>
+              从项目入口选择一个项目，或新建一个项目——然后在这里导入你的故事原文、切分片段、编排剧本、制作成片。
+            </p>
             <Link className="button primary" href="/">
               进入项目入口
             </Link>
@@ -190,18 +260,34 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
         ) : (
           <>
             <SourceArea
-              source={source ?? { revision: 'import-0', text: '', paragraphs: [], fragments: [], isExample: false }}
+              source={
+                source ?? {
+                  revision: "import-0",
+                  text: "",
+                  paragraphs: [],
+                  fragments: [],
+                  isExample: false,
+                }
+              }
               open={view.sourceOpen}
               view={view.sourceView}
               activeFragmentId={view.activeFragmentId}
               active={active}
               candidateFragments={view.candidateFragments}
               pendingRange={view.pendingRange}
-              onToggleView={(v) => dispatch({ type: 'SET_SOURCE_VIEW', view: v })}
-              onCollapse={() => dispatch({ type: 'SET_SOURCE_OPEN', open: false })}
+              onToggleView={(v) =>
+                dispatch({ type: "SET_SOURCE_VIEW", view: v })
+              }
+              onCollapse={() =>
+                dispatch({ type: "SET_SOURCE_OPEN", open: false })
+              }
               onJump={jump}
-              onSetPending={(r) => dispatch({ type: 'SET_PENDING_RANGE', range: r })}
-              onAddCandidate={(f) => dispatch({ type: 'ADD_CANDIDATE_FRAGMENT', fragment: f })}
+              onSetPending={(r) =>
+                dispatch({ type: "SET_PENDING_RANGE", range: r })
+              }
+              onAddCandidate={(f) =>
+                dispatch({ type: "ADD_CANDIDATE_FRAGMENT", fragment: f })
+              }
               onImportStory={onImportStory}
               importBusy={importBusy}
               importError={importError}
@@ -216,10 +302,13 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
                   </Link>
                 </div>
               ) : null}
-              {active === 'film' ? (
+              {active === "film" ? (
                 <FilmEditor
                   clips={nodes}
-                  resources={allFragments.map((f) => ({ id: f.id, name: f.name }))}
+                  resources={allFragments.map((f) => ({
+                    id: f.id,
+                    name: f.name,
+                  }))}
                   isExample={!nodes.some((n) => !n.isExample)}
                 />
               ) : (
@@ -230,14 +319,20 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
                     layout={activeView.layout}
                     viewport={activeView.viewport}
                     selectedId={activeView.selectedId}
-                    onViewportChange={(v) => dispatch({ type: 'SET_VIEWPORT', viewport: v })}
-                    onSelect={(id) => dispatch({ type: 'SELECT', id })}
-                    onNodeDragStop={(id, x, y) => dispatch({ type: 'SET_LAYOUT', id, x, y })}
+                    onViewportChange={(v) =>
+                      dispatch({ type: "SET_VIEWPORT", viewport: v })
+                    }
+                    onSelect={(id) => dispatch({ type: "SELECT", id })}
+                    onNodeDragStop={(id, x, y) =>
+                      dispatch({ type: "SET_LAYOUT", id, x, y })
+                    }
                     emptyHint={emptyHint}
                   />
                   <ConversationBar
                     stepLabel={`${WORKSPACE_LABELS[active]}步骤`}
-                    contextLabel={selectedNode ? `针对「${selectedNode.title}」` : null}
+                    contextLabel={
+                      selectedNode ? `针对「${selectedNode.title}」` : null
+                    }
                   />
                 </>
               )}
@@ -246,10 +341,14 @@ export default function WorkbenchShell({ view, dispatch, title, author, stage, r
             <ContextPanel
               open={view.inspectorOpen}
               selectedNode={selectedNode}
-              onClose={() => dispatch({ type: 'SET_INSPECTOR', open: false })}
+              onClose={() => dispatch({ type: "SET_INSPECTOR", open: false })}
             />
 
-            <SourceLines bodyRef={bodyRef} regionActive={regionActive} nodeId={sourceNodeId} />
+            <SourceLines
+              bodyRef={bodyRef}
+              regionActive={regionActive}
+              nodeId={sourceNodeId}
+            />
           </>
         )}
       </div>
