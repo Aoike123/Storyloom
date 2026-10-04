@@ -542,12 +542,36 @@
         "R06",
         "R12"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "分离账号身份模型，保留有效密码/会话字段语义。",
-      "allowlist_scope": "backend/core/db.py、backend/core/accounts.py、backend/core/auth.py、backend/core/config.py及直接相关tests；逐子卡收窄，接入由主模型集成",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/core/accounts.py + tests/studio/test_accounts.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.3",
+        "tested_baseline": "82cd714 + 2 新文件（本卡提交）",
+        "scope": "account_identity_model",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 15/15（6 新 + 9 既有无回归）；data/ 无 studio-test-* 残留。",
+          "User 表字段/约束与旧账号系统语义一致（username 唯一、auth_token 索引、PBKDF2 210000 迭代 compare_digest 防时序）；注册到 core.db.Base 新库 users 表，与旧库无共享。"
+        ],
+        "evidence": [
+          "backend/core/accounts.py",
+          "tests/studio/test_accounts.py"
+        ],
+        "limitations": [
+          "测试夹具注记（执行器报告）：sandbox 限制执行期 mkdir，夹具用 drop_all+create_all + atexit 清理，行为不受影响。"
+        ]
+      }
     },
     {
       "id": "BASE-03-c",
