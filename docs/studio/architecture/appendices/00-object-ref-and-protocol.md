@@ -77,9 +77,11 @@
 | `preview_stale` | 409 | 预览基准已变 | `{"preview_id"}` + 与 `revision_conflict` 同形的 `conflicts[]` 列表 |
 | `precondition_failed` | 422 | 状态前置不满足（如未确认片段不可采用、同镜头同人双服装） | `{"reason","blocked_by":{"kind","id","revision"}}` |
 | `duplicate_scope` | 422 | 完整制作范围重复提交同一覆盖 | `{"scope_ref"}` |
+| `duplicate` | 409 | 同一作用域内同身份对象已存在（v2.6 增：项目名 (owner,name) 等属主级 UQ 冲突；不改已有对象） | `{"scope_ref"}` |
 | `internal_error` | 500 | 未预期错误；不泄露内部细节 | — |
 
-- `message` 为面向用户的准确说明；`details` 供程序恢复。前端客户端（BASE-02）必须保留 code 与 details，失败不得转成成功空数组。
+- `message` 为面向用户的准确说明；`details` 供程序恢复。
+- **v2.6 语义区分**：`duplicate`（409）= 属主级身份唯一冲突（如 P1 项目名）；`duplicate_scope`（422）= 覆盖范围重复提交（制作范围、发布创建等附录 11 §3 场景）。两者不互换。前端客户端（BASE-02）必须保留 code 与 details，失败不得转成成功空数组。
 - 409/422 的 message 必须给出**具体已有对象与定位信息**（ID + 名称），不静默裁掉或偷合并。
 
 ## 5. 预览-应用协议（R11 的统一机制）
