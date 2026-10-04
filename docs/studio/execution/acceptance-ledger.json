@@ -1371,12 +1371,35 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "准确读取属主项目；未登录/跨属主拒绝。",
-      "allowlist_scope": "backend/studio/projects/service.py、backend/studio/projects/api.py、backend/studio/sources/service.py、backend/studio/sources/api.py、tests/studio/test_projects.py；逐命令子卡收窄",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/projects/{service,api}.py + tests/studio/test_projects.py（追加）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.6",
+        "tested_baseline": "dc268ff + 3 文件追加（本卡提交）",
+        "scope": "project_read_command_p3",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 224/224（5 新 + 219 既有）；代码审查：get_project 纯读（select 单表、不 commit、无 command_id）+ not_found(\"project\", pid) 单点判定 + _to_dto 复用，无冗余路径。",
+          "P3 冻结行为逐条：401 无 token；属主 200 七字段逐字段相等；不存在 pid → 404 not_found details {kind:project, id:pid}；跨属主 → 同形状 404（不泄漏存在性）；3×GET 无副作用（command_records/projects 行数不变）。"
+        ],
+        "contract_question_ruling": [],
+        "evidence": [
+          "backend/studio/projects/service.py",
+          "backend/studio/projects/api.py",
+          "tests/studio/test_projects.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-01-c",

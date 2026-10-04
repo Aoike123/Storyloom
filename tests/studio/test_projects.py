@@ -7,9 +7,10 @@ import re
 import uuid
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from backend.core.db import Base, Session, engine
+from backend.studio.contracts.models import CommandRecord
 from backend.studio.projects.models import StudioProject
 
 
@@ -221,3 +222,94 @@ def test_t10_missing_command_id_422(db, client):
         "/api/studio/projects", json={"name": "NoCmd"}, headers=_auth(token)
     )
     assert r.status_code == 422
+
+
+# ── P3 读取单项目（GET /projects/{pid}）──────────────────────────────────────
+
+def test_t11_no_token_get_401(db, client):
+    r = client.get("/api/studio/projects/01010101010101010101010101")
+    assert r.status_code == 401
+    assert r.json()["error"]["code"] == "unauthenticated"
+
+
+def test_t12_owner_reads_own_project(db, client):
+    token = _register(client, "t12_karen")
+    r1 = client.post(
+        "/api/studio/projects",
+        json={"name": "P3Proj", "description": "hello", "command_id": _cmd()},
+        headers=_auth(token),
+    )
+    assert r1.status_code == 201, r1.text
+    created = r1.json()
+    r2 = client.get(
+        f"/api/studio/projects/{created['id']}", headers=_auth(token)
+    )
+    assert r2.status_code == 200, r2.text
+    fetched = r2.json()
+    for k in (
+        "id",
+        "name",
+        "description",
+        "visibility",
+        "active_source_revision_id",
+        "created_at",
+        "updated_at",
+    ):
+        assert fetched[k] == created[k], f"字段 {k} 不一致: {fetched[k]!r} != {created[k]!r}"
+
+
+def test_t13_nonexistent_pid_404(db, client):
+    token = _register(client, "t13_laura")
+    pid = "01" * 13
+    r = client.get(f"/api/studio/projects/{pid}", headers=_auth(token))
+    assert r.status_code == 404, r.text
+    err = r.json()["error"]
+    assert err["code"] == "not_found"
+    assert err["details"] == {"kind": "project", "id": pid}
+
+
+def test_t14_cross_owner_404(db, client):
+    t1 = _register(client, "t14_mallory")
+    t2 = _register(client, "t14_nancy")
+    r1 = client.post(
+        "/api/studio/projects",
+        json={"name": "CrossOwner", "command_id": _cmd()},
+        headers=_auth(t1),
+    )
+    assert r1.status_code == 201, r1.text
+    pid = r1.json()["id"]
+    r2 = client.get(f"/api/studio/projects/{pid}", headers=_auth(t2))
+    assert r2.status_code == 404, r2.text
+    err = r2.json()["error"]
+    assert err["code"] == "not_found"
+    assert err["details"] == {"kind": "project", "id": pid}
+
+
+def test_t15_no_side_effects(db, client):
+    token = _register(client, "t15_olga")
+    # 先建一个项目，使 projects 表有数据
+    r1 = client.post(
+        "/api/studio/projects",
+        json={"name": "NoSide", "command_id": _cmd()},
+        headers=_auth(token),
+    )
+    assert r1.status_code == 201, r1.text
+
+    # 基线计数
+    proj_before = _project_count()
+    with Session() as s:
+        cmd_before = s.scalar(select(func.count(CommandRecord.id)))
+
+    # 对不存在 pid 发 3 次 GET
+    pid = "01" * 13
+    for _ in range(3):
+        r = client.get(f"/api/studio/projects/{pid}", headers=_auth(token))
+        assert r.status_code == 404
+
+    # 读命令无副作用：无新 command record，项目数不变
+    proj_after = _project_count()
+    with Session() as s:
+        cmd_after = s.scalar(select(func.count(CommandRecord.id)))
+
+    assert cmd_after == cmd_before, f"command_records 新增 {cmd_after - cmd_before} 行"
+    assert proj_after == proj_before, f"projects 从 {proj_before} 变 {proj_after}"

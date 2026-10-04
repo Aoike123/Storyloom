@@ -21,7 +21,7 @@ from ..contracts.errors import StudioAPIError
 from ..contracts.models import CommandRecord
 from .models import StudioProject
 
-__all__ = ["create_project"]
+__all__ = ["create_project", "get_project"]
 
 
 def _to_dto(p: StudioProject) -> dict:
@@ -133,3 +133,15 @@ def create_project(session, user, name, description, command_id) -> dict:
         )
 
     return _to_dto(project)
+
+
+def get_project(session, user, pid) -> dict:
+    """P3 读取单项目（附录 01 §2，契约 v2.6）。
+
+    纯读：不写任何表、不 commit、不接受 command_id（附录 00 §3）。
+    不存在或非属主一律 404 not_found（不泄漏存在性，SOURCE-01 验收裁定）。
+    """
+    p = session.scalar(select(StudioProject).where(StudioProject.id == pid))
+    if p is None or p.owner_id != user.id:
+        raise StudioAPIError.not_found("project", pid)
+    return _to_dto(p)

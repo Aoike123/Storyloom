@@ -35,3 +35,10 @@ def create_project(body: CreateProjectIn, user: User = Depends(require_user)):
         # 重放命中：200 原样返回首次 result_payload（覆盖 201）
         return JSONResponse(status_code=200, content=result)
     return result
+
+
+@router.get("/projects/{pid}")
+def get_project(pid: str, user: User = Depends(require_user)):
+    """P3 读取单项目（附录 01 §2）：纯读，无副作用。"""
+    with Session() as s:
+        return service.get_project(s, user, pid)
