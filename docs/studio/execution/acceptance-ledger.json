@@ -304,12 +304,38 @@
         "R06",
         "R12"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "只建立新路由/StudioApp，缺projectId不进入示例项目。",
-      "allowlist_scope": "web/app/studio/[projectId]/page.tsx、web/features/studio/StudioApp.tsx、backend/studio/router.py、backend/studio/app_factory.py；分前/后端子卡，注册接入由主模型集成",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "web/app/studio/page.tsx、web/app/studio/[projectId]/page.tsx、web/features/studio/StudioApp.tsx + web/tests/studio/studio-app.test.cjs（后端部分归 BASE-01-b）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "tested_baseline": "d918cc1 + 4 新文件（本卡提交）",
+        "scope": "studio_routes_and_empty_states",
+        "checks": [
+          "主模型独立复验（不复用执行器报告）：dev server 127.0.0.1:3021 实测 /studio→200“未选择项目”；/studio/%20→200“项目 ID 无效或为空”（不进入示例项目）；/studio/abc123→200 空态含 abc123；/studio/%2541→200 显示 %41（证明 Next 15.5 传入未解码 segment，代码单次 decodeURIComponent 为唯一解码，无双重解码缺陷）。",
+          "渲染页 HTML 0 处 /api/ 引用（不请求旧 API）；旧首页 / 仍 200（无回归）；源码审计 10 断言通过；npx tsc --noEmit 通过（pnpm typecheck 因 package.json 的 packageManager=11.22.0 与本机 pnpm 11.7.0 的 corepack 校验不匹配而不可用——环境问题非本卡缺陷，验收以 tsc 为准）。",
+          "样式作用域独立（styled-jsx .studio-shell）；未挂载旧组件、未注入 fixture。"
+        ],
+        "evidence": [
+          "web/app/studio/page.tsx",
+          "web/app/studio/[projectId]/page.tsx",
+          "web/features/studio/StudioApp.tsx",
+          "web/tests/studio/studio-app.test.cjs"
+        ],
+        "limitations": [
+          "projectId 存在性校验（真实项目 404 态）待 BASE-02 的 API 客户端与 SOURCE-01-b 落地后补；本卡只保证缺/错 id 的明确空态。"
+        ]
+      }
     },
     {
       "id": "BASE-01-b",
