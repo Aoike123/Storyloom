@@ -53,6 +53,7 @@ import backend.studio.scripts.models  # noqa: F401,E402
 import backend.studio.storyboard.models  # noqa: F401,E402
 import backend.studio.assets.models  # noqa: F401,E402
 import backend.studio.relations.models  # noqa: F401,E402
+import backend.studio.reviews.models  # noqa: F401,E402
 import backend.studio.contracts.models  # noqa: F401,E402
 import backend.studio.jobs.models  # noqa: F401,E402
 
