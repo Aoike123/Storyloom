@@ -496,12 +496,35 @@
         "R06",
         "R12"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "提取纯连接/Base，新模块不加载旧业务表。",
-      "allowlist_scope": "backend/core/db.py、backend/core/accounts.py、backend/core/auth.py、backend/core/config.py及直接相关tests；逐子卡收窄，接入由主模型集成",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/core/__init__.py、backend/core/db.py + tests/studio/test_core_db.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.3",
+        "tested_baseline": "73dc8a1 + 3 新文件（本卡提交）",
+        "scope": "core_db_engine_session_base",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 9/9（含 4 新 + 5 既有无回归）；import backend.core.db 得 sqlite:///data/studio/story.db；Session expire_on_commit=False。",
+          "STUDIO_DATA_DIR/STUDIO_DATABASE_URL 与旧 DATA_DIR/DATABASE_URL 隔离；WAL+FK pragmas 生效；Base 空时不建任何表、不加载旧 records/tasks。",
+          "规格勘误（执行器正确修正并报告）：create_engine 不从 sqlalchemy.orm 导出，改 from sqlalchemy import create_engine，行为不变；后续卡引用 Engine 类型一律 from sqlalchemy.engine。"
+        ],
+        "evidence": [
+          "backend/core/__init__.py",
+          "backend/core/db.py",
+          "tests/studio/test_core_db.py"
+        ]
+      }
     },
     {
       "id": "BASE-03-b",
