@@ -793,6 +793,15 @@
         ],
         "limitations": [
           "执行器报告的全套件 3 失败 = 各文件各自设 env 打单例 engine 的设计缺陷（主模型责任）→ 已按上述统一修复，复验全绿。"
+        ],
+        "followups": [
+          {
+            "date": "2026-10-04",
+            "note": "ProductionScope 补入（主模型，DB-08 验收轮）：附录 02 将 studio_production_scopes 冻结于 sources/models.py（DB-01 卡位置），但 DB-01 规格遗漏该类 → 已按附录 02 §1 逐列补入（id/project_id/source_revision_id/fragment_ids/covered/excluded_ranges/created_at）。",
+            "evidence": [
+              "backend/studio/sources/models.py"
+            ]
+          }
         ]
       }
     },
@@ -973,11 +982,37 @@
         "R09",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "backend/studio/jobs/models.py、tests/studio/test_job_models.py",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/jobs/{__init__,models}.py + tests/studio/test_job_models.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.3",
+        "tested_baseline": "bf0879e + 3 新文件 + 主模型补入（本卡提交）",
+        "scope": "jobs_attempts_events_models",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 44/44（8 新 + 36 既有）；data/ 无残留。",
+          "三表与附录 09 §1 冻结字段逐列一致（JSON→Text、TIMESTAMPTZ→Float 映射写入 docstring）；CK kind/status/type、UQ(job_id,seq)、事件表列集合=只追加形状。",
+          "负例：legacy kind/状态、悬空 FK×2、重复 seq、非法 attempt/事件 type → 全 IntegrityError；无 stage/node/reader/branch/workflow 列、无 task 表。"
+        ],
+        "integration_by_main": [
+          "conftest 模型注册表追加 backend.studio.jobs.models（DB-01 验收时预留的机制）。"
+        ],
+        "evidence": [
+          "backend/studio/jobs/models.py",
+          "tests/studio/test_job_models.py",
+          "tests/studio/conftest.py"
+        ]
+      }
     },
     {
       "id": "DB-09",
