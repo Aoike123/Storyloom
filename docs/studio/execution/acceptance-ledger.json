@@ -6,19 +6,30 @@
   "updated": "2026-10-04",
   "authority": "root_acceptance_only",
   "implementation": {
-    "root": null,
-    "branch": null,
-    "base_commit": null,
-    "backend_port": null,
-    "frontend_port": null,
-    "data_root": null,
-    "runtime": null,
+    "root": "/home/aoike/Project/Agent_Orchestration/workflow/Storyloom",
+    "branch": "studio-rebuild",
+    "base_commit": "bcb3eb4",
+    "backend_port": 3011,
+    "frontend_port": 3021,
+    "data_root": "/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/data/studio",
+    "runtime": {
+      "python": "/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/.venv/bin/python (3.12.14)",
+      "node": "v24.21.0",
+      "package_manager": "pnpm 11.7.0"
+    },
+    "startup": {
+      "backend": ".venv/bin/python -m uvicorn backend.studio.app_factory:app --host 127.0.0.1 --port 3011 （ASGI 对象由 BASE-01-b 提供，模块名以 BASE-01 冻结为准）",
+      "frontend": "pnpm --dir web dev --hostname 127.0.0.1 --port 3021 （现有 Next.js 应用，新 /studio 路由由 BASE-01-a 加入）",
+      "worker": "新 StudioJob 运行器，不复用旧 backend.worker；具体形态由 ROOT-04 冻结"
+    },
     "freeze_task": "ROOT-01"
   },
   "observed_baselines": {
-    "documentation_worktree": "eccfa99",
+    "documentation_worktree": "f7f0c25（/home/aoike/.codex/worktrees/dbd1/Storyloom 的 detached HEAD，工作树干净；其 docs 提交已被 main 的 bcb3eb4 取代，仅作存档）",
     "audit_main": "d43b51f",
-    "main_at_document_restructure": "c19639d"
+    "main_at_document_restructure": "c19639d",
+    "main_at_root01": "bcb3eb4",
+    "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1）；当前 3000、8000 及其他 3030/9090/9100/8200 由非本用户进程占用，不得触碰；3001 当前无人监听；新预览独占 3011/3021"
   },
   "policy": {
     "acceptance_requires": [
@@ -76,11 +87,33 @@
         "R01",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "由主模型确定此准备/验收卡的准确范围",
+      "allowlist_scope": "主模型准备卡：仅 Git 分支/基线/端口/运行时记录，不改应用文件",
       "attempts": [],
-      "acceptance": null
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "tested_baseline": "bcb3eb4",
+        "scope": "baseline_freeze",
+        "checks": [
+          "主目录 /home/aoike/Project/Agent_Orchestration/workflow/Storyloom 于 bcb3eb4 工作树干净：文档已提交（bcb3eb4），无未提交文档需另行保护。",
+          "已创建分支 studio-rebuild（自 bcb3eb4 切出），实施只在此目录进行；codex 工作树 /home/aoike/.codex/worktrees/dbd1/Storyloom（f7f0c25，干净，已被取代）仅作存档、不参与实施，避免两目录交错修改。",
+          "运行时核对：.venv/bin/python 3.12.14、node v24.21.0、pnpm 11.7.0、web/node_modules 存在；只读复用，未安装/复制依赖。",
+          "端口：3001 当前无人监听；旧栈标准端口 3000/8000 由非本用户进程占用（可能他处运行旧栈），新预览独占 3011（backend）/3021（frontend），均已验证空闲；测试用隔离 data 与 test-* 目录，不占用端口。",
+          "数据隔离：新系统 data_root=data/studio（自有 SQLite 与媒体目录），旧 data/story.db 与 data/media 保持不动。",
+          "全程未执行 reset --hard、未覆盖任何本地修改、未占用/干扰旧生产端口。"
+        ],
+        "evidence": [
+          "git branch: studio-rebuild @ bcb3eb4（主目录唯一实施 checkout）",
+          "ss -ltn：3011/3021 空闲；3000/8000/3030/9090/9100/8200 归属其他用户进程",
+          "scripts/start.ps1 记录旧栈端口 web=3000、api=8000、worker=backend.worker（均不复用）"
+        ],
+        "limitations": [
+          "backend.studio.app_factory 的 ASGI 对象尚不存在，随 BASE-01-b 交付；届时如模块导出名变化，更新本账本 startup 字段。",
+          "非应用功能验收；后续每张叶卡的验收以实际受测 commit 为准。"
+        ]
+      }
     },
     {
       "id": "ROOT-02",
