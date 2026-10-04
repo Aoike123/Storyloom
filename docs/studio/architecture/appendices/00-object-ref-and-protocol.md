@@ -107,6 +107,7 @@
 
 - 范围 = UTF-16 code unit 半开区间 `[start, end)`，相对 canonical 文本（`offset_policy="lf-utf16-v1"`）。
 - 拒绝（`range_invalid`）：非整数/缺失、`end<=start`（空）、越界（`end>len` 或 `start<0`）、区间内全空白（blank）、劈开代理对（区间边界落在代理对内侧）、非连续选择（前台选区必须在提交前合成单一连续区间）。
+- **blank 空白集（v2.5 冻结）**：区间内每个码点均属此集才判 blank = **JS `\s` 码点集**：`U+0009~U+000D`、`U+0020`、`U+00A0`、`U+1680`、`U+2000~U+200A`、`U+2028`、`U+2029`、`U+202F`、`U+205F`、`U+3000`、`U+FEFF`。前后端显式用同一集（Python 不用 `isspace()`——其与 JS `\s` 在 U+0085/U+001C-1F/U+FEFF 等码点不一致），保证任意文本上两栈判定严格相等（SOURCE-02 验收裁定）。
 - 冲突（`range_overlap`）：与**同 (project, source_revision) 下所有未退役候选/确认**逐一判 `a.start < b.end && b.start < a.end`；重复、相交、包含、被包含均冲突，边界相接合法。AI 提案与用户操作走同一服务端规则。
 
 ## 8. 前端 HTTP 客户端传输（BASE-02 的冻结依据）
