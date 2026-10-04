@@ -1,0 +1,5326 @@
+{
+  "schema_version": 1,
+  "plan_version": "2.1",
+  "contract_version": "2.0",
+  "product_version": "2.0",
+  "updated": "2026-10-04",
+  "authority": "root_acceptance_only",
+  "implementation": {
+    "root": null,
+    "branch": null,
+    "base_commit": null,
+    "backend_port": null,
+    "frontend_port": null,
+    "data_root": null,
+    "runtime": null,
+    "freeze_task": "ROOT-01"
+  },
+  "observed_baselines": {
+    "documentation_worktree": "eccfa99",
+    "audit_main": "d43b51f",
+    "main_at_document_restructure": "c19639d"
+  },
+  "policy": {
+    "acceptance_requires": [
+      "dependency_acceptance",
+      "frozen_operation_contract",
+      "reviewed_diff",
+      "independent_verification",
+      "tested_baseline",
+      "evidence"
+    ],
+    "family_dispatch": false,
+    "family_acceptance": "all_children_accepted",
+    "executor_statuses": [
+      "submitted",
+      "blocked"
+    ],
+    "root_statuses": [
+      "planned",
+      "ready",
+      "running",
+      "submitted",
+      "accepted",
+      "rejected",
+      "blocked_by_design"
+    ],
+    "negative_case_policy": "每张派发卡必须填写与唯一操作直接相关的失败/恢复案例，不能以空数组通过。",
+    "readiness": "只有主模型填写准确实施目录、基线、接口、收窄文件白名单与验证步骤，并确认所有依赖accepted后才将叶卡设ready。",
+    "retirement_requires": "RETIRE-01由主模型冻结逐文件退役清单且新路径通过GATE-01～05；ROOT-05盘点不自动授权按目录泛删。",
+    "legacy_code_deletion_authorization": {
+      "source": "用户明确指令：重构项目旧版代码允许删除",
+      "date": "2026-10-04",
+      "scope": "旧产品页面、组件、业务接口、管线、专用入口及审定引用",
+      "repeat_user_confirmation_required": false
+    },
+    "legacy_workflow_is_implementation_standard": false,
+    "new_workflow_basis": "当前产品R规则及ROOT-02/04重新冻结的命令/任务/提案操作表；旧节点、prompt payload、阶段门槛与旧专用测试不构成验收依据。"
+  },
+  "counts": {
+    "parents": 90,
+    "families": 28,
+    "children": 108,
+    "leaves": 170
+  },
+  "tasks": [
+    {
+      "id": "ROOT-01",
+      "parent_id": null,
+      "title": "固定隔离重构基线",
+      "kind": "atomic",
+      "owner": "root",
+      "spec": "execution/tasks/00-decisions.md",
+      "requires": [],
+      "children": [],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "由主模型确定此准备/验收卡的准确范围",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "ROOT-02",
+      "parent_id": null,
+      "title": "冻结新schema、API与状态附录",
+      "kind": "atomic",
+      "owner": "root",
+      "spec": "execution/tasks/00-decisions.md",
+      "requires": [
+        "ROOT-01"
+      ],
+      "children": [],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "由主模型确定此准备/验收卡的准确范围",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "ROOT-03",
+      "parent_id": null,
+      "title": "定一个真实剪辑内核适配方案",
+      "kind": "atomic",
+      "owner": "root",
+      "spec": "execution/tasks/00-decisions.md",
+      "requires": [
+        "ROOT-01",
+        "ROOT-02"
+      ],
+      "children": [],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "由主模型确定此准备/验收卡的准确范围",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "ROOT-04",
+      "parent_id": null,
+      "title": "冻结新任务及agent adapter",
+      "kind": "atomic",
+      "owner": "root",
+      "spec": "execution/tasks/00-decisions.md",
+      "requires": [
+        "ROOT-02"
+      ],
+      "children": [],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "由主模型确定此准备/验收卡的准确范围",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "ROOT-05",
+      "parent_id": null,
+      "title": "旧代码退役依赖清单",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/00-decisions.md",
+      "requires": [],
+      "children": [],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "accepted",
+      "dispatchable": false,
+      "allowlist_scope": "由主模型确定此准备/验收卡的准确范围",
+      "attempts": [],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "tested_baseline": "d43b51f",
+        "evidence": [
+          "evidence/legacy-dependency-inventory.md"
+        ],
+        "scope": "read_only_dependency_inventory",
+        "checks": [
+          "主模型核对app路由装配、账号/连接依赖、旧生成client的Task/Record耦合与新旧入口消费关系。"
+        ],
+        "limitations": [
+          "非应用功能验收；删除时须重新核对实际实施HEAD。"
+        ],
+        "rechecked_baseline": "c19639d"
+      }
+    },
+    {
+      "id": "BASE-01-a",
+      "parent_id": "BASE-01",
+      "title": "新工作台路由与空态",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "ROOT-02"
+      ],
+      "product_rules": [
+        "R01",
+        "R06",
+        "R12"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只建立新路由/StudioApp，缺projectId不进入示例项目。",
+      "allowlist_scope": "web/app/studio/[projectId]/page.tsx、web/features/studio/StudioApp.tsx、backend/studio/router.py、backend/studio/app_factory.py；分前/后端子卡，注册接入由主模型集成",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "BASE-01-b",
+      "parent_id": "BASE-01",
+      "title": "新API装配入口",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "ROOT-02",
+        "BASE-01-a"
+      ],
+      "product_rules": [
+        "R01",
+        "R06",
+        "R12"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只建立新router/app_factory，隔离app不注册旧业务路由。",
+      "allowlist_scope": "web/app/studio/[projectId]/page.tsx、web/features/studio/StudioApp.tsx、backend/studio/router.py、backend/studio/app_factory.py；分前/后端子卡，注册接入由主模型集成",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "BASE-01",
+      "parent_id": null,
+      "title": "新前后端命名空间骨架",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "ROOT-02",
+        "BASE-01-a",
+        "BASE-01-b"
+      ],
+      "children": [
+        "BASE-01-a",
+        "BASE-01-b"
+      ],
+      "product_rules": [
+        "R01",
+        "R06",
+        "R12"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/app/studio/[projectId]/page.tsx、web/features/studio/StudioApp.tsx、backend/studio/router.py、backend/studio/app_factory.py；分前/后端子卡，注册接入由主模型集成",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "BASE-02",
+      "parent_id": null,
+      "title": "新API客户端和错误协议",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "BASE-01"
+      ],
+      "children": [],
+      "product_rules": [
+        "R01",
+        "R06",
+        "R12"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/shared/api/client.ts、web/shared/api/types.ts、web/tests/studio/api-client.test.cjs",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "BASE-03-a",
+      "parent_id": "BASE-03",
+      "title": "数据库连接与Base",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "ROOT-02"
+      ],
+      "product_rules": [
+        "R01",
+        "R06",
+        "R12"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "提取纯连接/Base，新模块不加载旧业务表。",
+      "allowlist_scope": "backend/core/db.py、backend/core/accounts.py、backend/core/auth.py、backend/core/config.py及直接相关tests；逐子卡收窄，接入由主模型集成",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "BASE-03-b",
+      "parent_id": "BASE-03",
+      "title": "账号模型",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "ROOT-02",
+        "BASE-03-a"
+      ],
+      "product_rules": [
+        "R01",
+        "R06",
+        "R12"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "分离账号身份模型，保留有效密码/会话字段语义。",
+      "allowlist_scope": "backend/core/db.py、backend/core/accounts.py、backend/core/auth.py、backend/core/config.py及直接相关tests；逐子卡收窄，接入由主模型集成",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "BASE-03-c",
+      "parent_id": "BASE-03",
+      "title": "严格鉴权",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "ROOT-02",
+        "BASE-03-b"
+      ],
+      "product_rules": [
+        "R01",
+        "R06",
+        "R12"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "新HTTP接口使用严格用户和属主校验；匿名/跨属主拒绝。",
+      "allowlist_scope": "backend/core/db.py、backend/core/accounts.py、backend/core/auth.py、backend/core/config.py及直接相关tests；逐子卡收窄，接入由主模型集成",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "BASE-03-d",
+      "parent_id": "BASE-03",
+      "title": "纯配置读取",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "ROOT-02",
+        "BASE-03-c"
+      ],
+      "product_rules": [
+        "R01",
+        "R06",
+        "R12"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "分离配置读取，不读真实密钥做测试，不import业务。",
+      "allowlist_scope": "backend/core/db.py、backend/core/accounts.py、backend/core/auth.py、backend/core/config.py及直接相关tests；逐子卡收窄，接入由主模型集成",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "BASE-03",
+      "parent_id": null,
+      "title": "分离通用数据库、账号与配置基础设施",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "ROOT-02",
+        "BASE-03-a",
+        "BASE-03-b",
+        "BASE-03-c",
+        "BASE-03-d"
+      ],
+      "children": [
+        "BASE-03-a",
+        "BASE-03-b",
+        "BASE-03-c",
+        "BASE-03-d"
+      ],
+      "product_rules": [
+        "R01",
+        "R06",
+        "R12"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/core/db.py、backend/core/accounts.py、backend/core/auth.py、backend/core/config.py及直接相关tests；逐子卡收窄，接入由主模型集成",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "DB-01",
+      "parent_id": null,
+      "title": "项目与不可变来源表",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "ROOT-02",
+        "BASE-03"
+      ],
+      "children": [],
+      "product_rules": [
+        "R04",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/projects/models.py、backend/studio/sources/models.py、tests/studio/test_source_models.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "DB-02",
+      "parent_id": null,
+      "title": "范围集合与片段版本表",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "DB-01"
+      ],
+      "children": [],
+      "product_rules": [
+        "R04",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/sources/fragment_models.py、tests/studio/test_fragment_models.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "DB-03",
+      "parent_id": null,
+      "title": "剧本对象与版本表",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "DB-02"
+      ],
+      "children": [],
+      "product_rules": [
+        "R04",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/scripts/models.py、tests/studio/test_script_models.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "DB-04",
+      "parent_id": null,
+      "title": "场与镜头版本表",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "DB-03"
+      ],
+      "children": [],
+      "product_rules": [
+        "R04",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/storyboard/models.py、tests/studio/test_shot_models.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "DB-05",
+      "parent_id": null,
+      "title": "资产和并存版本表",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "DB-01"
+      ],
+      "children": [],
+      "product_rules": [
+        "R04",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/assets/models.py、tests/studio/test_asset_models.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "DB-06",
+      "parent_id": null,
+      "title": "来源、出现、实际输入关系表",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "DB-02",
+        "DB-03",
+        "DB-04",
+        "DB-05"
+      ],
+      "children": [],
+      "product_rules": [
+        "R04",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/relations/models.py、tests/studio/test_relation_models.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "DB-07",
+      "parent_id": null,
+      "title": "审核和变更预览表",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "DB-02",
+        "DB-03",
+        "DB-04",
+        "DB-05",
+        "DB-06"
+      ],
+      "children": [],
+      "product_rules": [
+        "R04",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/reviews/models.py、tests/studio/test_review_models.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "DB-08",
+      "parent_id": null,
+      "title": "新任务/尝试/事件表",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "ROOT-04",
+        "DB-01"
+      ],
+      "children": [],
+      "product_rules": [
+        "R04",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/jobs/models.py、tests/studio/test_job_models.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "DB-09",
+      "parent_id": null,
+      "title": "会话/消息/提案表",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "ROOT-04",
+        "DB-08"
+      ],
+      "children": [],
+      "product_rules": [
+        "R04",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/conversations/models.py、tests/studio/test_conversation_models.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "DB-10",
+      "parent_id": null,
+      "title": "媒体、剪辑、发布表",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/01-base-and-data.md",
+      "requires": [
+        "ROOT-03",
+        "DB-04",
+        "DB-08"
+      ],
+      "children": [],
+      "product_rules": [
+        "R04",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/edits/models.py、backend/studio/media/models.py、backend/studio/publishing/models.py、tests/studio/test_edit_models.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-01-a",
+      "parent_id": "SOURCE-01",
+      "title": "新建空项目",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "DB-01",
+        "BASE-02"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "创建只有项目元信息的私有项目，不隐式导入。",
+      "allowlist_scope": "backend/studio/projects/service.py、backend/studio/projects/api.py、backend/studio/sources/service.py、backend/studio/sources/api.py、tests/studio/test_projects.py；逐命令子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-01-b",
+      "parent_id": "SOURCE-01",
+      "title": "读取单项目",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "DB-01",
+        "BASE-02",
+        "SOURCE-01-a"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "准确读取属主项目；未登录/跨属主拒绝。",
+      "allowlist_scope": "backend/studio/projects/service.py、backend/studio/projects/api.py、backend/studio/sources/service.py、backend/studio/sources/api.py、tests/studio/test_projects.py；逐命令子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-01-c",
+      "parent_id": "SOURCE-01",
+      "title": "个人项目列表",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "DB-01",
+        "BASE-02",
+        "SOURCE-01-b"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "仅返回当前账号项目，空列表与读失败分开。",
+      "allowlist_scope": "backend/studio/projects/service.py、backend/studio/projects/api.py、backend/studio/sources/service.py、backend/studio/sources/api.py、tests/studio/test_projects.py；逐命令子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-01-d",
+      "parent_id": "SOURCE-01",
+      "title": "导入不可变原文",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "DB-01",
+        "BASE-02",
+        "SOURCE-01-c"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "保存raw与canonical并返回真实来源身份，不生成片段。",
+      "allowlist_scope": "backend/studio/projects/service.py、backend/studio/projects/api.py、backend/studio/sources/service.py、backend/studio/sources/api.py、tests/studio/test_projects.py；逐命令子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-01-e",
+      "parent_id": "SOURCE-01",
+      "title": "读取来源版本",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "DB-01",
+        "BASE-02",
+        "SOURCE-01-d"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "读取指定来源正文/摘要，跨项目引用拒绝。",
+      "allowlist_scope": "backend/studio/projects/service.py、backend/studio/projects/api.py、backend/studio/sources/service.py、backend/studio/sources/api.py、tests/studio/test_projects.py；逐命令子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-01",
+      "parent_id": null,
+      "title": "新项目与来源读写API",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "DB-01",
+        "BASE-02",
+        "SOURCE-01-a",
+        "SOURCE-01-b",
+        "SOURCE-01-c",
+        "SOURCE-01-d",
+        "SOURCE-01-e"
+      ],
+      "children": [
+        "SOURCE-01-a",
+        "SOURCE-01-b",
+        "SOURCE-01-c",
+        "SOURCE-01-d",
+        "SOURCE-01-e"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/projects/service.py、backend/studio/projects/api.py、backend/studio/sources/service.py、backend/studio/sources/api.py、tests/studio/test_projects.py；逐命令子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-02",
+      "parent_id": null,
+      "title": "统一字符与范围helper",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "ROOT-02"
+      ],
+      "children": [],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/sources/ranges.py、web/features/studio/source/ranges.ts、tests/fixtures/studio/ranges.json、tests/studio/test_ranges.py、web/tests/studio/ranges.test.cjs",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-03",
+      "parent_id": null,
+      "title": "原子保存候选",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-01",
+        "SOURCE-02",
+        "DB-02"
+      ],
+      "children": [],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、tests/studio/test_fragments.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-04",
+      "parent_id": null,
+      "title": "明确确认片段",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-03",
+        "DB-07"
+      ],
+      "children": [],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、tests/studio/test_fragments.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-05-a",
+      "parent_id": "SOURCE-05",
+      "title": "片段改名",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-03"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只改名称，身份及来源依据不变。",
+      "allowlist_scope": "backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、tests/studio/test_fragments.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-05-b",
+      "parent_id": "SOURCE-05",
+      "title": "片段退役",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-03",
+        "SOURCE-05-a"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只退役有效范围，保留历史产物依据。",
+      "allowlist_scope": "backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、tests/studio/test_fragments.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-05",
+      "parent_id": null,
+      "title": "片段改名与退役命令",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-03",
+        "SOURCE-05-a",
+        "SOURCE-05-b"
+      ],
+      "children": [
+        "SOURCE-05-a",
+        "SOURCE-05-b"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、tests/studio/test_fragments.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-06",
+      "parent_id": null,
+      "title": "边界调整命令",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-04",
+        "SOURCE-05",
+        "DB-07"
+      ],
+      "children": [],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、backend/studio/reviews/impact.py、tests/studio/test_fragment_changes.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-07",
+      "parent_id": null,
+      "title": "片段拆分命令",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-06"
+      ],
+      "children": [],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、tests/studio/test_fragment_changes.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-08",
+      "parent_id": null,
+      "title": "片段合并命令",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-06"
+      ],
+      "children": [],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、tests/studio/test_fragment_changes.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-09",
+      "parent_id": null,
+      "title": "正文变更影响预览",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-06",
+        "DB-06",
+        "DB-07"
+      ],
+      "children": [],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/sources/changes.py、backend/studio/sources/changes_api.py、tests/studio/test_source_changes.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-10",
+      "parent_id": null,
+      "title": "显式应用新正文",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-09"
+      ],
+      "children": [],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/sources/changes.py、backend/studio/sources/changes_api.py、tests/studio/test_source_changes.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-11",
+      "parent_id": null,
+      "title": "完整制作范围提交",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-04",
+        "SOURCE-10"
+      ],
+      "children": [],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/sources/scopes.py、backend/studio/sources/scopes_api.py、tests/studio/test_scopes.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-12",
+      "parent_id": null,
+      "title": "连续原文与动态片段视图",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-03",
+        "SOURCE-04",
+        "BASE-02"
+      ],
+      "children": [],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/source/components/SourceReader.tsx、web/features/studio/source/components/FragmentList.tsx、web/features/studio/source/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-13",
+      "parent_id": null,
+      "title": "原生选区建立候选",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-12",
+        "SOURCE-02"
+      ],
+      "children": [],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/source/components/SourceReader.tsx、web/features/studio/source/components/SelectionToolbar.tsx、web/tests/studio/selection.test.cjs",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-14-a",
+      "parent_id": "SOURCE-14",
+      "title": "确认片段UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-05",
+        "SOURCE-06",
+        "SOURCE-07",
+        "SOURCE-08",
+        "SOURCE-09",
+        "SOURCE-10",
+        "SOURCE-11",
+        "SOURCE-13"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "接明确确认命令，选择不确认。",
+      "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-14-b",
+      "parent_id": "SOURCE-14",
+      "title": "片段改名UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-05",
+        "SOURCE-06",
+        "SOURCE-07",
+        "SOURCE-08",
+        "SOURCE-09",
+        "SOURCE-10",
+        "SOURCE-11",
+        "SOURCE-13",
+        "SOURCE-14-a"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "接改名命令，失败保留输入。",
+      "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-14-c",
+      "parent_id": "SOURCE-14",
+      "title": "片段退役UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-05",
+        "SOURCE-06",
+        "SOURCE-07",
+        "SOURCE-08",
+        "SOURCE-09",
+        "SOURCE-10",
+        "SOURCE-11",
+        "SOURCE-13",
+        "SOURCE-14-b"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "展示影响后明确退役，不删除产物。",
+      "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-14-d",
+      "parent_id": "SOURCE-14",
+      "title": "边界调整UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-05",
+        "SOURCE-06",
+        "SOURCE-07",
+        "SOURCE-08",
+        "SOURCE-09",
+        "SOURCE-10",
+        "SOURCE-11",
+        "SOURCE-13",
+        "SOURCE-14-c"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "预览新范围后应用，冲突可定位。",
+      "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-14-e",
+      "parent_id": "SOURCE-14",
+      "title": "片段拆分UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-05",
+        "SOURCE-06",
+        "SOURCE-07",
+        "SOURCE-08",
+        "SOURCE-09",
+        "SOURCE-10",
+        "SOURCE-11",
+        "SOURCE-13",
+        "SOURCE-14-d"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "明确拆分点与继承，原子提交。",
+      "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-14-f",
+      "parent_id": "SOURCE-14",
+      "title": "片段合并UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-05",
+        "SOURCE-06",
+        "SOURCE-07",
+        "SOURCE-08",
+        "SOURCE-09",
+        "SOURCE-10",
+        "SOURCE-11",
+        "SOURCE-13",
+        "SOURCE-14-e"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只合并合法范围，旧引用不自动归新对象。",
+      "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-14-g",
+      "parent_id": "SOURCE-14",
+      "title": "正文变更复核UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-05",
+        "SOURCE-06",
+        "SOURCE-07",
+        "SOURCE-08",
+        "SOURCE-09",
+        "SOURCE-10",
+        "SOURCE-11",
+        "SOURCE-13",
+        "SOURCE-14-f"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "预览/明确应用新版本，失败不退出表单。",
+      "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-14-h",
+      "parent_id": "SOURCE-14",
+      "title": "完整制作范围UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-05",
+        "SOURCE-06",
+        "SOURCE-07",
+        "SOURCE-08",
+        "SOURCE-09",
+        "SOURCE-10",
+        "SOURCE-11",
+        "SOURCE-13",
+        "SOURCE-14-g"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "明确覆盖/裁减/范围外清单，独立于候选创建。",
+      "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SOURCE-14",
+      "parent_id": null,
+      "title": "来源命令与变更复核工具",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-05",
+        "SOURCE-06",
+        "SOURCE-07",
+        "SOURCE-08",
+        "SOURCE-09",
+        "SOURCE-10",
+        "SOURCE-11",
+        "SOURCE-13",
+        "SOURCE-14-a",
+        "SOURCE-14-b",
+        "SOURCE-14-c",
+        "SOURCE-14-d",
+        "SOURCE-14-e",
+        "SOURCE-14-f",
+        "SOURCE-14-g",
+        "SOURCE-14-h"
+      ],
+      "children": [
+        "SOURCE-14-a",
+        "SOURCE-14-b",
+        "SOURCE-14-c",
+        "SOURCE-14-d",
+        "SOURCE-14-e",
+        "SOURCE-14-f",
+        "SOURCE-14-g",
+        "SOURCE-14-h"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "VIEW-01",
+      "parent_id": null,
+      "title": "新项目工作台状态容器",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/03-view-script-relations.md",
+      "requires": [
+        "ROOT-02",
+        "BASE-01"
+      ],
+      "children": [],
+      "product_rules": [
+        "R02",
+        "R06"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/shell/studio-state.ts、web/features/studio/StudioApp.tsx、web/tests/studio/state.test.cjs",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "VIEW-02",
+      "parent_id": null,
+      "title": "受控无限画布与自由布局",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/03-view-script-relations.md",
+      "requires": [
+        "VIEW-01",
+        "DB-03",
+        "DB-04",
+        "DB-05"
+      ],
+      "children": [],
+      "product_rules": [
+        "R02",
+        "R06"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/canvas/components/InfiniteCanvas.tsx、web/features/studio/canvas/canvas-nodes.ts、web/tests/studio/canvas.test.cjs",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "VIEW-03",
+      "parent_id": null,
+      "title": "统一选择与对象属性",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/03-view-script-relations.md",
+      "requires": [
+        "VIEW-02",
+        "ROOT-02"
+      ],
+      "children": [],
+      "product_rules": [
+        "R02",
+        "R06"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/shell/components/ObjectInspector.tsx、web/features/studio/shell/studio-state.ts、web/features/studio/shell/object-view.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "VIEW-04",
+      "parent_id": null,
+      "title": "上下文与视图偏好恢复",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/03-view-script-relations.md",
+      "requires": [
+        "VIEW-03",
+        "SOURCE-12"
+      ],
+      "children": [],
+      "product_rules": [
+        "R02",
+        "R06"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/shell/view-preferences.ts、web/features/studio/StudioApp.tsx、web/tests/studio/state.test.cjs",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SCRIPT-01-a",
+      "parent_id": "SCRIPT-01",
+      "title": "新建剧本草稿对象",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/03-view-script-relations.md",
+      "requires": [
+        "DB-03",
+        "SOURCE-04",
+        "BASE-02"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "创建真实动作/对白草稿与出处，不采用。",
+      "allowlist_scope": "backend/studio/scripts/service.py、backend/studio/scripts/api.py、tests/studio/test_scripts.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SCRIPT-01-b",
+      "parent_id": "SCRIPT-01",
+      "title": "修改剧本草稿",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/03-view-script-relations.md",
+      "requires": [
+        "DB-03",
+        "SOURCE-04",
+        "BASE-02",
+        "SCRIPT-01-a"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只改当前草稿revision，过期保存拒绝。",
+      "allowlist_scope": "backend/studio/scripts/service.py、backend/studio/scripts/api.py、tests/studio/test_scripts.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SCRIPT-01",
+      "parent_id": null,
+      "title": "剧本草稿命令",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/03-view-script-relations.md",
+      "requires": [
+        "DB-03",
+        "SOURCE-04",
+        "BASE-02",
+        "SCRIPT-01-a",
+        "SCRIPT-01-b"
+      ],
+      "children": [
+        "SCRIPT-01-a",
+        "SCRIPT-01-b"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/scripts/service.py、backend/studio/scripts/api.py、tests/studio/test_scripts.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SCRIPT-02",
+      "parent_id": null,
+      "title": "采用剧本revision及影响",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/03-view-script-relations.md",
+      "requires": [
+        "SCRIPT-01",
+        "DB-07"
+      ],
+      "children": [],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/scripts/service.py、backend/studio/scripts/api.py、backend/studio/reviews/impact.py、tests/studio/test_scripts.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SCRIPT-03-a",
+      "parent_id": "SCRIPT-03",
+      "title": "编辑剧本对象UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/03-view-script-relations.md",
+      "requires": [
+        "SCRIPT-01",
+        "SCRIPT-02",
+        "VIEW-03"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "接草稿读写，未保存状态准确，节点更新立即同步。",
+      "allowlist_scope": "web/features/studio/script/components/ScriptNode.tsx、web/features/studio/script/components/ScriptActions.tsx、web/features/studio/script/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SCRIPT-03-b",
+      "parent_id": "SCRIPT-03",
+      "title": "采用剧本UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/03-view-script-relations.md",
+      "requires": [
+        "SCRIPT-01",
+        "SCRIPT-02",
+        "VIEW-03",
+        "SCRIPT-03-a"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "明确采用具体版本及影响，不自动生成分镜。",
+      "allowlist_scope": "web/features/studio/script/components/ScriptNode.tsx、web/features/studio/script/components/ScriptActions.tsx、web/features/studio/script/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SCRIPT-03",
+      "parent_id": null,
+      "title": "动作/对白画布编辑",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/03-view-script-relations.md",
+      "requires": [
+        "SCRIPT-01",
+        "SCRIPT-02",
+        "VIEW-03",
+        "SCRIPT-03-a",
+        "SCRIPT-03-b"
+      ],
+      "children": [
+        "SCRIPT-03-a",
+        "SCRIPT-03-b"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/script/components/ScriptNode.tsx、web/features/studio/script/components/ScriptActions.tsx、web/features/studio/script/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "REL-01",
+      "parent_id": null,
+      "title": "整块高亮单起点主干出线",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/03-view-script-relations.md",
+      "requires": [
+        "SOURCE-13",
+        "SCRIPT-03",
+        "VIEW-02"
+      ],
+      "children": [],
+      "product_rules": [
+        "R05",
+        "R07"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/canvas/components/SourceConnections.tsx、web/features/studio/source/components/SourceReader.tsx、web/features/studio/canvas/anchors.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "REL-02",
+      "parent_id": null,
+      "title": "资产出现引用命令",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/03-view-script-relations.md",
+      "requires": [
+        "DB-06",
+        "SOURCE-04",
+        "ASSET-01"
+      ],
+      "children": [],
+      "product_rules": [
+        "R05",
+        "R07"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/relations/service.py、backend/studio/relations/api.py、tests/studio/test_relations.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "REL-03-a",
+      "parent_id": "REL-03",
+      "title": "资产出现双向定位",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/03-view-script-relations.md",
+      "requires": [
+        "REL-01",
+        "REL-02",
+        "SHOT-01",
+        "SHOT-02",
+        "ASSET-03"
+      ],
+      "product_rules": [
+        "R05",
+        "R07"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "同资产多个出处共享身份，返回原上下文。",
+      "allowlist_scope": "web/features/studio/canvas/components/SourceConnections.tsx、web/features/studio/assets/components/AssetNode.tsx、web/features/studio/storyboard/components/ShotNode.tsx",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "REL-03-b",
+      "parent_id": "REL-03",
+      "title": "镜头来源双向定位",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/03-view-script-relations.md",
+      "requires": [
+        "REL-01",
+        "REL-02",
+        "SHOT-01",
+        "REL-03-a",
+        "SHOT-02",
+        "ASSET-03"
+      ],
+      "product_rules": [
+        "R05",
+        "R07"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "定位准确镜头revision及片段，选择不改输入。",
+      "allowlist_scope": "web/features/studio/canvas/components/SourceConnections.tsx、web/features/studio/assets/components/AssetNode.tsx、web/features/studio/storyboard/components/ShotNode.tsx",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "REL-03",
+      "parent_id": null,
+      "title": "资产/镜头来源双向定位",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/03-view-script-relations.md",
+      "requires": [
+        "REL-01",
+        "REL-02",
+        "SHOT-01",
+        "REL-03-a",
+        "REL-03-b",
+        "SHOT-02",
+        "ASSET-03"
+      ],
+      "children": [
+        "REL-03-a",
+        "REL-03-b"
+      ],
+      "product_rules": [
+        "R05",
+        "R07"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/canvas/components/SourceConnections.tsx、web/features/studio/assets/components/AssetNode.tsx、web/features/studio/storyboard/components/ShotNode.tsx",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-01-a",
+      "parent_id": "SHOT-01",
+      "title": "新建场",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "DB-04",
+        "DB-05",
+        "DB-06",
+        "DB-07",
+        "SCRIPT-02",
+        "ASSET-01"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "创建真实场与片段归属，不生成镜头。",
+      "allowlist_scope": "backend/studio/storyboard/service.py、backend/studio/storyboard/api.py、tests/studio/test_shots.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-01-b",
+      "parent_id": "SHOT-01",
+      "title": "修改场规格",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "DB-04",
+        "DB-05",
+        "DB-06",
+        "DB-07",
+        "SCRIPT-02",
+        "ASSET-01",
+        "SHOT-01-a"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "修改当前场草稿，不自动采用。",
+      "allowlist_scope": "backend/studio/storyboard/service.py、backend/studio/storyboard/api.py、tests/studio/test_shots.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-01-c",
+      "parent_id": "SHOT-01",
+      "title": "场拆分",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "DB-04",
+        "DB-05",
+        "DB-06",
+        "DB-07",
+        "SCRIPT-02",
+        "ASSET-01",
+        "SHOT-01-b"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "预览来源/承接后原子拆分，保留旧依据。",
+      "allowlist_scope": "backend/studio/storyboard/service.py、backend/studio/storyboard/api.py、tests/studio/test_shots.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-01-d",
+      "parent_id": "SHOT-01",
+      "title": "场合并",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "DB-04",
+        "DB-05",
+        "DB-06",
+        "DB-07",
+        "SCRIPT-02",
+        "ASSET-01",
+        "SHOT-01-c"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "明确相邻范围与影响后合并，非法范围拒绝。",
+      "allowlist_scope": "backend/studio/storyboard/service.py、backend/studio/storyboard/api.py、tests/studio/test_shots.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-01-e",
+      "parent_id": "SHOT-01",
+      "title": "场重排",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "DB-04",
+        "DB-05",
+        "DB-06",
+        "DB-07",
+        "SCRIPT-02",
+        "ASSET-01",
+        "SHOT-01-d"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "显式顺序命令，画布拖动不参与正式顺序。",
+      "allowlist_scope": "backend/studio/storyboard/service.py、backend/studio/storyboard/api.py、tests/studio/test_shots.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-01-f",
+      "parent_id": "SHOT-01",
+      "title": "新建镜头",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "DB-04",
+        "DB-05",
+        "DB-06",
+        "DB-07",
+        "SCRIPT-02",
+        "ASSET-01",
+        "SHOT-01-e"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "创建唯一scene归属与真实镜头规格。",
+      "allowlist_scope": "backend/studio/storyboard/service.py、backend/studio/storyboard/api.py、tests/studio/test_shots.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-01-g",
+      "parent_id": "SHOT-01",
+      "title": "修改镜头草稿",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "DB-04",
+        "DB-05",
+        "DB-06",
+        "DB-07",
+        "SCRIPT-02",
+        "ASSET-01",
+        "SHOT-01-f"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "修改规格/时长/动作，不直接触发生成。",
+      "allowlist_scope": "backend/studio/storyboard/service.py、backend/studio/storyboard/api.py、tests/studio/test_shots.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-01-h",
+      "parent_id": "SHOT-01",
+      "title": "移动镜头归属或顺序",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "DB-04",
+        "DB-05",
+        "DB-06",
+        "DB-07",
+        "SCRIPT-02",
+        "ASSET-01",
+        "SHOT-01-g"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "显式合法移动，禁止两份父级与环。",
+      "allowlist_scope": "backend/studio/storyboard/service.py、backend/studio/storyboard/api.py、tests/studio/test_shots.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-01-i",
+      "parent_id": "SHOT-01",
+      "title": "固定镜头资产输入",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "DB-04",
+        "DB-05",
+        "DB-06",
+        "DB-07",
+        "SCRIPT-02",
+        "ASSET-01",
+        "SHOT-01-h"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "校验作用对象/用途/审核版本，跨项目拒绝。",
+      "allowlist_scope": "backend/studio/storyboard/service.py、backend/studio/storyboard/api.py、tests/studio/test_shots.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-01-j",
+      "parent_id": "SHOT-01",
+      "title": "采用分镜版本",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "DB-04",
+        "DB-05",
+        "DB-06",
+        "DB-07",
+        "SCRIPT-02",
+        "ASSET-01",
+        "SHOT-01-i"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "固定准确剧本/镜头/输入与影响，草稿不等确认。",
+      "allowlist_scope": "backend/studio/storyboard/service.py、backend/studio/storyboard/api.py、tests/studio/test_shots.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-01",
+      "parent_id": null,
+      "title": "分镜规格草稿与输入命令",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "DB-04",
+        "DB-05",
+        "DB-06",
+        "DB-07",
+        "SCRIPT-02",
+        "ASSET-01",
+        "SHOT-01-a",
+        "SHOT-01-b",
+        "SHOT-01-c",
+        "SHOT-01-d",
+        "SHOT-01-e",
+        "SHOT-01-f",
+        "SHOT-01-g",
+        "SHOT-01-h",
+        "SHOT-01-i",
+        "SHOT-01-j"
+      ],
+      "children": [
+        "SHOT-01-a",
+        "SHOT-01-b",
+        "SHOT-01-c",
+        "SHOT-01-d",
+        "SHOT-01-e",
+        "SHOT-01-f",
+        "SHOT-01-g",
+        "SHOT-01-h",
+        "SHOT-01-i",
+        "SHOT-01-j"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/storyboard/service.py、backend/studio/storyboard/api.py、tests/studio/test_shots.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-02-a",
+      "parent_id": "SHOT-02",
+      "title": "镜头节点与规格UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "SHOT-01",
+        "VIEW-03"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "显示真实节点并编辑规格；空状态无样例。",
+      "allowlist_scope": "web/features/studio/storyboard/components/ShotNode.tsx、web/features/studio/storyboard/components/ShotActions.tsx、web/features/studio/storyboard/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-02-b",
+      "parent_id": "SHOT-02",
+      "title": "场新建UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "SHOT-01",
+        "VIEW-03",
+        "SHOT-02-a"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只接场新建命令；合法范围/影响准确，选择不执行。",
+      "allowlist_scope": "web/features/studio/storyboard/components/ShotNode.tsx、web/features/studio/storyboard/components/ShotActions.tsx、web/features/studio/storyboard/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-02-c",
+      "parent_id": "SHOT-02",
+      "title": "场编辑UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "SHOT-01",
+        "VIEW-03",
+        "SHOT-02-b"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只接场编辑命令；合法范围/影响准确，选择不执行。",
+      "allowlist_scope": "web/features/studio/storyboard/components/ShotNode.tsx、web/features/studio/storyboard/components/ShotActions.tsx、web/features/studio/storyboard/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-02-d",
+      "parent_id": "SHOT-02",
+      "title": "场拆分UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "SHOT-01",
+        "VIEW-03",
+        "SHOT-02-c"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只接场拆分命令；合法范围/影响准确，选择不执行。",
+      "allowlist_scope": "web/features/studio/storyboard/components/ShotNode.tsx、web/features/studio/storyboard/components/ShotActions.tsx、web/features/studio/storyboard/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-02-e",
+      "parent_id": "SHOT-02",
+      "title": "场合并UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "SHOT-01",
+        "VIEW-03",
+        "SHOT-02-d"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只接场合并命令；合法范围/影响准确，选择不执行。",
+      "allowlist_scope": "web/features/studio/storyboard/components/ShotNode.tsx、web/features/studio/storyboard/components/ShotActions.tsx、web/features/studio/storyboard/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-02-f",
+      "parent_id": "SHOT-02",
+      "title": "场重排UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "SHOT-01",
+        "VIEW-03",
+        "SHOT-02-e"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只接场重排命令；合法范围/影响准确，选择不执行。",
+      "allowlist_scope": "web/features/studio/storyboard/components/ShotNode.tsx、web/features/studio/storyboard/components/ShotActions.tsx、web/features/studio/storyboard/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-02-g",
+      "parent_id": "SHOT-02",
+      "title": "镜头移动顺序UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "SHOT-01",
+        "VIEW-03",
+        "SHOT-02-f"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "明确移动/重排，不从位置推断。",
+      "allowlist_scope": "web/features/studio/storyboard/components/ShotNode.tsx、web/features/studio/storyboard/components/ShotActions.tsx、web/features/studio/storyboard/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-02-h",
+      "parent_id": "SHOT-02",
+      "title": "镜头输入绑定UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "SHOT-01",
+        "VIEW-03",
+        "SHOT-02-g"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "明确资产版本/用途/作用对象，拒绝不合法组合。",
+      "allowlist_scope": "web/features/studio/storyboard/components/ShotNode.tsx、web/features/studio/storyboard/components/ShotActions.tsx、web/features/studio/storyboard/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-02-i",
+      "parent_id": "SHOT-02",
+      "title": "采用分镜UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "SHOT-01",
+        "VIEW-03",
+        "SHOT-02-h"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "明确采用当前版本，门槛不足可定位。",
+      "allowlist_scope": "web/features/studio/storyboard/components/ShotNode.tsx、web/features/studio/storyboard/components/ShotActions.tsx、web/features/studio/storyboard/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "SHOT-02",
+      "parent_id": null,
+      "title": "分镜画布与显式顺序操作",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "SHOT-01",
+        "VIEW-03",
+        "SHOT-02-a",
+        "SHOT-02-b",
+        "SHOT-02-c",
+        "SHOT-02-d",
+        "SHOT-02-e",
+        "SHOT-02-f",
+        "SHOT-02-g",
+        "SHOT-02-h",
+        "SHOT-02-i"
+      ],
+      "children": [
+        "SHOT-02-a",
+        "SHOT-02-b",
+        "SHOT-02-c",
+        "SHOT-02-d",
+        "SHOT-02-e",
+        "SHOT-02-f",
+        "SHOT-02-g",
+        "SHOT-02-h",
+        "SHOT-02-i"
+      ],
+      "product_rules": [
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/storyboard/components/ShotNode.tsx、web/features/studio/storyboard/components/ShotActions.tsx、web/features/studio/storyboard/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "ASSET-01-a",
+      "parent_id": "ASSET-01",
+      "title": "创建人物身份",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "DB-05",
+        "DB-06",
+        "DB-07"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "建立稳定身份规格，改名/跨场不重复建身份。",
+      "allowlist_scope": "backend/studio/assets/service.py、backend/studio/assets/api.py、tests/studio/test_assets.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "ASSET-01-b",
+      "parent_id": "ASSET-01",
+      "title": "创建人物服装",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "DB-05",
+        "DB-06",
+        "DB-07",
+        "ASSET-01-a"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "归属真实身份，bare模式明确无需图。",
+      "allowlist_scope": "backend/studio/assets/service.py、backend/studio/assets/api.py、tests/studio/test_assets.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "ASSET-01-c",
+      "parent_id": "ASSET-01",
+      "title": "创建物理场景",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "DB-05",
+        "DB-06",
+        "DB-07",
+        "ASSET-01-b"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "区分物理场景资产和叙事场。",
+      "allowlist_scope": "backend/studio/assets/service.py、backend/studio/assets/api.py、tests/studio/test_assets.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "ASSET-01-d",
+      "parent_id": "ASSET-01",
+      "title": "修改资产规格草稿",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "DB-05",
+        "DB-06",
+        "DB-07",
+        "ASSET-01-c"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "新revision不自动改旧采用/绑定。",
+      "allowlist_scope": "backend/studio/assets/service.py、backend/studio/assets/api.py、tests/studio/test_assets.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "ASSET-01",
+      "parent_id": null,
+      "title": "项目资产规格命令",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "DB-05",
+        "DB-06",
+        "DB-07",
+        "ASSET-01-a",
+        "ASSET-01-b",
+        "ASSET-01-c",
+        "ASSET-01-d"
+      ],
+      "children": [
+        "ASSET-01-a",
+        "ASSET-01-b",
+        "ASSET-01-c",
+        "ASSET-01-d"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/assets/service.py、backend/studio/assets/api.py、tests/studio/test_assets.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "ASSET-02-a",
+      "parent_id": "ASSET-02",
+      "title": "上传并登记媒体版本",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "ASSET-01",
+        "MEDIA-01"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "验证真实文件并生成待审核AssetRevision，损坏/跨项目拒绝。",
+      "allowlist_scope": "backend/studio/assets/service.py、backend/studio/assets/api.py、web/features/studio/assets/components/AssetUpload.tsx、tests/studio/test_assets.py；按后端/前端分卡",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "ASSET-02-b",
+      "parent_id": "ASSET-02",
+      "title": "资产上传UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "ASSET-01",
+        "MEDIA-01",
+        "ASSET-02-a"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "接正式上传，失败保留原版本，不隐式采用。",
+      "allowlist_scope": "backend/studio/assets/service.py、backend/studio/assets/api.py、web/features/studio/assets/components/AssetUpload.tsx、tests/studio/test_assets.py；按后端/前端分卡",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "ASSET-02",
+      "parent_id": null,
+      "title": "真实文件上传为新版本",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "ASSET-01",
+        "MEDIA-01",
+        "ASSET-02-a",
+        "ASSET-02-b"
+      ],
+      "children": [
+        "ASSET-02-a",
+        "ASSET-02-b"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/assets/service.py、backend/studio/assets/api.py、web/features/studio/assets/components/AssetUpload.tsx、tests/studio/test_assets.py；按后端/前端分卡",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "ASSET-03-a",
+      "parent_id": "ASSET-03",
+      "title": "资产版本审核命令",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "ASSET-02",
+        "VIEW-03",
+        "DB-07"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "审核固定revision与依赖，结果不确定不得假确认。",
+      "allowlist_scope": "web/features/studio/assets/components/AssetNode.tsx、web/features/studio/assets/components/AssetActions.tsx、web/features/studio/assets/api.ts、backend/studio/reviews/service.py、backend/studio/reviews/api.py及直接相关测试；逐子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "ASSET-03-b",
+      "parent_id": "ASSET-03",
+      "title": "采用资产到指定范围",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "ASSET-02",
+        "VIEW-03",
+        "DB-07",
+        "ASSET-03-a"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "预览实际使用位置后明确采用，历史发布不变。",
+      "allowlist_scope": "web/features/studio/assets/components/AssetNode.tsx、web/features/studio/assets/components/AssetActions.tsx、web/features/studio/assets/api.ts、backend/studio/reviews/service.py、backend/studio/reviews/api.py及直接相关测试；逐子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "ASSET-03-c",
+      "parent_id": "ASSET-03",
+      "title": "资产画布节点",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "ASSET-02",
+        "VIEW-03",
+        "DB-07",
+        "ASSET-03-b"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "真实图/规格/归属与失败状态，位置可自由拖动。",
+      "allowlist_scope": "web/features/studio/assets/components/AssetNode.tsx、web/features/studio/assets/components/AssetActions.tsx、web/features/studio/assets/api.ts、backend/studio/reviews/service.py、backend/studio/reviews/api.py及直接相关测试；逐子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "ASSET-03-d",
+      "parent_id": "ASSET-03",
+      "title": "资产审核采用UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "ASSET-02",
+        "VIEW-03",
+        "DB-07",
+        "ASSET-03-c"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "版本比较与明确采用，接口状态准确。",
+      "allowlist_scope": "web/features/studio/assets/components/AssetNode.tsx、web/features/studio/assets/components/AssetActions.tsx、web/features/studio/assets/api.ts、backend/studio/reviews/service.py、backend/studio/reviews/api.py及直接相关测试；逐子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "ASSET-03",
+      "parent_id": null,
+      "title": "审核采用与资产画布",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/04-storyboard-assets.md",
+      "requires": [
+        "ASSET-02",
+        "VIEW-03",
+        "DB-07",
+        "ASSET-03-a",
+        "ASSET-03-b",
+        "ASSET-03-c",
+        "ASSET-03-d"
+      ],
+      "children": [
+        "ASSET-03-a",
+        "ASSET-03-b",
+        "ASSET-03-c",
+        "ASSET-03-d"
+      ],
+      "product_rules": [
+        "R05",
+        "R07",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/assets/components/AssetNode.tsx、web/features/studio/assets/components/AssetActions.tsx、web/features/studio/assets/api.ts、backend/studio/reviews/service.py、backend/studio/reviews/api.py及直接相关测试；逐子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "MEDIA-01",
+      "parent_id": null,
+      "title": "私有媒体落盘与完整性",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "DB-10",
+        "ROOT-03"
+      ],
+      "children": [],
+      "product_rules": [
+        "R09",
+        "R12"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/media/store.py、backend/infrastructure/media/probe.py、tests/studio/test_media.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "MEDIA-02-a",
+      "parent_id": "MEDIA-02",
+      "title": "私有媒体流",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "MEDIA-01",
+        "SOURCE-01"
+      ],
+      "product_rules": [
+        "R09",
+        "R12"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "严格属主与Range请求；猜ID不读他人文件。",
+      "allowlist_scope": "backend/studio/media/api.py、backend/studio/media/stream.py、tests/studio/test_media.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "MEDIA-02-b",
+      "parent_id": "MEDIA-02",
+      "title": "公开发布媒体流",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "MEDIA-01",
+        "SOURCE-01",
+        "MEDIA-02-a"
+      ],
+      "product_rules": [
+        "R09",
+        "R12"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "仅访问该Release固定文件白名单，不开放过程媒体。",
+      "allowlist_scope": "backend/studio/media/api.py、backend/studio/media/stream.py、tests/studio/test_media.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "MEDIA-02",
+      "parent_id": null,
+      "title": "属主媒体读取与公开产物流",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "MEDIA-01",
+        "SOURCE-01",
+        "MEDIA-02-a",
+        "MEDIA-02-b"
+      ],
+      "children": [
+        "MEDIA-02-a",
+        "MEDIA-02-b"
+      ],
+      "product_rules": [
+        "R09",
+        "R12"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/media/api.py、backend/studio/media/stream.py、tests/studio/test_media.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-01",
+      "parent_id": null,
+      "title": "无旧业务依赖的供应商client",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "ROOT-04",
+        "DB-08",
+        "MEDIA-01"
+      ],
+      "children": [],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/infrastructure/providers/client.py、backend/infrastructure/providers/protocols.py、tests/studio/test_provider_adapter.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-02",
+      "parent_id": null,
+      "title": "冻结目标并幂等提交任务",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-01",
+        "DB-07",
+        "DB-08"
+      ],
+      "children": [],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/jobs/service.py、backend/studio/jobs/api.py、tests/studio/test_jobs.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-03",
+      "parent_id": null,
+      "title": "新worker租约执行与恢复",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-02"
+      ],
+      "children": [],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/jobs/runner.py、backend/studio/jobs/worker_main.py、tests/studio/test_job_runner.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-04",
+      "parent_id": null,
+      "title": "真实事件、SSE与前端合并",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-03",
+        "VIEW-01"
+      ],
+      "children": [],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/jobs/events_api.py、web/features/studio/jobs/job-feed.ts、web/tests/studio/job-feed.test.cjs",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-05",
+      "parent_id": null,
+      "title": "失败重试命令",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-03"
+      ],
+      "children": [],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/jobs/service.py、backend/studio/jobs/api.py、tests/studio/test_jobs.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-06",
+      "parent_id": null,
+      "title": "取消与迟到结果",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-03"
+      ],
+      "children": [],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/jobs/service.py、backend/studio/jobs/api.py、backend/studio/jobs/runner.py、tests/studio/test_jobs.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-07",
+      "parent_id": null,
+      "title": "显式重做新输入任务",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-05",
+        "DB-07"
+      ],
+      "children": [],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/jobs/service.py、web/features/studio/jobs/components/RedoReview.tsx、tests/studio/test_jobs.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-08",
+      "parent_id": null,
+      "title": "图片生成处理器",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-03",
+        "ASSET-01",
+        "MEDIA-01"
+      ],
+      "children": [],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/jobs/handlers/image.py、backend/studio/assets/service.py、tests/studio/test_image_jobs.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-09-a",
+      "parent_id": "JOB-09",
+      "title": "视频生成处理器",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-03",
+        "SHOT-01",
+        "ASSET-03",
+        "MEDIA-01"
+      ],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "冻结准确分镜/资产输入，落盘clip仍归原revision。",
+      "allowlist_scope": "backend/studio/jobs/handlers/video.py、backend/studio/reviews/service.py、backend/studio/reviews/api.py、tests/studio/test_video_jobs.py；按生成/审核子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-09-b",
+      "parent_id": "JOB-09",
+      "title": "视频审核采用命令",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-03",
+        "SHOT-01",
+        "ASSET-03",
+        "MEDIA-01",
+        "JOB-09-a"
+      ],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "准确clip版本人工审核/采用，未采用不成为就绪资源。",
+      "allowlist_scope": "backend/studio/jobs/handlers/video.py、backend/studio/reviews/service.py、backend/studio/reviews/api.py、tests/studio/test_video_jobs.py；按生成/审核子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-09",
+      "parent_id": null,
+      "title": "视频生成与逐版本审核",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-03",
+        "SHOT-01",
+        "ASSET-03",
+        "MEDIA-01",
+        "JOB-09-a",
+        "JOB-09-b"
+      ],
+      "children": [
+        "JOB-09-a",
+        "JOB-09-b"
+      ],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/jobs/handlers/video.py、backend/studio/reviews/service.py、backend/studio/reviews/api.py、tests/studio/test_video_jobs.py；按生成/审核子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-11",
+      "parent_id": null,
+      "title": "剧本生成处理器",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-03",
+        "SCRIPT-01",
+        "SOURCE-04"
+      ],
+      "children": [],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/jobs/handlers/script.py、backend/studio/scripts/service.py、tests/studio/test_script_jobs.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-12",
+      "parent_id": null,
+      "title": "分镜生成处理器",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-03",
+        "SHOT-01",
+        "SCRIPT-02"
+      ],
+      "children": [],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/jobs/handlers/storyboard.py、backend/studio/storyboard/service.py、tests/studio/test_storyboard_jobs.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-10-a",
+      "parent_id": "JOB-10",
+      "title": "图片生成UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-11",
+        "JOB-12",
+        "VIEW-03"
+      ],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "展示目标/输入/成本后明确建任务。",
+      "allowlist_scope": "web/features/studio/jobs/components/GenerationActions.tsx、web/features/studio/jobs/components/TaskQueue.tsx、web/features/studio/jobs/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-10-b",
+      "parent_id": "JOB-10",
+      "title": "视频生成UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-11",
+        "JOB-12",
+        "VIEW-03",
+        "JOB-10-a"
+      ],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "具体镜头门槛通过才发命令。",
+      "allowlist_scope": "web/features/studio/jobs/components/GenerationActions.tsx、web/features/studio/jobs/components/TaskQueue.tsx、web/features/studio/jobs/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-10-c",
+      "parent_id": "JOB-10",
+      "title": "剧本生成UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-11",
+        "JOB-12",
+        "VIEW-03",
+        "JOB-10-b"
+      ],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "明确片段/版本，结果待采用。",
+      "allowlist_scope": "web/features/studio/jobs/components/GenerationActions.tsx、web/features/studio/jobs/components/TaskQueue.tsx、web/features/studio/jobs/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-10-d",
+      "parent_id": "JOB-10",
+      "title": "分镜生成UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-11",
+        "JOB-12",
+        "VIEW-03",
+        "JOB-10-c"
+      ],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "明确采用剧本/范围，结果待审核。",
+      "allowlist_scope": "web/features/studio/jobs/components/GenerationActions.tsx、web/features/studio/jobs/components/TaskQueue.tsx、web/features/studio/jobs/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-10-e",
+      "parent_id": "JOB-10",
+      "title": "失败重试UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-11",
+        "JOB-12",
+        "VIEW-03",
+        "JOB-10-d"
+      ],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "接retry，先核实不确定原请求。",
+      "allowlist_scope": "web/features/studio/jobs/components/GenerationActions.tsx、web/features/studio/jobs/components/TaskQueue.tsx、web/features/studio/jobs/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-10-f",
+      "parent_id": "JOB-10",
+      "title": "取消任务UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-11",
+        "JOB-12",
+        "VIEW-03",
+        "JOB-10-e"
+      ],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只接cancel，迟到结果保留原任务不抢焦点。",
+      "allowlist_scope": "web/features/studio/jobs/components/GenerationActions.tsx、web/features/studio/jobs/components/TaskQueue.tsx、web/features/studio/jobs/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-10-g",
+      "parent_id": "JOB-10",
+      "title": "重做任务UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-11",
+        "JOB-12",
+        "VIEW-03",
+        "JOB-10-f"
+      ],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只接新输入redo，展示影响后明确提交。",
+      "allowlist_scope": "web/features/studio/jobs/components/GenerationActions.tsx、web/features/studio/jobs/components/TaskQueue.tsx、web/features/studio/jobs/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-10-h",
+      "parent_id": "JOB-10",
+      "title": "真实队列与定位UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-11",
+        "JOB-12",
+        "VIEW-03",
+        "JOB-10-g"
+      ],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "合并事件/进度并回原位置，不重复提交。",
+      "allowlist_scope": "web/features/studio/jobs/components/GenerationActions.tsx、web/features/studio/jobs/components/TaskQueue.tsx、web/features/studio/jobs/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "JOB-10",
+      "parent_id": null,
+      "title": "生成操作与项目任务队列",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/05-jobs-media.md",
+      "requires": [
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-11",
+        "JOB-12",
+        "VIEW-03",
+        "JOB-10-a",
+        "JOB-10-b",
+        "JOB-10-c",
+        "JOB-10-d",
+        "JOB-10-e",
+        "JOB-10-f",
+        "JOB-10-g",
+        "JOB-10-h"
+      ],
+      "children": [
+        "JOB-10-a",
+        "JOB-10-b",
+        "JOB-10-c",
+        "JOB-10-d",
+        "JOB-10-e",
+        "JOB-10-f",
+        "JOB-10-g",
+        "JOB-10-h"
+      ],
+      "product_rules": [
+        "R08",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/jobs/components/GenerationActions.tsx、web/features/studio/jobs/components/TaskQueue.tsx、web/features/studio/jobs/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-01",
+      "parent_id": null,
+      "title": "项目剪辑草稿读写",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "DB-10",
+        "BASE-02"
+      ],
+      "children": [],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/edits/service.py、backend/studio/edits/api.py、tests/studio/test_edits.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-02-a",
+      "parent_id": "EDIT-02",
+      "title": "可用视频资源查询",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "JOB-09",
+        "SOURCE-12",
+        "EDIT-01"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只查准确已审核采用且有真实文件的clip版本。",
+      "allowlist_scope": "backend/studio/storyboard/resources.py、backend/studio/storyboard/api.py、web/features/studio/film/components/FilmResources.tsx、web/features/studio/source/components/SourcePanel.tsx；按查询/浏览子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-02-b",
+      "parent_id": "EDIT-02",
+      "title": "左侧成片资源浏览",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "JOB-09",
+        "SOURCE-12",
+        "EDIT-01",
+        "EDIT-02-a"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "点击只预览，保留时间轴，中部无重复资源区。",
+      "allowlist_scope": "backend/studio/storyboard/resources.py、backend/studio/storyboard/api.py、web/features/studio/film/components/FilmResources.tsx、web/features/studio/source/components/SourcePanel.tsx；按查询/浏览子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-02",
+      "parent_id": null,
+      "title": "实际视频资源查询与左侧浏览",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "JOB-09",
+        "SOURCE-12",
+        "EDIT-01",
+        "EDIT-02-a",
+        "EDIT-02-b"
+      ],
+      "children": [
+        "EDIT-02-a",
+        "EDIT-02-b"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/storyboard/resources.py、backend/studio/storyboard/api.py、web/features/studio/film/components/FilmResources.tsx、web/features/studio/source/components/SourcePanel.tsx；按查询/浏览子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-03",
+      "parent_id": null,
+      "title": "明确插入独立实例",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-02"
+      ],
+      "children": [],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/edits/service.py、web/features/studio/film/components/FilmResources.tsx、tests/studio/test_edits.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-04-a",
+      "parent_id": "EDIT-04",
+      "title": "重排实例",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-03"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只改独立instance时间轴位置，源镜头顺序不变。",
+      "allowlist_scope": "backend/studio/edits/service.py、web/features/studio/film/components/TimelineActions.tsx、tests/studio/test_edits.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-04-b",
+      "parent_id": "EDIT-04",
+      "title": "删除实例",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-03",
+        "EDIT-04-a"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只删一个实例，同源另实例和clip保留。",
+      "allowlist_scope": "backend/studio/edits/service.py、web/features/studio/film/components/TimelineActions.tsx、tests/studio/test_edits.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-04",
+      "parent_id": null,
+      "title": "实例重排和删除",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-03",
+        "EDIT-04-a",
+        "EDIT-04-b"
+      ],
+      "children": [
+        "EDIT-04-a",
+        "EDIT-04-b"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/edits/service.py、web/features/studio/film/components/TimelineActions.tsx、tests/studio/test_edits.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-05-a",
+      "parent_id": "EDIT-05",
+      "title": "裁切实例入出点",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-03",
+        "ROOT-03"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "验证合法源区间，保存后真实预览一致。",
+      "allowlist_scope": "backend/studio/edits/service.py、web/features/studio/film/components/InstanceProperties.tsx、tests/studio/test_edits.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-05-b",
+      "parent_id": "EDIT-05",
+      "title": "移动时间轴位置",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-03",
+        "ROOT-03",
+        "EDIT-05-a"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "整数时间保存，不改变源in/out。",
+      "allowlist_scope": "backend/studio/edits/service.py、web/features/studio/film/components/InstanceProperties.tsx、tests/studio/test_edits.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-05-c",
+      "parent_id": "EDIT-05",
+      "title": "改变速度",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-03",
+        "ROOT-03",
+        "EDIT-05-b"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "仅ROOT-03通过的支持范围，预览/导出一致。",
+      "allowlist_scope": "backend/studio/edits/service.py、web/features/studio/film/components/InstanceProperties.tsx、tests/studio/test_edits.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-05-d",
+      "parent_id": "EDIT-05",
+      "title": "新建轨道",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-03",
+        "ROOT-03",
+        "EDIT-05-c"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只在内核支持时建明确轨道，不改源媒体。",
+      "allowlist_scope": "backend/studio/edits/service.py、web/features/studio/film/components/InstanceProperties.tsx、tests/studio/test_edits.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-05-e",
+      "parent_id": "EDIT-05",
+      "title": "实例移轨",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-03",
+        "ROOT-03",
+        "EDIT-05-d"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只改实例track，拒绝不合法重叠/类型。",
+      "allowlist_scope": "backend/studio/edits/service.py、web/features/studio/film/components/InstanceProperties.tsx、tests/studio/test_edits.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-05-f",
+      "parent_id": "EDIT-05",
+      "title": "轨道静音",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-03",
+        "ROOT-03",
+        "EDIT-05-e"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只改轨道静音，预览/导出同manifest一致。",
+      "allowlist_scope": "backend/studio/edits/service.py、web/features/studio/film/components/InstanceProperties.tsx、tests/studio/test_edits.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-05-g",
+      "parent_id": "EDIT-05",
+      "title": "声音参数",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-03",
+        "ROOT-03",
+        "EDIT-05-f"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "仅已冻结音量/静音等参数，不新增假效果。",
+      "allowlist_scope": "backend/studio/edits/service.py、web/features/studio/film/components/InstanceProperties.tsx、tests/studio/test_edits.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-05",
+      "parent_id": null,
+      "title": "实例时间、速度与轨道编辑",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-03",
+        "ROOT-03",
+        "EDIT-05-a",
+        "EDIT-05-b",
+        "EDIT-05-c",
+        "EDIT-05-d",
+        "EDIT-05-e",
+        "EDIT-05-f",
+        "EDIT-05-g"
+      ],
+      "children": [
+        "EDIT-05-a",
+        "EDIT-05-b",
+        "EDIT-05-c",
+        "EDIT-05-d",
+        "EDIT-05-e",
+        "EDIT-05-f",
+        "EDIT-05-g"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/edits/service.py、web/features/studio/film/components/InstanceProperties.tsx、tests/studio/test_edits.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-06",
+      "parent_id": null,
+      "title": "受控全尺寸编辑器及恢复",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-04",
+        "EDIT-05",
+        "VIEW-03",
+        "VIEW-04"
+      ],
+      "children": [],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/film/components/FilmEditor.tsx、web/features/studio/film/edit-session.ts、web/features/studio/film/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-07",
+      "parent_id": null,
+      "title": "同manifest真实媒体预览",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "ROOT-03",
+        "EDIT-06",
+        "MEDIA-02"
+      ],
+      "children": [],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/film/preview-adapter.ts、web/features/studio/film/components/FilmMonitor.tsx及对应媒体测试",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-08",
+      "parent_id": null,
+      "title": "确认不可变剪辑版本",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-07",
+        "DB-07"
+      ],
+      "children": [],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/edits/service.py、web/features/studio/film/components/ConfirmEdit.tsx、tests/studio/test_edits.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-09",
+      "parent_id": null,
+      "title": "新同版导出处理器",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-08",
+        "JOB-03",
+        "ROOT-03"
+      ],
+      "children": [],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/jobs/handlers/export.py、backend/infrastructure/media/export_adapter.py、tests/studio/test_export_jobs.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-10-a",
+      "parent_id": "EDIT-10",
+      "title": "发布固定剪辑版本",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-09",
+        "MEDIA-02"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "固定同ConfirmedEdit/规格/文件，不重新采用草稿。",
+      "allowlist_scope": "backend/studio/publishing/service.py、backend/studio/publishing/api.py、web/app/watch/[releaseId]/page.tsx、web/features/viewer/ReleaseViewer.tsx；逐子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-10-b",
+      "parent_id": "EDIT-10",
+      "title": "新发布查询API",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-09",
+        "MEDIA-02",
+        "EDIT-10-a"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "公开白名单/属主查询分开，无旧release格式适配。",
+      "allowlist_scope": "backend/studio/publishing/service.py、backend/studio/publishing/api.py、web/app/watch/[releaseId]/page.tsx、web/features/viewer/ReleaseViewer.tsx；逐子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-10-c",
+      "parent_id": "EDIT-10",
+      "title": "新观看页面",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-09",
+        "MEDIA-02",
+        "EDIT-10-b"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "播放新Release真实产物，失败恢复准确。",
+      "allowlist_scope": "backend/studio/publishing/service.py、backend/studio/publishing/api.py、web/app/watch/[releaseId]/page.tsx、web/features/viewer/ReleaseViewer.tsx；逐子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "EDIT-10",
+      "parent_id": null,
+      "title": "新发布和观看",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/06-film.md",
+      "requires": [
+        "EDIT-09",
+        "MEDIA-02",
+        "EDIT-10-a",
+        "EDIT-10-b",
+        "EDIT-10-c"
+      ],
+      "children": [
+        "EDIT-10-a",
+        "EDIT-10-b",
+        "EDIT-10-c"
+      ],
+      "product_rules": [
+        "R09",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/publishing/service.py、backend/studio/publishing/api.py、web/app/watch/[releaseId]/page.tsx、web/features/viewer/ReleaseViewer.tsx；逐子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "CHAT-01",
+      "parent_id": null,
+      "title": "会话和消息API",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/07-conversation.md",
+      "requires": [
+        "DB-09",
+        "ROOT-04",
+        "BASE-02"
+      ],
+      "children": [],
+      "product_rules": [
+        "R10"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/conversations/service.py、backend/studio/conversations/api.py、tests/studio/test_conversations.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "CHAT-02",
+      "parent_id": null,
+      "title": "真实问答与提案处理器",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/07-conversation.md",
+      "requires": [
+        "CHAT-01",
+        "JOB-01",
+        "JOB-02",
+        "JOB-03",
+        "ROOT-04"
+      ],
+      "children": [],
+      "product_rules": [
+        "R10"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/jobs/handlers/conversation.py、backend/studio/conversations/context_reader.py、tests/studio/test_conversation_jobs.py",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "CHAT-03",
+      "parent_id": null,
+      "title": "五步骤底部发送与历史",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/07-conversation.md",
+      "requires": [
+        "CHAT-02",
+        "VIEW-01",
+        "EDIT-06"
+      ],
+      "children": [],
+      "product_rules": [
+        "R10"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/conversation/components/StepConversation.tsx、web/features/studio/conversation/conversation-session.ts、web/features/studio/conversation/api.ts",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "CHAT-04-a",
+      "parent_id": "CHAT-04",
+      "title": "proposal采用命令",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/07-conversation.md",
+      "requires": [
+        "CHAT-03",
+        "SOURCE-04",
+        "SCRIPT-01",
+        "ROOT-04"
+      ],
+      "product_rules": [
+        "R10"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "校验基准/白名单/影响后明确应用，重复幂等。",
+      "allowlist_scope": "backend/studio/conversations/proposals.py、backend/studio/conversations/api.py、web/features/studio/conversation/components/ProposalReview.tsx、web/features/studio/conversation/api.ts、tests/studio/test_proposals.py；按命令/UI子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "CHAT-04-b",
+      "parent_id": "CHAT-04",
+      "title": "proposal采用UI",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/07-conversation.md",
+      "requires": [
+        "CHAT-03",
+        "SOURCE-04",
+        "SCRIPT-01",
+        "ROOT-04",
+        "CHAT-04-a"
+      ],
+      "product_rules": [
+        "R10"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "展示差异与明确采用，回答不直接改业务。",
+      "allowlist_scope": "backend/studio/conversations/proposals.py、backend/studio/conversations/api.py、web/features/studio/conversation/components/ProposalReview.tsx、web/features/studio/conversation/api.ts、tests/studio/test_proposals.py；按命令/UI子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "CHAT-04",
+      "parent_id": null,
+      "title": "明确采用proposal",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/07-conversation.md",
+      "requires": [
+        "CHAT-03",
+        "SOURCE-04",
+        "SCRIPT-01",
+        "ROOT-04",
+        "CHAT-04-a",
+        "CHAT-04-b"
+      ],
+      "children": [
+        "CHAT-04-a",
+        "CHAT-04-b"
+      ],
+      "product_rules": [
+        "R10"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "backend/studio/conversations/proposals.py、backend/studio/conversations/api.py、web/features/studio/conversation/components/ProposalReview.tsx、web/features/studio/conversation/api.ts、tests/studio/test_proposals.py；按命令/UI子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "UI-01",
+      "parent_id": null,
+      "title": "阅读体验与高亮视觉",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/08-visual.md",
+      "requires": [
+        "SOURCE-13",
+        "REL-01"
+      ],
+      "children": [],
+      "product_rules": [
+        "R02",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/source/components/SourceReader.tsx、web/features/studio/source/source.css",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "UI-02-a",
+      "parent_id": "UI-02",
+      "title": "工作区布局与按需属性",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/08-visual.md",
+      "requires": [
+        "VIEW-03",
+        "EDIT-06",
+        "CHAT-03"
+      ],
+      "product_rules": [
+        "R02",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "统一来源/主区/属性/对话尺寸，film铺满。",
+      "allowlist_scope": "web/features/studio/shell/components/StudioShell.tsx、web/features/studio/shell/components/ObjectInspector.tsx、web/features/studio/shell/studio.css、web/shared/theme/tokens.css；按布局/主题分卡",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "UI-02-b",
+      "parent_id": "UI-02",
+      "title": "站点主题token",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/08-visual.md",
+      "requires": [
+        "VIEW-03",
+        "EDIT-06",
+        "CHAT-03",
+        "UI-02-a"
+      ],
+      "product_rules": [
+        "R02",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "统一语义色/控件几何和偏好，明暗一致。",
+      "allowlist_scope": "web/features/studio/shell/components/StudioShell.tsx、web/features/studio/shell/components/ObjectInspector.tsx、web/features/studio/shell/studio.css、web/shared/theme/tokens.css；按布局/主题分卡",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "UI-02",
+      "parent_id": null,
+      "title": "统一布局、按需属性和主题",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/08-visual.md",
+      "requires": [
+        "VIEW-03",
+        "EDIT-06",
+        "CHAT-03",
+        "UI-02-a",
+        "UI-02-b"
+      ],
+      "children": [
+        "UI-02-a",
+        "UI-02-b"
+      ],
+      "product_rules": [
+        "R02",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/studio/shell/components/StudioShell.tsx、web/features/studio/shell/components/ObjectInspector.tsx、web/features/studio/shell/studio.css、web/shared/theme/tokens.css；按布局/主题分卡",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "UI-03-a",
+      "parent_id": "UI-03",
+      "title": "公开项目查询",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/08-visual.md",
+      "requires": [
+        "SOURCE-01",
+        "EDIT-10"
+      ],
+      "product_rules": [
+        "R02",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "按项目组织固定发布摘要，不暴露私有资料。",
+      "allowlist_scope": "web/features/projects/ProjectEntry.tsx、web/features/projects/ProjectDetails.tsx、backend/studio/publishing/public_api.py及对应新route；逐子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "UI-03-b",
+      "parent_id": "UI-03",
+      "title": "新项目入口",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/08-visual.md",
+      "requires": [
+        "SOURCE-01",
+        "EDIT-10",
+        "UI-03-a"
+      ],
+      "product_rules": [
+        "R02",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "封面列表/我的项目/创建空态和准确新路由。",
+      "allowlist_scope": "web/features/projects/ProjectEntry.tsx、web/features/projects/ProjectDetails.tsx、backend/studio/publishing/public_api.py及对应新route；逐子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "UI-03-c",
+      "parent_id": "UI-03",
+      "title": "公开项目详情",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/08-visual.md",
+      "requires": [
+        "SOURCE-01",
+        "EDIT-10",
+        "UI-03-b"
+      ],
+      "product_rules": [
+        "R02",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "项目归组多个成片，返回/播放路径准确。",
+      "allowlist_scope": "web/features/projects/ProjectEntry.tsx、web/features/projects/ProjectDetails.tsx、backend/studio/publishing/public_api.py及对应新route；逐子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "UI-03",
+      "parent_id": null,
+      "title": "新项目入口与公开详情",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/08-visual.md",
+      "requires": [
+        "SOURCE-01",
+        "EDIT-10",
+        "UI-03-a",
+        "UI-03-b",
+        "UI-03-c"
+      ],
+      "children": [
+        "UI-03-a",
+        "UI-03-b",
+        "UI-03-c"
+      ],
+      "product_rules": [
+        "R02",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/projects/ProjectEntry.tsx、web/features/projects/ProjectDetails.tsx、backend/studio/publishing/public_api.py及对应新route；逐子卡收窄",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "UI-04-a",
+      "parent_id": "UI-04",
+      "title": "项目搜索",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/08-visual.md",
+      "requires": [
+        "UI-03"
+      ],
+      "product_rules": [
+        "R02",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "搜索已允许的公开字段，错误不冒充空态。",
+      "allowlist_scope": "web/features/projects/ProjectSearch.tsx、web/shared/auth/create-intent.ts及对应FT测试",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "UI-04-b",
+      "parent_id": "UI-04",
+      "title": "登录后的创建意图",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/08-visual.md",
+      "requires": [
+        "UI-03",
+        "UI-04-a"
+      ],
+      "product_rules": [
+        "R02",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "恢复新建意图，不因公开卡片浏览隐式创建。",
+      "allowlist_scope": "web/features/projects/ProjectSearch.tsx、web/shared/auth/create-intent.ts及对应FT测试",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "UI-04",
+      "parent_id": null,
+      "title": "搜索、登录后的创建意图",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/08-visual.md",
+      "requires": [
+        "UI-03",
+        "UI-04-a",
+        "UI-04-b"
+      ],
+      "children": [
+        "UI-04-a",
+        "UI-04-b"
+      ],
+      "product_rules": [
+        "R02",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "web/features/projects/ProjectSearch.tsx、web/shared/auth/create-intent.ts及对应FT测试",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "UI-05-a",
+      "parent_id": "UI-05",
+      "title": "键盘等价操作",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/08-visual.md",
+      "requires": [
+        "UI-01",
+        "UI-02",
+        "UI-04"
+      ],
+      "product_rules": [
+        "R02",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "ROOT按一个具体不可达命令派发，含焦点与取消复验。",
+      "allowlist_scope": "目标组件与其css，每次只修一个可测缺陷",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "UI-05-b",
+      "parent_id": "UI-05",
+      "title": "窄屏策略",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/08-visual.md",
+      "requires": [
+        "UI-01",
+        "UI-02",
+        "UI-04",
+        "UI-05-a"
+      ],
+      "product_rules": [
+        "R02",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "ROOT按一个具体布局缺陷派发，不要求仅拖动。",
+      "allowlist_scope": "目标组件与其css，每次只修一个可测缺陷",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "UI-05-c",
+      "parent_id": "UI-05",
+      "title": "减弱动效",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/08-visual.md",
+      "requires": [
+        "UI-01",
+        "UI-02",
+        "UI-04",
+        "UI-05-b"
+      ],
+      "product_rules": [
+        "R02",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "尊重偏好，真实状态不靠循环模拟进度。",
+      "allowlist_scope": "目标组件与其css，每次只修一个可测缺陷",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "UI-05",
+      "parent_id": null,
+      "title": "键盘、窄屏和减弱动效",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/08-visual.md",
+      "requires": [
+        "UI-01",
+        "UI-02",
+        "UI-04",
+        "UI-05-a",
+        "UI-05-b",
+        "UI-05-c"
+      ],
+      "children": [
+        "UI-05-a",
+        "UI-05-b",
+        "UI-05-c"
+      ],
+      "product_rules": [
+        "R02",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "目标组件与其css，每次只修一个可测缺陷",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-01",
+      "parent_id": null,
+      "title": "禁止新业务依赖旧业务的检查",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "ROOT-05",
+        "BASE-01"
+      ],
+      "children": [],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "一个依赖检查脚本、新代码测试规则及相应测试；逐文件退役清单由主模型维护",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-02-a",
+      "parent_id": "RETIRE-02",
+      "title": "旧作者页入口",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "GATE-01",
+        "GATE-02",
+        "GATE-03",
+        "GATE-04",
+        "GATE-05",
+        "RETIRE-01"
+      ],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "删除旧author页面及专用导航引用。",
+      "allowlist_scope": "RETIRE-01由主模型审定的逐文件前端退役清单；当前未冻结，禁止按目录泛删",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-02-b",
+      "parent_id": "RETIRE-02",
+      "title": "旧工作台组件",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "GATE-01",
+        "GATE-02",
+        "GATE-03",
+        "GATE-04",
+        "GATE-05",
+        "RETIRE-01",
+        "RETIRE-02-a"
+      ],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "删除旧workbench子树，解决每条import。",
+      "allowlist_scope": "RETIRE-01由主模型审定的逐文件前端退役清单；当前未冻结，禁止按目录泛删",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-02-c",
+      "parent_id": "RETIRE-02",
+      "title": "旧首页和观看入口",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "GATE-01",
+        "GATE-02",
+        "GATE-03",
+        "GATE-04",
+        "GATE-05",
+        "RETIRE-01",
+        "RETIRE-02-b"
+      ],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "删除ProjectHome/旧watch装配，保留新route。",
+      "allowlist_scope": "RETIRE-01由主模型审定的逐文件前端退役清单；当前未冻结，禁止按目录泛删",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-02-d",
+      "parent_id": "RETIRE-02",
+      "title": "旧专用样式",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "GATE-01",
+        "GATE-02",
+        "GATE-03",
+        "GATE-04",
+        "GATE-05",
+        "RETIRE-01",
+        "RETIRE-02-c"
+      ],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "清理只被旧产品消费的css和layout引用。",
+      "allowlist_scope": "RETIRE-01由主模型审定的逐文件前端退役清单；当前未冻结，禁止按目录泛删",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-02",
+      "parent_id": null,
+      "title": "删除旧前端产品入口和组件",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "GATE-01",
+        "GATE-02",
+        "GATE-03",
+        "GATE-04",
+        "GATE-05",
+        "RETIRE-01",
+        "RETIRE-02-a",
+        "RETIRE-02-b",
+        "RETIRE-02-c",
+        "RETIRE-02-d"
+      ],
+      "children": [
+        "RETIRE-02-a",
+        "RETIRE-02-b",
+        "RETIRE-02-c",
+        "RETIRE-02-d"
+      ],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "RETIRE-01由主模型审定的逐文件前端退役清单；当前未冻结，禁止按目录泛删",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-03-a",
+      "parent_id": "RETIRE-03",
+      "title": "旧author路由和服务",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "RETIRE-02",
+        "ROOT-05",
+        "JOB-01",
+        "JOB-02",
+        "JOB-03",
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-10",
+        "JOB-11",
+        "JOB-12"
+      ],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "按盘点审定清单解除新应用依赖后删除。",
+      "allowlist_scope": "RETIRE-01由主模型审定的逐文件后端/装配/worker/启动清单；具体绝对路径，未冻结不执行",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-03-b",
+      "parent_id": "RETIRE-03",
+      "title": "旧creative/director管线",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "RETIRE-02",
+        "ROOT-05",
+        "JOB-01",
+        "JOB-02",
+        "JOB-03",
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-10",
+        "JOB-11",
+        "JOB-12",
+        "RETIRE-03-a"
+      ],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "解除交叉引用后删除旧实现。",
+      "allowlist_scope": "RETIRE-01由主模型审定的逐文件后端/装配/worker/启动清单；具体绝对路径，未冻结不执行",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-03-c",
+      "parent_id": "RETIRE-03",
+      "title": "旧production/preproduction管线",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "RETIRE-02",
+        "ROOT-05",
+        "JOB-01",
+        "JOB-02",
+        "JOB-03",
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-10",
+        "JOB-11",
+        "JOB-12",
+        "RETIRE-03-b"
+      ],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "删除旧阶段handler及专用模块。",
+      "allowlist_scope": "RETIRE-01由主模型审定的逐文件后端/装配/worker/启动清单；具体绝对路径，未冻结不执行",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-03-d",
+      "parent_id": "RETIRE-03",
+      "title": "旧reader/reader_branch",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "RETIRE-02",
+        "ROOT-05",
+        "JOB-01",
+        "JOB-02",
+        "JOB-03",
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-10",
+        "JOB-11",
+        "JOB-12",
+        "RETIRE-03-c"
+      ],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "删除旧播放/改写服务，新Release独立。",
+      "allowlist_scope": "RETIRE-01由主模型审定的逐文件后端/装配/worker/启动清单；具体绝对路径，未冻结不执行",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-03-e",
+      "parent_id": "RETIRE-03",
+      "title": "旧worker入口",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "RETIRE-02",
+        "ROOT-05",
+        "JOB-01",
+        "JOB-02",
+        "JOB-03",
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-10",
+        "JOB-11",
+        "JOB-12",
+        "RETIRE-03-d"
+      ],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "使用新runner，删除旧Task阶段依赖。",
+      "allowlist_scope": "RETIRE-01由主模型审定的逐文件后端/装配/worker/启动清单；具体绝对路径，未冻结不执行",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-03-f",
+      "parent_id": "RETIRE-03",
+      "title": "应用路由装配",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "RETIRE-02",
+        "ROOT-05",
+        "JOB-01",
+        "JOB-02",
+        "JOB-03",
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-10",
+        "JOB-11",
+        "JOB-12",
+        "RETIRE-03-e"
+      ],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "只注册新业务和批准的通用入口，不误删通用中间件。",
+      "allowlist_scope": "RETIRE-01由主模型审定的逐文件后端/装配/worker/启动清单；具体绝对路径，未冻结不执行",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-03-g",
+      "parent_id": "RETIRE-03",
+      "title": "启动脚本",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "RETIRE-02",
+        "ROOT-05",
+        "JOB-01",
+        "JOB-02",
+        "JOB-03",
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-10",
+        "JOB-11",
+        "JOB-12",
+        "RETIRE-03-f"
+      ],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "切入新API/worker，独立验证实际运行checkout。",
+      "allowlist_scope": "RETIRE-01由主模型审定的逐文件后端/装配/worker/启动清单；具体绝对路径，未冻结不执行",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-03",
+      "parent_id": null,
+      "title": "删除旧后端管线/路由与共用耦合",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "RETIRE-02",
+        "ROOT-05",
+        "JOB-01",
+        "JOB-02",
+        "JOB-03",
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-10",
+        "JOB-11",
+        "JOB-12",
+        "RETIRE-03-a",
+        "RETIRE-03-b",
+        "RETIRE-03-c",
+        "RETIRE-03-d",
+        "RETIRE-03-e",
+        "RETIRE-03-f",
+        "RETIRE-03-g"
+      ],
+      "children": [
+        "RETIRE-03-a",
+        "RETIRE-03-b",
+        "RETIRE-03-c",
+        "RETIRE-03-d",
+        "RETIRE-03-e",
+        "RETIRE-03-f",
+        "RETIRE-03-g"
+      ],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "RETIRE-01由主模型审定的逐文件后端/装配/worker/启动清单；具体绝对路径，未冻结不执行",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-04-a",
+      "parent_id": "RETIRE-04",
+      "title": "新运行文档",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "RETIRE-03",
+        "GATE-05"
+      ],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "在实际签收后写准确新命令/入口/限制，归档不再为活动索引。",
+      "allowlist_scope": "由主模型逐文件审定的当前文档、旧专用测试与工具项；本轮已整理的文档无需重复搬移",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-04-b",
+      "parent_id": "RETIRE-04",
+      "title": "旧业务专用测试",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "RETIRE-03",
+        "GATE-05",
+        "RETIRE-04-a"
+      ],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "按清单退役只约束旧产品的测试，保留有效通用检查。",
+      "allowlist_scope": "由主模型逐文件审定的当前文档、旧专用测试与工具项；本轮已整理的文档无需重复搬移",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-04-c",
+      "parent_id": "RETIRE-04",
+      "title": "旧工具脚本引用",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "RETIRE-03",
+        "GATE-05",
+        "RETIRE-04-b"
+      ],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "清理旧专用脚本/入口，数据重置操作不在本卡执行。",
+      "allowlist_scope": "由主模型逐文件审定的当前文档、旧专用测试与工具项；本轮已整理的文档无需重复搬移",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "RETIRE-04",
+      "parent_id": null,
+      "title": "按签收结果更新运行文档与清理旧测试入口",
+      "kind": "family",
+      "owner": "executor",
+      "spec": "execution/tasks/09-retirement.md",
+      "requires": [
+        "RETIRE-03",
+        "GATE-05",
+        "RETIRE-04-a",
+        "RETIRE-04-b",
+        "RETIRE-04-c"
+      ],
+      "children": [
+        "RETIRE-04-a",
+        "RETIRE-04-b",
+        "RETIRE-04-c"
+      ],
+      "product_rules": [
+        "R01",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "由主模型逐文件审定的当前文档、旧专用测试与工具项；本轮已整理的文档无需重复搬移",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "GATE-01",
+      "parent_id": null,
+      "title": "数据与并发门",
+      "kind": "gate",
+      "owner": "root",
+      "spec": "execution/tasks/10-gates.md",
+      "requires": [
+        "DB-01",
+        "DB-02",
+        "DB-03",
+        "DB-04",
+        "DB-05",
+        "DB-06",
+        "DB-07",
+        "DB-08",
+        "DB-09",
+        "DB-10",
+        "SOURCE-01",
+        "SOURCE-02",
+        "SOURCE-03",
+        "SOURCE-04",
+        "SOURCE-05",
+        "SOURCE-06",
+        "SOURCE-07",
+        "SOURCE-08",
+        "SOURCE-09",
+        "SOURCE-10",
+        "SOURCE-11",
+        "SOURCE-12",
+        "SOURCE-13",
+        "SOURCE-14",
+        "SCRIPT-01",
+        "SCRIPT-02",
+        "SHOT-01",
+        "ASSET-01",
+        "ASSET-02",
+        "ASSET-03",
+        "REL-02"
+      ],
+      "children": [],
+      "product_rules": [
+        "R01",
+        "R02",
+        "R03",
+        "R04",
+        "R05",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R10",
+        "R11",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "由主模型确定此准备/验收卡的准确范围",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "GATE-02",
+      "parent_id": null,
+      "title": "关键浏览器连续操作门",
+      "kind": "gate",
+      "owner": "root",
+      "spec": "execution/tasks/10-gates.md",
+      "requires": [
+        "GATE-01",
+        "VIEW-01",
+        "VIEW-02",
+        "VIEW-03",
+        "VIEW-04",
+        "SCRIPT-03",
+        "SHOT-02",
+        "REL-01",
+        "REL-02",
+        "REL-03",
+        "EDIT-01",
+        "EDIT-02",
+        "EDIT-03",
+        "EDIT-04",
+        "EDIT-05",
+        "EDIT-06",
+        "CHAT-03"
+      ],
+      "children": [],
+      "product_rules": [
+        "R01",
+        "R02",
+        "R03",
+        "R04",
+        "R05",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R10",
+        "R11",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "由主模型确定此准备/验收卡的准确范围",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "GATE-03",
+      "parent_id": null,
+      "title": "新任务/agent执行门",
+      "kind": "gate",
+      "owner": "root",
+      "spec": "execution/tasks/10-gates.md",
+      "requires": [
+        "JOB-01",
+        "JOB-02",
+        "JOB-03",
+        "JOB-04",
+        "JOB-05",
+        "JOB-06",
+        "JOB-07",
+        "JOB-08",
+        "JOB-09",
+        "JOB-10",
+        "JOB-11",
+        "JOB-12",
+        "CHAT-01",
+        "CHAT-02",
+        "CHAT-03",
+        "CHAT-04",
+        "MEDIA-01",
+        "MEDIA-02"
+      ],
+      "children": [],
+      "product_rules": [
+        "R01",
+        "R02",
+        "R03",
+        "R04",
+        "R05",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R10",
+        "R11",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "由主模型确定此准备/验收卡的准确范围",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "GATE-04",
+      "parent_id": null,
+      "title": "预览、导出、发布一致门",
+      "kind": "gate",
+      "owner": "root",
+      "spec": "execution/tasks/10-gates.md",
+      "requires": [
+        "ROOT-03",
+        "EDIT-07",
+        "EDIT-08",
+        "EDIT-09",
+        "EDIT-10",
+        "GATE-03"
+      ],
+      "children": [],
+      "product_rules": [
+        "R01",
+        "R02",
+        "R03",
+        "R04",
+        "R05",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R10",
+        "R11",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "由主模型确定此准备/验收卡的准确范围",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "GATE-05",
+      "parent_id": null,
+      "title": "设计与操作体验门",
+      "kind": "gate",
+      "owner": "root",
+      "spec": "execution/tasks/10-gates.md",
+      "requires": [
+        "UI-01",
+        "UI-02",
+        "UI-03",
+        "UI-04",
+        "UI-05",
+        "GATE-02",
+        "GATE-03",
+        "GATE-04"
+      ],
+      "children": [],
+      "product_rules": [
+        "R01",
+        "R02",
+        "R03",
+        "R04",
+        "R05",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R10",
+        "R11",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "由主模型确定此准备/验收卡的准确范围",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
+      "id": "GATE-06",
+      "parent_id": null,
+      "title": "旧代码清除及实际运行签收",
+      "kind": "gate",
+      "owner": "root",
+      "spec": "execution/tasks/10-gates.md",
+      "requires": [
+        "RETIRE-01",
+        "RETIRE-02",
+        "RETIRE-03",
+        "RETIRE-04",
+        "GATE-01",
+        "GATE-02",
+        "GATE-03",
+        "GATE-04",
+        "GATE-05"
+      ],
+      "children": [],
+      "product_rules": [
+        "R01",
+        "R02",
+        "R03",
+        "R04",
+        "R05",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R10",
+        "R11",
+        "R12",
+        "R13"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "allowlist_scope": "由主模型确定此准备/验收卡的准确范围",
+      "attempts": [],
+      "acceptance": null
+    }
+  ]
+}
