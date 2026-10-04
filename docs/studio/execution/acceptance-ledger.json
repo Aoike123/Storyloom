@@ -443,11 +443,43 @@
         "R06",
         "R12"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "allowlist_scope": "web/shared/api/client.ts、web/shared/api/types.ts、web/tests/studio/api-client.test.cjs",
-      "attempts": [],
-      "acceptance": null
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "interrupted（卡滞约8分钟无文件产出，主模型中断，未交付）"
+        },
+        {
+          "n": 2,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.3",
+        "tested_baseline": "765527c + 3 新文件（本卡提交）",
+        "scope": "web_api_transport_layer",
+        "checks": [
+          "主模型独立复验：node --test tests/studio/*.test.cjs → 19/19（9 新 + 10 既有 studio-app 无回归）；npx tsc --noEmit → exit 0。",
+          "端到端实测（非 stub）：真实 fetch 打 uvicorn 3011——GET /api/studio/health 经 createClient 得 {ok:true,data:{ok:true,service:storyloom-studio}}；对仅 GET 的路由 POST → 405 按冻结映射 code=internal_error（“其他→internal_error”），全程无成功伪装。",
+          "契约符合性：API_BASE 默认 127.0.0.1:3011（env NEXT_PUBLIC_STUDIO_API_BASE 可覆盖）；token 键 sl_studio_token（SSR 安全、localStorage try/catch）；command_id 每动作一次、post 传入即复用；12 错误码常量与 §4 一致；非契约错误体按状态码映射。"
+        ],
+        "evidence": [
+          "web/shared/api/types.ts",
+          "web/shared/api/client.ts",
+          "web/tests/studio/api-client.test.cjs"
+        ],
+        "limitations": [
+          "登录界面（写 sl_studio_token 的 UI）随 BASE-03-c 的 /api/studio/auth/* 端点接入时提供；本卡只交付传输层与存储函数。"
+        ]
+      }
     },
     {
       "id": "BASE-03-a",
