@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "plan_version": "2.1",
-  "contract_version": "2.0",
+  "contract_version": "2.1",
   "product_version": "2.0",
   "updated": "2026-10-04",
   "authority": "root_acceptance_only",
@@ -130,11 +130,40 @@
         "R01",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "由主模型确定此准备/验收卡的准确范围",
+      "allowlist_scope": "主模型冻结卡：产出 architecture/appendices/00–07，不改应用文件",
       "attempts": [],
-      "acceptance": null
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "tested_baseline": "16aefd1",
+        "scope": "freeze_schema_api_state",
+        "checks": [
+          "契约§2 的13聚合：Project/Source/RangeSet/Fragment/Script/Scene/Shot/Asset/三种关系/Preview/Decision 已按表/字段/FK/唯一/CAS/状态表落实于附录01–07（studio_* 新表名）；Job/Conversation/Edit/Media/Release 五族 kind 已在附录00登记，表留给 ROOT-03/04 附录，与 DB-08/09/10 的依赖设置一致。",
+          "逐命令请求/响应/错误码/impact 已枚举：P1–S6、F1–F12、SC1–SC7、SB1–SB9、AS1–AS10、RL1–BD4、RV1–RV5；全部是领域命令，无万能patch、无旧 stage/Gxx/Pxxx、无第二套可写归属树。",
+          "并发冻结：range_set.cas_revision 与 scene.layout_cas_revision 为仅有的两个集合 CAS 写入点；对象级 expected_revision CAS；command_id 幂等落 studio_command_records（contracts/models.py，随 BASE-01-b 交付）。",
+          "采用含义冻结：剧本采用=片段级 adoption 链（附录03）；镜头输入=adoption+binding 引用并在任务提交时冻结（附录04/06）；资产新版本不自动采用、按 scope 换 binding 走 preview（附录05/07）；旧审核不能给新 revision 自动过关（附录07 baseline_digest）。",
+          "必须预览清单冻结于附录00 §5（含片段退役）；pending_review 派生语义、封面取自 Release、正文整篇重导入等决定已登记 decisions.md 变更记录。",
+          "ObjectRef 24 kind、统一列表/游标查询 DTO、12 个错误码、公开端点白名单（附录01 §3）均已定义；领域契约已升 2.1 并链接全部附录。"
+        ],
+        "evidence": [
+          "architecture/appendices/00-object-ref-and-protocol.md",
+          "architecture/appendices/01-projects-sources.md",
+          "architecture/appendices/02-fragments.md",
+          "architecture/appendices/03-scripts.md",
+          "architecture/appendices/04-scenes-shots.md",
+          "architecture/appendices/05-assets.md",
+          "architecture/appendices/06-relations.md",
+          "architecture/appendices/07-reviews.md",
+          "architecture/domain-contracts.md §9（链接）",
+          "architecture/decisions.md 变更记录（2026-10-04 五条）"
+        ],
+        "limitations": [
+          "Job/会话/剪辑/媒体/发布五族的表与命令、edit_confirm/release_publish 两种 preview 的 payload 细节待 ROOT-04/ROOT-03 附录补齐；对应 DB-08/09/10、CHAT/EDIT/MEDIA 卡保持未就绪（依赖未变）。",
+          "本卡为设计冻结，无代码产物；代码级验收从 BASE/DB 卡开始。"
+        ]
+      }
     },
     {
       "id": "ROOT-03",

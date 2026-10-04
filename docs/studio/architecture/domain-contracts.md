@@ -1,6 +1,6 @@
 # 来源工作台重构实施契约
 
-版本：2.0 · 2026-10-04。方向：**按用户决定彻底重构，旧产品实现退役。** 本文为[原子计划](../execution/implementation-plan.md)的技术基线。接口/模型是本轮新建目标，不表示已实现；主模型负责冻结细节，轻量模型不得自行补兼容层。
+版本：2.1 · 2026-10-04（ROOT-02 附录已冻结）。方向：**按用户决定彻底重构，旧产品实现退役。** 本文为[原子计划](../execution/implementation-plan.md)的技术基线。接口/模型是本轮新建目标，不表示已实现；主模型负责冻结细节，轻量模型不得自行补兼容层。
 
 目录和跨模块依赖以[项目结构](project-structure.md)为准；待冻结内容见[架构决策](decisions.md)。
 
@@ -137,3 +137,20 @@ ConfirmedEdit = {id,edit_id,edit_revision,manifest_digest,output_spec,instances_
 | 同clip插两次，再删一次 | 独立实例，剩下实例与源clip不变 |
 
 ROOT-02 必须落实表/字段/API/CAS/状态/影响附录；ROOT-03落实媒体内核；ROOT-04落实新生成/agent adapter和提案执行。未冻结的后继卡标blocked_by_design，不能让轻量模型补TODO/兼容层交付。
+
+## 9. 冻结附录（ROOT-02 产物，2026-10-04）
+
+具体表、字段、命令请求/响应/错误码与 impact 以附录为准；本文件既有小节与附录冲突时以附录为准（附录是更精确的冻结）。任务卡派发时把对应附录页随卡发送。
+
+| 附录 | 覆盖 |
+| --- | --- |
+| [00 · ObjectRef 与共享协议](appendices/00-object-ref-and-protocol.md) | ObjectRef/kind 登记、ULID/CAS/command_id 幂等、错误协议、预览-应用协议、查询 DTO、范围校验规则 |
+| [01 · 项目与不可变来源](appendices/01-projects-sources.md) | studio_projects、studio_source_revisions；P1–S6 与公开端点白名单 |
+| [02 · 范围集合与片段](appendices/02-fragments.md) | range_set 集合 CAS、fragment/fragment_revision、production_scope；F1–F12 与拆合/边界/退役 impact |
+| [03 · 剧本对象与采用](appendices/03-scripts.md) | script_object/revision/adoption 采用链；SC1–SC7 |
+| [04 · 场与镜头](appendices/04-scenes-shots.md) | scene（layout CAS）、shot/shot_revision；SB1–SB9 与显式重排、生成入口 |
+| [05 · 资产与并存版本](appendices/05-assets.md) | asset/asset_revision（spec 必填键、review_status、当前指针）；AS1–AS10 |
+| [06 · 关系与绑定](appendices/06-relations.md) | source_relation、asset_occurrence、asset_binding（用途/作用对象/双服装校验）；RL/OC/BD 命令 |
+| [07 · 变更预览与审核](appendices/07-reviews.md) | change_preview、review_decision；RV1–RV5 与 kind 冻结清单 |
+
+Job/会话/剪辑/媒体/发布五族的表与命令由 ROOT-04/ROOT-03 在本目录补附录（kind 已在 00 登记）；其 DB 卡（DB-08/09/10）与 CHAT/EDIT/MEDIA 卡在那之前保持未就绪。
