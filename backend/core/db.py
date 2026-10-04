@@ -5,6 +5,8 @@
 互相干扰）。不 import 任何旧后端模块。
 """
 import os
+import secrets
+import time
 from pathlib import Path
 
 from sqlalchemy import event
@@ -48,6 +50,26 @@ Session = sessionmaker(engine, expire_on_commit=False)
 
 class Base(DeclarativeBase):
     pass
+
+
+# Crockford base32 字母表（ULID 标准编码）
+_CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz"
+
+
+def make_ulid() -> str:
+    """服务端 ULID：49 位毫秒时间戳 + 80 位随机，Crockford base32（26 字符，小写）。
+
+    附录 02 冻结：所有领域对象 id 由服务端生成（客户端不生成 id）；
+    26 字符兼容全部 String(32) 主键槽。
+    """
+    ts = int(time.time() * 1000)
+    rand = int.from_bytes(secrets.token_bytes(10), "big")
+    n = (ts << 80) | rand
+    out = []
+    for _ in range(26):
+        out.append(_CROCKFORD[n & 0x1F])
+        n >>= 5
+    return "".join(reversed(out))
 
 
 def init_db() -> None:
