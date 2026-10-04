@@ -1,6 +1,6 @@
 # 附录 02 · 范围集合、片段与片段版本（DB-02）
 
-版本：2.1 · ROOT-02 冻结 · 2026-10-04。覆盖：`RangeSet`、`Fragment`、`FragmentRevision`、`ProductionScope` 与 `/fragments`、`/production-scopes` 命令族。共享约定见[附录 00](00-object-ref-and-protocol.md)；字符契约执行其 §7。
+版本：2.2 · ROOT-02 冻结 · 2026-10-04（v2.7：F4/F5 失败码笔误修正——revision_conflict 依附录 00 §4 恒为 409）。覆盖：`RangeSet`、`Fragment`、`FragmentRevision`、`ProductionScope` 与 `/fragments`、`/production-scopes` 命令族。共享约定见[附录 00](00-object-ref-and-protocol.md)；字符契约执行其 §7。
 
 实施位置：表 `backend/studio/sources/fragment_models.py`（ProductionScope 表在 `sources/models.py`，DB-01 卡）；命令 `backend/studio/sources/{fragment_service,fragments_api}.py`、`changes.py/changes_api.py`、`scopes.py/scopes_api.py`；测试 `tests/studio/test_fragment_models.py`、`test_fragments.py`、`test_fragment_changes.py`、`test_source_changes.py`、`test_scopes.py`。
 
@@ -79,7 +79,7 @@
 | F1 | POST `/fragments` | `source_revision_id, range{start,end}, name, expected_range_set_revision\|null, command_id` | 201 `{object_ref, name, summary, state:'candidate', range, created_at}`；同事务建/校验 range_set 并 +1 cas | 422 `range_invalid`/`validation_failed`(name)；409 `range_overlap`(conflicts) / `revision_conflict`(range_set cas)；422 `precondition_failed`(版本非 active) |
 | F2 | GET `/fragments?cursor=&state=` | — | 200 列表（active 版本，`state` 为有效状态） | 404 |
 | F3 | GET `/fragments/{fid}` | — | 200 DTO：object_ref、name、summary、state(有效)、revision_is_active、range、source_revision_id、predecessor_ids、created/updated/retired_at | 404 |
-| F4 | POST `/fragments/{fid}/rename` | `name, expected_revision, command_id` | 200 DTO（ID 不变） | 422 `revision_conflict`/`validation_failed` |
+| F4 | POST `/fragments/{fid}/rename` | `name, expected_revision, command_id` | 200 DTO（ID 不变） | 409 `revision_conflict` / 422 `validation_failed` |
 | F5 | POST `/fragments/{fid}/summary` | `summary\|null, expected_revision, command_id` | 200 DTO | 同上 |
 | F6 | POST `/fragments/{fid}/confirm` | `expected_revision, command_id` | 200 state=confirmed。**不启动生产、不表示全文覆盖**（R04） | 422 `precondition_failed`(非 candidate)；409 `revision_conflict` |
 | F7 | POST `/fragments/{fid}/retire` → **preview**；`POST /fragments/{fid}/retire/apply` | preview:`{target_fragment_id, command_id}`；apply:`{preview_id, command_id, expected_revision, expected_range_set_revision}` | apply 200：state=retired、retired_at；**不删除任何产物**（R11 失效≠删除） | preview: 409 `precondition_failed`(已 retired)；apply: `preview_stale`/`revision_conflict` |

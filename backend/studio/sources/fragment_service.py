@@ -12,6 +12,7 @@ F7 退役 → F8 边界 → F9 拆分 → F10 合并）。
 - 父+子同 flush 必须显式 flush 父行（UOW 不保证跨表插入序，01-a 裁定）;
 - 幂等/属主 404 不泄漏/错误协议同 projects/service.py 头注。
 """
+import hashlib
 import json
 import time
 
@@ -22,11 +23,12 @@ from ...core.db import make_ulid
 from ..contracts.errors import StudioAPIError
 from ..contracts.models import CommandRecord
 from ..projects.models import StudioProject
+from ..reviews.models import ReviewDecision
 from .fragment_models import Fragment, FragmentRevision, RangeSet
 from .models import SourceRevision
 from .ranges import ranges_overlap, utf16_len, validate_range
 
-__all__ = ["create_fragment"]
+__all__ = ["create_fragment", "confirm_fragment"]
 
 # F1 写事务内的 CAS 冲突 message（面向用户，给出定位信息）
 _CAS_MSG = "范围集合版本已变化，请刷新片段列表后重试。"
@@ -304,4 +306,187 @@ def create_fragment(
                 "range_set", winner.id, expected_range_set_revision, winner.cas_revision, _CAS_MSG
             )
         raise
+    return body
+
+
+def confirm_fragment(
+    session,
+    user,
+    pid,
+    fid,
+    expected_revision,
+    command_id,
+) -> dict:
+    """F6 确认片段（附录 02 §2 F6；不启动生产、不表示全文覆盖，R04）。
+
+    校验顺序（冻结，按序短路）：
+    1. 项目不存在/非属主 → 404 not_found(kind=project)（不泄漏）；
+    2. 片段不存在**或**不属本项目 → 一律 404 not_found(kind=fragment)（不泄漏）；
+    3. fragment.source_revision_id != project.active_source_revision_id →
+       422 precondition_failed(reason=source_revision_inactive，
+       blocked_by.id = active id 或 null，同 F1)；
+    4. 幂等（附录 00 §3，同 F1 模式）：(owner_id, command_id) 记录存在 →
+       result_payload 的 object_ref 与本请求一致（id==fid 且
+       revision==expected_revision，即与首次一致）= 重放：返回首次
+       result_payload 并附内部标记 ``_replay=True``（路由转 200，零写零 commit）；
+       不一致 → 422 validation_failed(rule=reused)；
+    5. CAS：expected_revision != current（fragment.current_revision_id 所指
+       FragmentRevision 行的 revision 号）→ 409 revision_conflict
+       (object={fragment,fid}, expected, actual)；
+    6. 状态：fragment.state != "candidate" → 422 precondition_failed
+       (reason=not_candidate，blocked_by={fragment,fid,revision=current})；
+       “重复确认”= 新 command_id 再确认已确认片段 → 本条 422；
+       同 command_id 重放走第 4 步幂等 200。
+
+    写事务（单事务，无半次保存；不动 range_set cas——附录 02 §3：F4–F7
+    不改范围布局；不写任何 ProductionScope——确认 ≠ 全文覆盖）：
+    写序 fragment 更新（已存在行，UPDATE 即写语句）→ ReviewDecision
+    (decision=applied, preview_id=None, target_ref, baseline_digest =
+    sha256(规范化 JSON baseline，含范围集合 CAS 快照)) → CommandRecord
+    （result_payload = 完整 200 体），同一 ``session.begin()``。
+    任何异常 → 回滚，无半次保存。
+
+    返回 200 体（F3 形状片段 DTO：state=confirmed，revision_is_active=true；
+    本路径绑定版本 == active → 有效状态 = 持久状态）；重放时附 ``_replay=True``。
+    """
+    # 1) 项目（属主校验，404 不泄漏存在性）
+    p = session.scalar(select(StudioProject).where(StudioProject.id == pid))
+    if p is None or p.owner_id != user.id:
+        raise StudioAPIError.not_found("project", pid)
+
+    # 2) 片段：不存在或不属本项目 → 一律 404（不泄漏存在性）
+    frag = session.scalar(
+        select(Fragment).where(Fragment.id == fid, Fragment.project_id == pid)
+    )
+    if frag is None:
+        raise StudioAPIError.not_found("fragment", fid)
+
+    # 3) 绑定版本须为项目 active（同 F1）
+    if frag.source_revision_id != p.active_source_revision_id:
+        raise StudioAPIError.precondition_failed(
+            "source_revision_inactive",
+            {"kind": "source", "id": p.active_source_revision_id, "revision": None},
+            "该正文版本不是项目当前活跃版本，不能基于它确认片段。",
+        )
+
+    # 4) 幂等（附录 00 §3，同 F1 模式）：读查询，先于写事务
+    record = session.scalar(
+        select(CommandRecord).where(
+            CommandRecord.owner_id == user.id,
+            CommandRecord.command_id == command_id,
+        )
+    )
+    if record is not None:
+        payload = json.loads(record.result_payload) if record.result_payload else {}
+        ref = payload.get("object_ref") or {}
+        if ref.get("id") == fid and ref.get("revision") == expected_revision:
+            # 重放：返回首次 result_payload，零写零 commit
+            return dict(payload, _replay=True)
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "command_id",
+                    "rule": "reused",
+                    "message": "command_id 已被其他命令使用，请生成新的。",
+                }
+            ]
+        )
+
+    # 5) CAS：current = current_revision_id 所指版本行的 revision 号
+    rv = session.get(FragmentRevision, frag.current_revision_id)
+    if rv is None:  # 理论上不可达（current_revision_id NOT NULL FK）
+        raise StudioAPIError.internal()
+    current = rv.revision
+    if expected_revision != current:
+        raise StudioAPIError.revision_conflict(
+            "fragment",
+            fid,
+            expected_revision,
+            current,
+            "片段版本已变化，请刷新片段详情后重试。",
+        )
+
+    # 6) 状态：只有 candidate 可确认
+    if frag.state != "candidate":
+        raise StudioAPIError.precondition_failed(
+            "not_candidate",
+            {"kind": "fragment", "id": fid, "revision": current},
+            "该片段当前状态不是 candidate，不能确认。",
+        )
+
+    # 读事务快照（DTO 字段与 baseline；写阶段不再回读）
+    S = session.scalar(select(RangeSet).where(RangeSet.id == frag.range_set_id))
+    cas = S.cas_revision if S is not None else None
+    name_s = frag.name
+    summary_s = frag.summary
+    src_id = frag.source_revision_id
+    range_set_id = frag.range_set_id
+    created_at = frag.created_at
+    retired_at = frag.retired_at
+    rng_start = rv.range_start
+    rng_end = rv.range_end
+    predecessor_ids = json.loads(rv.predecessor_fragment_ids or "[]")
+    session.commit()  # 结束读事务；写阶段另起事务
+
+    # 确认基准 = 片段版本 + 绑定版本 + 集合 CAS 快照（主模型裁定）；
+    # 规范化 JSON 的 sha256
+    baseline = {
+        "fragment_id": fid,
+        "fragment_revision": current,
+        "source_revision_id": src_id,
+        "range_set_id": range_set_id,
+        "cas_revision": cas,
+    }
+    baseline_digest = hashlib.sha256(
+        json.dumps(baseline, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    # 写事务：单事务，无半次保存；写序 fragment → ReviewDecision → CommandRecord
+    now = time.time()
+    body = {
+        "object_ref": {"kind": "fragment", "id": fid, "revision": current},
+        "name": name_s,
+        "summary": summary_s,
+        "state": "confirmed",
+        "revision_is_active": True,
+        "range": {"start": rng_start, "end": rng_end},
+        "source_revision_id": src_id,
+        "predecessor_ids": predecessor_ids,
+        "created_at": created_at,
+        "updated_at": now,
+        "retired_at": retired_at,
+    }
+    with session.begin():
+        # fragment：已存在行 UPDATE（首条语句即写语句；不动 range_set cas，
+        # 不写任何 ProductionScope——确认 ≠ 全文覆盖）
+        session.execute(
+            update(Fragment)
+            .where(Fragment.id == fid)
+            .values(state="confirmed", updated_at=now)
+        )
+        session.add(
+            ReviewDecision(
+                id=make_ulid(),
+                project_id=pid,
+                owner_id=user.id,
+                preview_id=None,
+                target_ref=json.dumps(
+                    {"kind": "fragment", "id": fid, "revision": current}, ensure_ascii=False
+                ),
+                decision="applied",
+                baseline_digest=baseline_digest,
+                created_at=now,
+            )
+        )
+        session.flush()
+        session.add(
+            CommandRecord(
+                id=make_ulid(),
+                owner_id=user.id,
+                project_id=pid,
+                command_id=command_id,
+                result_payload=json.dumps(body, ensure_ascii=False),
+                created_at=now,
+            )
+        )
     return body

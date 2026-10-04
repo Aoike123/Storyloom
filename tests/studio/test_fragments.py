@@ -1,10 +1,13 @@
-"""F1 原子保存候选片段（附录 02 §2 F1）—— POST /api/studio/projects/{pid}/fragments 行为验证。
+"""F1 原子保存候选片段（附录 02 §2 F1）—— POST /api/studio/projects/{pid}/fragments 行为验证；
+F6 确认片段（附录 02 §2 F6）—— POST /api/studio/projects/{pid}/fragments/{fid}/confirm 行为验证。
 
 丢弃库由 tests/studio/conftest.py 在 session 级统一设定（engine 是进程单例）；
 本文件不自行改写 STUDIO_* env。db fixture 与 register/auth helper 照抄
 tests/studio/test_sources.py 的实现；测试参数 (db, client) 序。
 每测先建项目 + S1 导入一版作为 active 正文。
 """
+import hashlib
+import json
 import threading
 import time
 import uuid
@@ -14,6 +17,7 @@ from sqlalchemy import select, text, update
 
 from backend.core.db import Base, Session, engine
 from backend.studio.projects.models import StudioProject
+from backend.studio.reviews.models import ReviewDecision
 from backend.studio.sources.fragment_models import Fragment, FragmentRevision, RangeSet
 
 # 基准正文
@@ -86,6 +90,20 @@ def _create_fragment(client, token, pid, source_revision_id, start, end, name, e
         },
         headers=_auth(token),
     )
+
+
+def _confirm(client, token, pid, fid, expected, command_id=None):
+    return client.post(
+        f"/api/studio/projects/{pid}/fragments/{fid}/confirm",
+        json={"expected_revision": expected, "command_id": command_id or _cmd()},
+        headers=_auth(token),
+    )
+
+
+def _count(table) -> int:
+    """按表名计数（表名为冻结常量，无注入面）。"""
+    with Session() as s:
+        return s.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar()
 
 
 def _range_sets(pid, source_revision_id=None):
@@ -457,3 +475,215 @@ def test_t18_concurrent_cas(db, client):
     # 至多一个成功：恰 1 个片段、1 个集合行
     assert len(_fragments(pid)) == 1
     assert len(_range_sets(pid, rev["id"])) == 1
+
+
+# ───────────────────────── F6 确认片段（T19–T26） ─────────────────────────
+
+# T19 无 token → 401
+def test_t19_no_token_401(db, client):
+    r = client.post(
+        "/api/studio/projects/01010101010101010101010101/fragments/03030303030303030303030303/confirm",
+        json={"expected_revision": 1, "command_id": _cmd()},
+    )
+    assert r.status_code == 401
+    assert r.json()["error"]["code"] == "unauthenticated"
+
+
+# T20 fid 不存在（26 字符 ULID，项目存在且有正文）→ 404 not_found
+# details=={"kind":"fragment","id":fid}
+def test_t20_nonexistent_fid_404(db, client):
+    token = _register(client, "f6_t20_alice")
+    pid = _create_project(client, token, "T20Proj")
+    _import_active(client, token, pid, TEXT_A)
+    fid = "03" * 13
+    r = _confirm(client, token, pid, fid, 1)
+    assert r.status_code == 404, r.text
+    err = r.json()["error"]
+    assert err["code"] == "not_found"
+    assert err["details"] == {"kind": "fragment", "id": fid}
+
+
+# T21 跨项目 fid（他人项目的片段经本项目路径）→ 404 同形状（不泄漏）
+def test_t21_cross_project_fid_404(db, client):
+    ta = _register(client, "f6_t21_bob")
+    tc = _register(client, "f6_t21_carol")
+    pa = _create_project(client, ta, "T21ProjA")
+    pc = _create_project(client, tc, "T21ProjC")
+    revc = _import_active(client, tc, pc, TEXT_A)
+    rfrag = _create_fragment(client, tc, pc, revc["id"], 0, 5, "F1")
+    assert rfrag.status_code == 201, rfrag.text
+    fid = rfrag.json()["object_ref"]["id"]
+    _import_active(client, ta, pa, TEXT_A)  # 本项目有正文
+    r = _confirm(client, ta, pa, fid, 1)
+    assert r.status_code == 404, r.text
+    err = r.json()["error"]
+    assert err["code"] == "not_found"
+    assert err["details"] == {"kind": "fragment", "id": fid}
+
+
+# T22 非 active 版本上的候选片段（直改 active，T4 同款构造）
+# → 422 precondition_failed：reason=="source_revision_inactive"、blocked_by.id==active
+def test_t22_inactive_source_revision_422(db, client):
+    token = _register(client, "f6_t22_dave")
+    pid = _create_project(client, token, "T22Proj")
+    v1 = _import_active(client, token, pid, TEXT_A)
+    time.sleep(0.002)  # 保证 ULID 严格递增
+    r2 = _import(client, token, pid, "second version content")
+    assert r2.status_code == 201, r2.text
+    v2 = r2.json()
+    assert v2["is_active"] is False
+    # 先在 v1（当时 active）下建候选片段
+    rc = _create_fragment(client, token, pid, v1["id"], 0, 5, "F1")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    # 测试内直接把项目 active 指针指向 v2，构造"片段绑定版本非 active"状态
+    with Session() as s:
+        s.execute(
+            update(StudioProject)
+            .where(StudioProject.id == pid)
+            .values(active_source_revision_id=v2["id"])
+        )
+        s.commit()
+    r = _confirm(client, token, pid, fid, 1)
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "precondition_failed"
+    assert err["details"]["reason"] == "source_revision_inactive"
+    assert err["details"]["blocked_by"]["kind"] == "source"
+    assert err["details"]["blocked_by"]["id"] == v2["id"]
+
+
+# T23 过期 CAS：候选片段 current revision=1，expected_revision=2
+# → 409 revision_conflict：object={kind:fragment,id:fid}、expected==2、actual==1
+def test_t23_stale_cas_409(db, client):
+    token = _register(client, "f6_t23_erin")
+    pid = _create_project(client, token, "T23Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, rev["id"], 0, 5, "F1")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    r = _confirm(client, token, pid, fid, 2)
+    assert r.status_code == 409, r.text
+    err = r.json()["error"]
+    assert err["code"] == "revision_conflict"
+    assert err["details"]["object"] == {"kind": "fragment", "id": fid}
+    assert err["details"]["expected"] == 2
+    assert err["details"]["actual"] == 1
+
+
+# T24 有效确认（candidate、expected=1）→ 200：F3 形状 DTO + DB 副作用
+def test_t24_confirm_200(db, client):
+    token = _register(client, "f6_t24_frank")
+    pid = _create_project(client, token, "T24Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, rev["id"], 0, 10, "F1")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    cas_before = _range_sets(pid, rev["id"])[0].cas_revision
+    cmd_before = _count("studio_command_records")
+    assert _count("studio_production_scopes") == 0  # 确认前无生产范围
+    r = _confirm(client, token, pid, fid, 1)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["object_ref"] == {"kind": "fragment", "id": fid, "revision": 1}
+    assert body["state"] == "confirmed"
+    assert body["revision_is_active"] is True
+    assert body["range"] == {"start": 0, "end": 10}
+    assert body["source_revision_id"] == rev["id"]
+    assert body["predecessor_ids"] == []
+    assert body["name"] == "F1"
+    assert body["summary"] is None
+    assert body["retired_at"] is None
+    # DB 直查：fragment 状态/时间戳
+    with Session() as s:
+        f = s.get(Fragment, fid)
+        assert f.state == "confirmed"
+        assert f.updated_at > f.created_at
+        range_set_id = f.range_set_id
+        decisions = (
+            s.execute(select(ReviewDecision).where(ReviewDecision.project_id == pid))
+            .scalars()
+            .all()
+        )
+    # ReviewDecision 恰 1 行
+    assert len(decisions) == 1
+    d = decisions[0]
+    assert d.decision == "applied"
+    assert d.preview_id is None
+    ref = json.loads(d.target_ref)
+    assert ref == {"kind": "fragment", "id": fid, "revision": 1}
+    # baseline_digest = 64 位 hex 且 == 测试内独立重算值
+    assert len(d.baseline_digest) == 64
+    int(d.baseline_digest, 16)
+    baseline = {
+        "fragment_id": fid,
+        "fragment_revision": 1,
+        "source_revision_id": rev["id"],
+        "range_set_id": range_set_id,
+        "cas_revision": cas_before,
+    }
+    expected_digest = hashlib.sha256(
+        json.dumps(baseline, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    assert d.baseline_digest == expected_digest
+    # 确认 ≠ 全文覆盖：studio_production_scopes 行数仍 0；range_set cas 未动
+    assert _count("studio_production_scopes") == 0
+    assert _range_sets(pid, rev["id"])[0].cas_revision == cas_before
+    # command_records +1
+    assert _count("studio_command_records") == cmd_before + 1
+
+
+# T25 新 command_id 再确认已确认片段（expected=当前=1）
+# → 422 precondition_failed：reason=="not_candidate"、
+# blocked_by=={kind:fragment,id:fid,revision:1}
+def test_t25_confirm_again_new_cmd_422(db, client):
+    token = _register(client, "f6_t25_grace")
+    pid = _create_project(client, token, "T25Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, rev["id"], 0, 10, "F1")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    r1 = _confirm(client, token, pid, fid, 1)
+    assert r1.status_code == 200, r1.text
+    r2 = _confirm(client, token, pid, fid, 1)  # 新 command_id，expected=当前
+    assert r2.status_code == 422, r2.text
+    err = r2.json()["error"]
+    assert err["code"] == "precondition_failed"
+    assert err["details"]["reason"] == "not_candidate"
+    assert err["details"]["blocked_by"] == {"kind": "fragment", "id": fid, "revision": 1}
+
+
+# T26 重放（T24 的 command_id+expected）→ 200 非 201，body 与首次相等，
+# ReviewDecision 行数仍 1（零副作用）
+def test_t26_replay_200(db, client):
+    token = _register(client, "f6_t26_heidi")
+    pid = _create_project(client, token, "T26Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, rev["id"], 0, 10, "F1")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    cmd = _cmd()
+    r1 = _confirm(client, token, pid, fid, 1, command_id=cmd)
+    assert r1.status_code == 200, r1.text
+    body1 = r1.json()
+    with Session() as s:
+        dec_before = (
+            s.execute(select(ReviewDecision).where(ReviewDecision.project_id == pid))
+            .scalars()
+            .all()
+        )
+    cmd_records_before = _count("studio_command_records")
+    # 重放：同 command_id + 同 expected_revision
+    r2 = _confirm(client, token, pid, fid, 1, command_id=cmd)
+    assert r2.status_code == 200, (r2.status_code, r2.text)  # 200 非 201
+    assert r2.json() == body1
+    # 零副作用：ReviewDecision 行数仍 1、command_records 不再增加
+    assert len(dec_before) == 1
+    with Session() as s:
+        dec_after = (
+            s.execute(select(ReviewDecision).where(ReviewDecision.project_id == pid))
+            .scalars()
+            .all()
+        )
+    assert len(dec_after) == 1
+    assert _count("studio_command_records") == cmd_records_before

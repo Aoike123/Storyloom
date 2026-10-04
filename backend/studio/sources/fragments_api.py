@@ -59,3 +59,30 @@ def create_fragment_route(
     )
     replay = result.pop("_replay", False)
     return JSONResponse(content=result, status_code=200 if replay else 201)
+
+
+class ConfirmFragmentBody(BaseModel):
+    expected_revision: int
+    command_id: str
+
+
+@router.post("/projects/{pid}/fragments/{fid}/confirm")
+def confirm_fragment_route(
+    pid: str,
+    fid: str,
+    body: ConfirmFragmentBody,
+    db=Depends(_session),
+    user=Depends(require_user),
+):
+    """F6 确认片段：200 state=confirmed（F3 形状 DTO；不启动生产、不表示全文覆盖，
+    R04）；幂等重放命中 → 200（原 result_payload，零写零 commit）。"""
+    result = fragment_service.confirm_fragment(
+        db,
+        user,
+        pid,
+        fid,
+        body.expected_revision,
+        body.command_id,
+    )
+    result.pop("_replay", False)
+    return JSONResponse(content=result, status_code=200)

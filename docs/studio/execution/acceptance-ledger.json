@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "plan_version": "2.1",
-  "contract_version": "2.6",
+  "contract_version": "2.7",
   "product_version": "2.0",
   "updated": "2026-10-04",
   "authority": "root_acceptance_only",
@@ -1722,11 +1722,37 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、tests/studio/test_fragments.py",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/sources/{fragment_service,fragments_api}.py + tests/studio/test_fragments.py（追加）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.7",
+        "tested_baseline": "5ccbf74 + 3 文件追加（本卡提交）",
+        "scope": "fragment_confirm_command_f6 + ReviewDecision 落账",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 273/273（8 新 + 265 既有）；代码审查：confirm_fragment 六步校验序（幂等置于 CAS 前——重放不受后续状态漂移影响，执行器自优化正确）；写序 UPDATE→ReviewDecision→CommandRecord 单事务；baseline_digest=sha256(规范化 JSON{fragment_id,fragment_revision,source_revision_id,range_set_id,cas_revision}) 与测试独立重算相等；不动 range_set cas、不写 ProductionScope（R04）。",
+          "F6 冻结行为逐条：401；404 kind=fragment 不泄漏（不存在=跨项目同形状）；非 active 422 source_revision_inactive；过期 CAS 409（expected/actual 精确）；非 candidate 422 not_candidate（blocked_by 含 revision）；确认 200（state=confirmed、revision_is_active、ReviewDecision 恰 1 行 applied/preview_id=NULL/target_ref JSON/baseline_digest 64hex；production_scopes 仍 0）；重放 200 零副作用（decision 仍 1 行）。"
+        ],
+        "contract_question_ruling": [
+          "裁定（并发双确认 = 冻结正确行为，无需互斥）：两个不同 command_id 并发确认同一 candidate 时两者均 200、各落一行 ReviewDecision。依据：(a) 确认是**幂等状态迁移**（candidate→confirmed 值幂等，终态唯一），00 §3“至多一个成功”仅适用于 CAS 目标被命令本身推进的场景——F6 的 CAS 目标（revision 号）不被确认推进，两者 CAS 均合法通过；(b) ReviewDecision 是**只追加审计**（模型头注/附录 07：决定不可变、历史只追加），双行 = 两次独立作者确认动作的忠实记录，baseline_digest 相同可追溯同一基准；(c) 冻结码表无“状态已被他人迁移”专用码，加 UNIQUE 去重会把第二个 200 变成无码可发的 500——更坏。卡面“重复确认幂等”= 此行为的正面表述。如产品日后要求单决定语义，需新增错误码升契约——超出本轮。",
+          "注：F4/F5 失败码 422→409 笔误已按 v2.4 先例升契约 2.7 修正（见 decisions.md），本卡验收同步引用 2.7。"
+        ],
+        "evidence": [
+          "backend/studio/sources/fragment_service.py",
+          "backend/studio/sources/fragments_api.py",
+          "tests/studio/test_fragments.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-05-a",
