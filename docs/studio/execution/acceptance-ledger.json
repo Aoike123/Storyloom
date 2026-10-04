@@ -1035,11 +1035,39 @@
         "R09",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "backend/studio/relations/models.py、tests/studio/test_relation_models.py",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/relations/{__init__,models}.py + tests/studio/test_relation_models.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.3",
+        "tested_baseline": "6344687 + 3 新文件 + 主模型注册表追加（本卡提交）",
+        "scope": "source_relation_asset_occurrence_asset_binding_models",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 84/84（8 新 + 76 既有）；data/ 无 studio-test-* 残留。",
+          "三表与附录 06 §1 逐列一致：UQ(src,target_kind,target_id)/kind CHECK；出现 NULL 桶唯一（coalesce 表达式 UNIQUE 索引）；绑定 UQ(shot,asset,purpose,coalesce(target_character)) / purpose CHECK / asset_revision 固定 NOT NULL；双服装校验确认留服务层。"
+        ],
+        "notes": [
+          "执行器备注：unit-of-work 对多个 deferred FK 环同事务 commit 会排序失败 → 测试辅助内各环分别 commit（仅测试编排，不影响冻结语义）。"
+        ],
+        "integration_by_main": [
+          "conftest 模型注册表追加 backend.studio.relations.models"
+        ],
+        "evidence": [
+          "backend/studio/relations/models.py",
+          "tests/studio/test_relation_models.py",
+          "tests/studio/conftest.py"
+        ]
+      }
     },
     {
       "id": "DB-07",
