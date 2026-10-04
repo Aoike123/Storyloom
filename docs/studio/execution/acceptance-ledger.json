@@ -353,12 +353,41 @@
         "R06",
         "R12"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "只建立新router/app_factory，隔离app不注册旧业务路由。",
-      "allowlist_scope": "web/app/studio/[projectId]/page.tsx、web/features/studio/StudioApp.tsx、backend/studio/router.py、backend/studio/app_factory.py；分前/后端子卡，注册接入由主模型集成",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/__init__.py、backend/studio/router.py、backend/studio/app_factory.py + tests/studio/conftest.py、tests/studio/test_app_factory.py（注册接入由主模型集成）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.3",
+        "tested_baseline": "d4d6360 + 5 新文件（本卡提交；执行器从 facb7b4 起跑，期间主模型提交的 eb562e3/d4d6360 与本卡文件无交集，按 2.3 在 HEAD 一次性复验）",
+        "scope": "isolated_asgi_app_and_studio_router",
+        "checks": [
+          "主模型独立复验：uvicorn backend.studio.app_factory:app @127.0.0.1:3011 实跑——GET /api/studio/health → 200 {\"ok\":true,\"service\":\"storyloom-studio\"}；GET /api/auth/login、/api/projects → 404（旧路由未注册）；Origin 3021 → access-control-allow-origin 放行且 OPTIONS 预检 allow-methods 完整；Origin evil.example.com → 无 ACAO 头。",
+          "pytest tests/studio/ -v → 5 passed；app.title == \"Storyloom Studio\"；运行后 data/ 无新增 test-* 目录（tests/studio/conftest.py 的 no-op autouse 有效覆盖父级旧库夹具）。",
+          "源码审计：app_factory/router 仅 import fastapi 与 .router，无任何旧 backend 模块引用（backend.db/app/auth/providers/worker、from .. 均无）。",
+          "FastAPI 0.141 的 _IncludedRouter 包装已由测试的递归路径收集器 + 公开 openapi() 双通道覆盖，断言语义与卡片一致。"
+        ],
+        "evidence": [
+          "backend/studio/__init__.py",
+          "backend/studio/router.py",
+          "backend/studio/app_factory.py",
+          "tests/studio/conftest.py",
+          "tests/studio/test_app_factory.py"
+        ],
+        "limitations": [
+          "auth 路由族（/api/studio/auth/*）与业务域路由由 BASE-03-c 及各域卡接线；本卡只交付隔离装配入口与健康检查。"
+        ]
+      }
     },
     {
       "id": "BASE-01",
@@ -381,11 +410,22 @@
         "R06",
         "R12"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "allowlist_scope": "web/app/studio/[projectId]/page.tsx、web/features/studio/StudioApp.tsx、backend/studio/router.py、backend/studio/app_factory.py；分前/后端子卡，注册接入由主模型集成",
       "attempts": [],
-      "acceptance": null
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "note": "两个子卡（a 前端路由/空态、b 后端隔离装配）均 accepted；新前后端命名空间骨架齐备。",
+        "evidence": [
+          "web/app/studio/page.tsx",
+          "web/app/studio/[projectId]/page.tsx",
+          "web/features/studio/StudioApp.tsx",
+          "backend/studio/router.py",
+          "backend/studio/app_factory.py"
+        ]
+      }
     },
     {
       "id": "BASE-02",
