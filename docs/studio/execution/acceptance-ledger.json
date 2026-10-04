@@ -523,6 +523,15 @@
           "backend/core/__init__.py",
           "backend/core/db.py",
           "tests/studio/test_core_db.py"
+        ],
+        "followups": [
+          {
+            "date": "2026-10-04",
+            "note": "T1 状态无关化修订（主模型，BASE-03-d 验收轮）：原\"默认库空表\"断言随运行状态漂移（app lifespan 在开发库建 users 表后 T1 失败）→ 改为\"默认库无旧表(records/tasks)\"；import 纯度改由 T2 在丢弃库验证（init_db 空 Base 前后均无表）。",
+            "evidence": [
+              "tests/studio/test_core_db.py"
+            ]
+          }
         ]
       }
     },
@@ -648,12 +657,37 @@
         "R06",
         "R12"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "分离配置读取，不读真实密钥做测试，不import业务。",
-      "allowlist_scope": "backend/core/db.py、backend/core/accounts.py、backend/core/auth.py、backend/core/config.py及直接相关tests；逐子卡收窄，接入由主模型集成",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/core/config.py + tests/studio/test_config.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.3",
+        "tested_baseline": "02b4a55 + 2 新文件 + 主模型测试修复（本卡提交）",
+        "scope": "model_config_reader",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 28/28 全绿（5 新 + 23 既有）；import 无副作用（不建 .env.studio、不注入 env）；model_config() 快照 = deepseek-flash/siliconflow 默认值。",
+          "键表 = 附录 09 §6 冻结 17 键 + LLM_PROVIDER/LLM_ENDPOINT；优先级 文件 > env > 默认；STUDIO_ENV_FILE/.env.studio 与旧层完全隔离。"
+        ],
+        "evidence": [
+          "backend/core/config.py",
+          "tests/studio/test_config.py"
+        ],
+        "limitations": [
+          "执行器披露（已核实）：清理了上会话遗留的 2 个 untracked 测试残骸目录 data/studio-test-{9fc147cf,dd965a30}（BASE-03-b atexit 未触发的产物，仅废弃 accounts.db）——白名单外操作，内容无价值且 gitignored，予以追认。",
+          "ROOT 层操作（主模型）：清空 data/studio/story.db 空开发库（users 表 0 行，lifespan 建表产物）；下次 app 启动自动重建。"
+        ]
+      }
     },
     {
       "id": "BASE-03",
@@ -680,11 +714,27 @@
         "R06",
         "R12"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "allowlist_scope": "backend/core/db.py、backend/core/accounts.py、backend/core/auth.py、backend/core/config.py及直接相关tests；逐子卡收窄，接入由主模型集成",
       "attempts": [],
-      "acceptance": null
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.3",
+        "scope": "core_infrastructure_parent",
+        "checks": [
+          "四个子卡全部 accepted：a(连接/Base) b(账号) c(严格鉴权+错误协议) d(配置读取)。",
+          "主模型集成（随 BASE-03-c 轮提交）：auth_router + install_error_handlers 挂入 studio app；lifespan 启动幂等建表；Exception 兜底 internal_error 冻结体。",
+          "live uvicorn 3011 E2E：register/login/me 全流程 + 冻结错误体；探针账号已清除。"
+        ],
+        "evidence": [
+          "backend/core/",
+          "backend/studio/contracts/",
+          "backend/studio/app_factory.py",
+          "tests/studio/"
+        ]
+      }
     },
     {
       "id": "DB-01",

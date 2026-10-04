@@ -43,7 +43,11 @@ def run_py(code: str, env_over: dict | None = None) -> str:
 
 def test_t1_default_path_and_engine() -> None:
     """STUDIO_DATA_DIR / STUDIO_DATABASE_URL 均未设 → 默认 data/studio/story.db；
-    WAL、foreign_keys 生效；Base 为空时 sqlite_master 无表。"""
+    WAL、foreign_keys 生效；默认库中不出现旧系统表（records/tasks）。
+
+    注意：不断言"空库"——开发库可能已被 app 的 lifespan 合法建表（如 users），
+    该断言会随运行状态漂移；这里只验证"不加载/不创建旧表"。import 纯度由 T2 验证。
+    """
     code = (
         "import backend.core.db as db\n"
         "assert db.DATABASE_URL.endswith('data/studio/story.db'), db.DATABASE_URL\n"
@@ -54,13 +58,13 @@ def test_t1_default_path_and_engine() -> None:
         "with db.engine.connect() as c:\n"
         "    assert c.execute(sa.text('PRAGMA journal_mode')).scalar() == 'wal'\n"
         "    assert c.execute(sa.text('PRAGMA foreign_keys')).scalar() == 1\n"
-        "with db.engine.connect() as c:\n"
         "    tables = {r[0] for r in c.execute(sa.text(\n"
         "        \"SELECT name FROM sqlite_master WHERE type='table'\"))}\n"
-        "print('TABLES:', sorted(tables))\n"
+        "legacy = tables & {'records', 'tasks'}\n"
+        "print('LEGACY:', sorted(legacy))\n"
     )
     stdout = run_py(code)
-    assert "TABLES: []" in stdout, stdout
+    assert "LEGACY: []" in stdout, stdout
 
 
 # ---------------------------------------------------------------------------
@@ -79,16 +83,28 @@ def test_t2_env_override() -> None:
             "STUDIO_DATABASE_URL": custom_url,
         }
         code = (
+            "import sqlalchemy as sa\n"
             "import backend.core.db as db\n"
             "print('URL:', db.DATABASE_URL)\n"
             "print('ENGINE_URL:', str(db.engine.url))\n"
+            # import 纯度：仅 import 不建任何表（空 Base + init_db 亦不建）
+            "with db.engine.connect() as c:\n"
+            "    pre = {r[0] for r in c.execute(sa.text(\n"
+            "        \"SELECT name FROM sqlite_master WHERE type='table'\"))}\n"
+            "    print('PRE:', sorted(pre))\n"
             "db.init_db()\n"
+            "with db.engine.connect() as c:\n"
+            "    post = {r[0] for r in c.execute(sa.text(\n"
+            "        \"SELECT name FROM sqlite_master WHERE type='table'\"))}\n"
+            "    print('POST:', sorted(post))\n"
             "db.engine.dispose()\n"
             "print('DONE')\n"
         )
         stdout = run_py(code, env_over=env_over)
         assert f"URL: {custom_url}" in stdout, stdout
         assert f"ENGINE_URL: {custom_url}" in stdout, stdout
+        assert "PRE: []" in stdout, stdout
+        assert "POST: []" in stdout, stdout
         assert "DONE" in stdout, stdout
         # init_db 建文件（sqlite 文件在首次 connect 时创建）
         assert (tmp / "custom.db").exists(), f"custom.db 缺失: {list(tmp.iterdir())}"
