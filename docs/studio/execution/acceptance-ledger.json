@@ -1198,11 +1198,39 @@
         "R09",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "backend/studio/conversations/models.py、tests/studio/test_conversation_models.py",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/conversations/{__init__,models}.py + tests/studio/test_conversation_models.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.3",
+        "tested_baseline": "70b88cd + 3 新文件 + 主模型注册表追加（本卡提交）",
+        "scope": "conversation_message_proposal_models",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 100/100（8 新 + 92 既有）；data/ 无 studio-test-* 残留。",
+          "三表与附录 10 §1 逐列一致：UQ(project,scope_kind,scope_id,owner) 每作用域每人一会话；scope_kind 6 值 CHECK；sender 2 值 CHECK；kind 23 值 CHECK（以附录 10 §3 冻结清单为准）；status 5 值 CHECK；消息/提案只追加（精确列集合）；job_id FK→studio_jobs（DB-08 表）。"
+        ],
+        "notes": [
+          "账本 ROOT-04 验收条目中\"提案白名单 21 类\"为早期计数笔误；附录 10 §3（v2.2 冻结文档）实列 23 个 kind，以附录为准。"
+        ],
+        "integration_by_main": [
+          "conftest 模型注册表追加 backend.studio.conversations.models"
+        ],
+        "evidence": [
+          "backend/studio/conversations/models.py",
+          "tests/studio/test_conversation_models.py",
+          "tests/studio/conftest.py"
+        ]
+      }
     },
     {
       "id": "DB-10",
