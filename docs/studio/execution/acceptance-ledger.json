@@ -589,12 +589,48 @@
         "R06",
         "R12"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "新HTTP接口使用严格用户和属主校验；匿名/跨属主拒绝。",
-      "allowlist_scope": "backend/core/db.py、backend/core/accounts.py、backend/core/auth.py、backend/core/config.py及直接相关tests；逐子卡收窄，接入由主模型集成",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/contracts/__init__.py、backend/studio/contracts/errors.py、backend/core/auth.py + tests/studio/test_auth.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.3",
+        "tested_baseline": "44d9c65 + 4 新文件 + 主模型集成（本卡提交）",
+        "scope": "strict_auth_and_error_protocol",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 23/23（8 新 + 15 既有无回归）。",
+          "live uvicorn 3011 E2E：register 201 同形 DTO+token；错误密码 401 冻结体；登录轮换后旧 token 401、新 token 200；重复用户名 422 validation_failed 精确 unique 违规。",
+          "严格化确认：无匿名回退、无 contextvar/worker 旁路（T8 源码审计）；Bearer 优先、sl_auth cookie 兜底。"
+        ],
+        "integration_by_main": [
+          "app_factory：install_error_handlers + auth_router 挂入 studio app（父卡约定由主模型装配）。",
+          "app_factory：lifespan 启动事件调用 init_db() 幂等建表（修复真实服务器无 users 表导致 register 500 的缺口；import 期/裸 TestClient 不触发）。",
+          "errors.py：补 Exception 兜底处理器 → internal_error 冻结体（契约\"不泄露内部细节\"）。",
+          "test_app_factory.py：禁串从泛化 \"from ..\" 精化为具体旧模块相对导入（..db/../app/../auth/..providers/../worker/../environment），保持\"禁旧模块\"意图，放行合法 ..core.* 依赖。"
+        ],
+        "evidence": [
+          "backend/studio/contracts/__init__.py",
+          "backend/studio/contracts/errors.py",
+          "backend/core/auth.py",
+          "tests/studio/test_auth.py",
+          "backend/studio/app_factory.py",
+          "tests/studio/test_app_factory.py"
+        ],
+        "limitations": [
+          "契约问题裁定：执行器规格 docstring 点名旧函数名与 T8 禁串冲突 → 以 T8 为准（docstring 用等价措辞），维持执行器处理。",
+          "e2e_probe 探针账号已从开发库清除。"
+        ]
+      }
     },
     {
       "id": "BASE-03-d",

@@ -2,13 +2,21 @@
 
 from pathlib import Path
 
+# 禁止引用旧 backend 模块（绝对名或解析到旧模块的相对导入）。
+# 注意：新核心包 ..core.* 是合法依赖，不在此列。
 FORBIDDEN_TOKENS = (
     "backend.db",
     "backend.app",
     "backend.auth",
     "backend.providers",
     "backend.worker",
-    "from ..",
+    "backend.environment",
+    "from ..db",
+    "from ..app",
+    "from ..auth",
+    "from ..providers",
+    "from ..worker",
+    "from ..environment",
 )
 
 
