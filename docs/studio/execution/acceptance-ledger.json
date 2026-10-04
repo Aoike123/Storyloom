@@ -1315,12 +1315,44 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "创建只有项目元信息的私有项目，不隐式导入。",
-      "allowlist_scope": "backend/studio/projects/service.py、backend/studio/projects/api.py、backend/studio/sources/service.py、backend/studio/sources/api.py、tests/studio/test_projects.py；逐命令子卡收窄",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/projects/{service,api}.py + tests/studio/test_projects.py（父卡白名单收窄；contracts/errors.py 为 v2.6 契约实现补全，主模型范围）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.6",
+        "tested_baseline": "19ffe72 + 3 卡文件 + 主模型 v2.6 错误协议补全（本卡提交）",
+        "scope": "project_create_command_p1",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 219/219（10 新 P1 测试 + 209 既有）；refactor 后 duplicate 走全局异常 handler（STATUS_BY_CODE 补全）路径仍全绿。",
+          "P1 冻结行为逐条：201 + 7 字段 DTO（ULID 26 字符 Crockford 小写）；name trimmed 保存/空→422 required/>80→422 max_length；description 原样；visibility=private；active_source_revision_id=null；不隐式导入（R12）；无 token 401 unauthenticated；属主内重名 409 duplicate（scope_ref 精确）；跨属主同名允许；同 command_id 同 body 重放→200 原 result_payload 零副作用（行数==1）；同 command_id 异 body→422 validation_failed rule=reused；缺 command_id→422。"
+        ],
+        "contract_question_ruling": [
+          "裁定1（v2.6 错误协议实现缺口）：执行器正确发现 v2.6 纯文档提交未同步 contracts/errors.py——STATUS_BY_CODE 无 duplicate（raise 进 handler 会 KeyError→500），且 contracts/ 不在卡白名单，故其以路由层冻结体特判兜底。主模型补全：errors.py STATUS_BY_CODE[\"duplicate\"]=409 + duplicate() 工厂（docstring 锁 v2.6 语义区分）；api 特判删除、service 改走工厂。教训入册：凡“新增错误码”类契约修正必须同提交补 errors.py（文档+实现一体），后续版本升版验收 checklist 增加此项。",
+          "裁定2（UOW 插入序，冻结实现细节）：SQLAlchemy 单 flush 中父（studio_projects）+子（studio_command_records）INSERT 顺序不保证按跨表 FK——子先行触发 IntegrityError。修复模式=同事务内父 add 后显式 session.flush()（与 DB-06 多 deferred 环“分环 commit”同类：UOW 顺序不确定性→显式排序；语义不变、回滚边界不变）。所有后续“父+子同 flush”的卡（S1 导入、S4/S5 预览链、绑定/关系卡）沿用此模式。"
+        ],
+        "integration_by_main": [
+          "contracts/errors.py：STATUS_BY_CODE +duplicate(409)、duplicate() 工厂",
+          "projects/service.py：两处 raw StudioAPIError(\"duplicate\",…) → StudioAPIError.duplicate(scope_ref, message=…)",
+          "projects/api.py：删除路由层 duplicate 特判（全局 handler 承接）+ 未用 import 清理"
+        ],
+        "evidence": [
+          "backend/studio/projects/service.py",
+          "backend/studio/projects/api.py",
+          "tests/studio/test_projects.py",
+          "backend/studio/contracts/errors.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-01-b",

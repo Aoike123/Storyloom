@@ -20,6 +20,7 @@ STATUS_BY_CODE = {
     "preview_stale": 409,
     "precondition_failed": 422,
     "duplicate_scope": 422,
+    "duplicate": 409,  # v2.6：属主级身份唯一冲突（附录 00 §4）
     "internal_error": 500,
 }
 
@@ -75,6 +76,15 @@ class StudioAPIError(Exception):
     @classmethod
     def duplicate_scope(cls, scope_ref: str, message: str = "完整制作范围已提交过同一覆盖。") -> "StudioAPIError":
         return cls("duplicate_scope", message, {"scope_ref": scope_ref})
+
+    @classmethod
+    def duplicate(cls, scope_ref: str, message: str = "当前账号下已存在同身份对象。") -> "StudioAPIError":
+        """v2.6 新码：属主级身份唯一冲突（如项目名 (owner, name) UQ）。
+
+        与 duplicate_scope（422，覆盖范围重复提交）语义不互换（附录 00 §4
+        v2.6 语义区分注）。
+        """
+        return cls("duplicate", message, {"scope_ref": scope_ref})
 
     @classmethod
     def internal(cls, message: str = "服务器内部错误，请重试。") -> "StudioAPIError":
