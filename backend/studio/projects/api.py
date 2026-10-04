@@ -37,6 +37,20 @@ def create_project(body: CreateProjectIn, user: User = Depends(require_user)):
     return result
 
 
+@router.get("/projects")
+def list_projects(
+    user: User = Depends(require_user),
+    cursor: str | None = None,
+    limit: int = 50,
+):
+    """P2 项目列表（附录 01 §2，附录 00 §6）：纯读，keyset 分页。
+
+    limit clamp 到 [1, 200]、cursor 格式校验在 service 内完成（行为冻结）。
+    """
+    with Session() as s:
+        return service.list_projects(s, user, cursor, limit)
+
+
 @router.get("/projects/{pid}")
 def get_project(pid: str, user: User = Depends(require_user)):
     """P3 读取单项目（附录 01 §2）：纯读，无副作用。"""

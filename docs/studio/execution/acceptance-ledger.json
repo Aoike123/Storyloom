@@ -1418,12 +1418,37 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "仅返回当前账号项目，空列表与读失败分开。",
-      "allowlist_scope": "backend/studio/projects/service.py、backend/studio/projects/api.py、backend/studio/sources/service.py、backend/studio/sources/api.py、tests/studio/test_projects.py；逐命令子卡收窄",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/projects/{service,api}.py + tests/studio/test_projects.py（追加）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.6",
+        "tested_baseline": "8477a1c + 3 文件追加（本卡提交）",
+        "scope": "project_list_command_p2",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 230/230（6 新 + 224 既有）；代码审查：clamp→cursor 格式→owner+keyset 查询顺序正确，limit+1 探测仅在“有下一页”时出 next_cursor，空串 cursor 被 ^[0-9a-z]{26}$ 拒绝。",
+          "P2 冻结行为逐条：00 §6 形状 {\"items\":[7字段DTO],\"next_cursor\":ULID|null}；id DESC（裁定）；空列表 200 {\"items\":[],\"next_cursor\":null}（R12）；keyset 续读（cursor=末条 id → 下一页）；双账号不泄漏；401；cursor 格式 422 rule=format；limit 0/500 clamp 不报 422；纯读零副作用。"
+        ],
+        "contract_question_ruling": [
+          "裁定（gap 填补，非语义变更，不入版本）：00 §6 冻结了游标/页大小/上限但**未定排序方向**——取 id DESC（新→旧），依据 S2“版本列表（倒序）”域惯例；limit 越界 clamp 而非 422（冻结“上限 200”的自然执行）；cursor 格式 = 26 字符 Crockford base32 小写。均已写入 dispatch 规格并复验。"
+        ],
+        "evidence": [
+          "backend/studio/projects/service.py",
+          "backend/studio/projects/api.py",
+          "tests/studio/test_projects.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-01-d",

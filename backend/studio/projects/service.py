@@ -11,6 +11,7 @@ P1 新建 / P3 读取 / P2 列表 /（来源侧 S1/S3 在 sources/service.py）�
 - 错误一律 raise StudioAPIError（冻结错误协议）。
 """
 import json
+import re
 import time
 
 from sqlalchemy import select
@@ -21,7 +22,10 @@ from ..contracts.errors import StudioAPIError
 from ..contracts.models import CommandRecord
 from .models import StudioProject
 
-__all__ = ["create_project", "get_project"]
+__all__ = ["create_project", "get_project", "list_projects"]
+
+# 附录 01 §2 P2 裁定：cursor 必须是 26 字符 Crockford base32 小写
+_CURSOR_RE = re.compile(r"^[0-9a-z]{26}$")
 
 
 def _to_dto(p: StudioProject) -> dict:
@@ -145,3 +149,38 @@ def get_project(session, user, pid) -> dict:
     if p is None or p.owner_id != user.id:
         raise StudioAPIError.not_found("project", pid)
     return _to_dto(p)
+
+
+def list_projects(session, user, cursor: str | None, limit: int) -> dict:
+    """P2 项目列表（附录 01 §2，附录 00 §6 查询 DTO；契约 v2.6）。
+
+    纯读：不写任何表、不 commit、不接受 command_id（附录 00 §3）；
+    仅返回当前属主项目（跨账号项目不出现，不泄漏）。
+    空列表 = ``{"items":[],"next_cursor":null}``（R12：空列表 ≠ 读失败）。
+
+    keyset 分页（附录 00 §6 + 主模型裁定）：
+    - cursor = 上一页最后一条 id（ULID 有序）；
+    - 排序 id DESC（新→旧；裁定：S2"倒序"域惯例，附录未定方向）；
+    - limit 缺省 50，clamp 到 [1, 200]（冻结"上限 200"），越界不报 422；
+    - cursor 必须匹配 ^[0-9a-z]{26}$ 且 ≠ 空串，否则 422 validation_failed。
+    """
+    limit = max(1, min(int(limit), 200))
+    if cursor is not None and not _CURSOR_RE.match(cursor):
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "cursor",
+                    "rule": "format",
+                    "message": "cursor 必须是 26 字符 ULID。",
+                }
+            ]
+        )
+    stmt = select(StudioProject).where(StudioProject.owner_id == user.id)
+    if cursor is not None:
+        stmt = stmt.where(StudioProject.id < cursor)
+    rows = session.scalars(
+        stmt.order_by(StudioProject.id.desc()).limit(limit + 1)
+    ).all()
+    items = [_to_dto(p) for p in rows[:limit]]
+    next_cursor = items[-1]["id"] if len(rows) > limit and items else None
+    return {"items": items, "next_cursor": next_cursor}
