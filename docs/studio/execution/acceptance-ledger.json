@@ -978,11 +978,40 @@
         "R09",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "backend/studio/assets/models.py、tests/studio/test_asset_models.py",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/assets/{__init__,models}.py + tests/studio/test_asset_models.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.3",
+        "tested_baseline": "7073d03 + 3 新文件 + 主模型 stub 迁移与注册表追加（本卡提交）",
+        "scope": "asset_asset_revision_models",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 76/76（8 新 + 68 既有）；data/ 无 studio-test-* 残留。",
+          "两表与附录 05 §1 逐列一致（type CHECK / review_status 单一事实 CHECK / costume 自引用 FK / UQ asset+revision / FK 环 DEFERRED）。"
+        ],
+        "contract_question_ruling": [
+          "裁定（跨卡 FK 占位机制）：执行器报告称\"SQLite 不校验 DDL 时父表存在故 stub 仅为满足 create_all\"——主模型独立复验推翻其前提一半：SQLAlchemy 在 create_all 时按 Base.metadata 解析 FK 目标，目标缺失即抛 NoReferencedTableError（比 SQLite DDL 层严格；主模型实测移除 stub 后 59 个 fixture 错误）。因此跨卡 FK 必须有占位目标，但占位不得放在测试文件（其模块级注册污染 session 共享 Base.metadata，且 DB-10 真表注册时同名替换语义在测试侧不可见）。主模型已将最小 stub 迁入 conftest（显式注释 + DB-10 验收时移除的检查项），测试文件保持纯防御断言。后续任何 DB 卡的跨卡 FK 一律遵循此机制。"
+        ],
+        "integration_by_main": [
+          "conftest 模型注册表追加 backend.studio.assets.models",
+          "conftest 新增 studio_media_artifacts 最小占位 Table（DB-10 真表按名替换；DB-10 验收检查项：确认替换生效并移除占位块；占位期间 media_artifact_id 只允许 NULL）"
+        ],
+        "evidence": [
+          "backend/studio/assets/models.py",
+          "tests/studio/test_asset_models.py",
+          "tests/studio/conftest.py"
+        ]
+      }
     },
     {
       "id": "DB-06",
@@ -1144,7 +1173,14 @@
       "dispatchable": false,
       "allowlist_scope": "backend/studio/edits/models.py、backend/studio/media/models.py、backend/studio/publishing/models.py、tests/studio/test_edit_models.py",
       "attempts": [],
-      "acceptance": null
+      "acceptance": {
+        "preconditions": [
+          {
+            "date": "2026-10-04",
+            "note": "MediaArtifact 声明类将按名覆盖 conftest 中的 studio_media_artifacts 占位 Table（DB-05 验收裁定）。验收时必须：(1) 确认 session DB 建出的是全列真表（列集合含 MediaArtifact 全部冻结列）；(2) 从 conftest 移除占位块；(3) 确认移除后套件仍绿（media_artifact_id FK 由真表承载）。"
+          }
+        ]
+      }
     },
     {
       "id": "SOURCE-01-a",

@@ -33,12 +33,25 @@ atexit.register(shutil.rmtree, _TMP_ABS, ignore_errors=True)
 # 模型注册表完整性：import 全部现有模型模块（import 即注册到 Base），
 # 使任何 in-process 测试看到的 Base.metadata 完整且确定。
 # 后续 DB 卡验收时主模型在此追加对应 import。
+#
+# 跨卡 FK 占位：SQLAlchemy 在 create_all 时按 Base.metadata 解析 FK 目标
+# （NoReferencedTableError），比 SQLite DDL 层更严。studio_media_artifacts
+# 属 DB-10 尚未交付 → 此处注册最小占位 Table；DB-10 验收时以真实
+# MediaArtifact 声明类注册同名字表覆盖此条目（MetaData 按名替换），
+# 届时移除本占位。占位存在期间 media_artifact_id 只允许 NULL。
+from backend.core.db import Base  # noqa: E402
+from sqlalchemy import Column, String, Table as _StubTable  # noqa: E402
+
+if "studio_media_artifacts" not in Base.metadata.tables:
+    _StubTable("studio_media_artifacts", Base.metadata, Column("id", String(32), primary_key=True))
+
 import backend.core.accounts  # noqa: F401,E402
 import backend.studio.projects.models  # noqa: F401,E402
 import backend.studio.sources.models  # noqa: F401,E402
 import backend.studio.sources.fragment_models  # noqa: F401,E402
 import backend.studio.scripts.models  # noqa: F401,E402
 import backend.studio.storyboard.models  # noqa: F401,E402
+import backend.studio.assets.models  # noqa: F401,E402
 import backend.studio.contracts.models  # noqa: F401,E402
 import backend.studio.jobs.models  # noqa: F401,E402
 
