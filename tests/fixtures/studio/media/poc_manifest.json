@@ -1,0 +1,35 @@
+{
+  "schema": "storyloom.editmanifest/v1",
+  "canvas": {
+    "width": 320,
+    "height": 240,
+    "fps": 25
+  },
+  "instances": [
+    {
+      "id": "inst-1",
+      "media": "test_a.mp4",
+      "source_in_ms": 2000,
+      "source_out_ms": 7000,
+      "speed": 1.0,
+      "timeline_start_ms": 0
+    },
+    {
+      "id": "inst-2",
+      "media": "test_b.mp4",
+      "source_in_ms": 1000,
+      "source_out_ms": 4000,
+      "speed": 1.0,
+      "timeline_start_ms": 5000
+    }
+  ],
+  "output": {
+    "container": "mp4",
+    "video": "h264",
+    "audio": "aac",
+    "width": 320,
+    "height": 240,
+    "fps": 25,
+    "sample_rate": 44100
+  }
+}

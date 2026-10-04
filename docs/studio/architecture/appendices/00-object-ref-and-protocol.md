@@ -34,10 +34,10 @@
 | `asset_binding` | AssetBinding | 06 | 生成输入绑定 |
 | `change_preview` | ChangePreview | 07 | |
 | `review_decision` | ReviewDecision | 07 | |
-| `job` / `job_attempt` / `job_event` | StudioJob 族 | ROOT-04 冻结 | 本附录只登记 kind |
-| `conversation` / `message` / `proposal` | 会话族 | ROOT-04 冻结 | 同上 |
-| `edit` / `edit_instance` / `confirmed_edit` | 剪辑族 | ROOT-03/04 冻结 | 同上 |
-| `media_artifact` / `release` | 媒体/发布族 | ROOT-03/04 冻结 | 同上 |
+| `job` / `job_attempt` / `job_event` | StudioJob 族 | [附录 09](09-jobs-and-providers.md) 冻结 | 本附录只登记 kind |
+| `conversation` / `message` / `proposal` | 会话族 | [附录 10](10-conversations.md) 冻结 | 同上 |
+| `edit` / `edit_instance` / `confirmed_edit` | 剪辑族 | [附录 08/11](11-releases.md) 冻结 | 同上 |
+| `media_artifact` / `release` | 媒体/发布族 | [附录 08/11](11-releases.md) 冻结 | 同上 |
 
 ## 2. ID 与版本字段总则
 

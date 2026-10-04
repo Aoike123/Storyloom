@@ -1,6 +1,6 @@
 # 来源工作台重构实施契约
 
-版本：2.1 · 2026-10-04（ROOT-02 附录已冻结）。方向：**按用户决定彻底重构，旧产品实现退役。** 本文为[原子计划](../execution/implementation-plan.md)的技术基线。接口/模型是本轮新建目标，不表示已实现；主模型负责冻结细节，轻量模型不得自行补兼容层。
+版本：2.2 · 2026-10-04（ROOT-02/03/04 附录全部冻结，13 聚合齐备）。方向：**按用户决定彻底重构，旧产品实现退役。** 本文为[原子计划](../execution/implementation-plan.md)的技术基线。接口/模型是本轮新建目标，不表示已实现；主模型负责冻结细节，轻量模型不得自行补兼容层。
 
 目录和跨模块依赖以[项目结构](project-structure.md)为准；待冻结内容见[架构决策](decisions.md)。
 
@@ -152,5 +152,9 @@ ROOT-02 必须落实表/字段/API/CAS/状态/影响附录；ROOT-03落实媒体
 | [05 · 资产与并存版本](appendices/05-assets.md) | asset/asset_revision（spec 必填键、review_status、当前指针）；AS1–AS10 |
 | [06 · 关系与绑定](appendices/06-relations.md) | source_relation、asset_occurrence、asset_binding（用途/作用对象/双服装校验）；RL/OC/BD 命令 |
 | [07 · 变更预览与审核](appendices/07-reviews.md) | change_preview、review_decision；RV1–RV5 与 kind 冻结清单 |
+| [08 · 剪辑内核与媒体](appendices/08-media-kernel.md) | EditManifest v1、预览/导出路径、格式与存储、取消/失败/同版重试（ROOT-03 冻结，含 PoC 证据） |
+| [09 · StudioJob 任务族与供应商](appendices/09-jobs-and-providers.md) | jobs/attempts/events 表、job kind 注册表（5 类）、租约/取消/重试、计费边界、适配器抽取白名单、模型表（ROOT-04 冻结） |
+| [10 · 会话与智能提案](appendices/10-conversations.md) | conversations/messages/proposals 表、作用域冻结、提案白名单、响应不直写业务（ROOT-04 冻结） |
+| [11 · 媒体、确认剪辑与发布](appendices/11-releases.md) | media_artifact/edit 草稿/实例/confirmed_edit/release 表、同名版本共存、公开白名单、poster 与项目封面（ROOT-04 冻结） |
 
-Job/会话/剪辑/媒体/发布五族的表与命令由 ROOT-04/ROOT-03 在本目录补附录（kind 已在 00 登记）；其 DB 卡（DB-08/09/10）与 CHAT/EDIT/MEDIA 卡在那之前保持未就绪。
+至此契约 §2 的 **13 个聚合全部冻结**（DB-01…DB-10 的 schema 依据齐备）；DB-08/09/10 及其后的 JOB/CHAT/EDIT/MEDIA 卡按账本依赖派发。后续任何字段/命令/流程改动：改本目录附录 + 升版本号 + 在 decisions.md 记录影响任务（plan §6.4）。

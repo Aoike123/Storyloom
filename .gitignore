@@ -44,3 +44,6 @@ Thumbs.db
 
 # headless-browser acceptance artifacts
 .accept/
+
+# ROOT-03 PoC 导出产物（可由 scripts/media_kernel_poc.py 再生；fixture 源文件入库）
+tests/fixtures/studio/media/poc_export.mp4

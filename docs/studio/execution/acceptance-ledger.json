@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "plan_version": "2.1",
-  "contract_version": "2.1",
+  "contract_version": "2.2",
   "product_version": "2.0",
   "updated": "2026-10-04",
   "authority": "root_acceptance_only",
@@ -181,11 +181,34 @@
         "R01",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "由主模型确定此准备/验收卡的准确范围",
+      "allowlist_scope": "主模型实测卡：PoC 脚本、fixtures、附录08、证据文档；不引入新运行时依赖（ffmpeg 二进制已在 venv/requirements）",
       "attempts": [],
-      "acceptance": null
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "tested_baseline": "studio-rebuild HEAD（见 git log：docs(studio): ROOT-03…）",
+        "scope": "freeze_media_kernel",
+        "checks": [
+          "PoC 实测（scripts/media_kernel_poc.py，退出码0）：两段本地时间码视频（10.000s，红/蓝底+440/880Hz正弦，sha256 已记录）按 manifest A[2,7)s+B[1,4)s 导出 → 总时长 8.000s 精确、切点前后画面色与边界 40ms 内归属正确、[0,5)s/[5,8)s 主导音高 440/880Hz（rms 正常）。同一 manifest 证明预览与导出切点/时长/声音一致。",
+          "输出为真实文件（98,999B mp4 h264+aac）；无固定96秒/定时器/图标模拟。",
+          "内核冻结（附录08）：导出=ffmpeg 7.0.2-static 子进程（GPL 进程隔离、已在 venv/requirements，不新装不升级）；预览=浏览器原生 element 消费同一 EditManifest v1；探测=ffmpeg -i 解析。",
+          "支持范围冻结：裁切/单轨拼接/speed 0.25–4.0/实例独立参数；多轨混音/淡化/特效明确不支持且 UI 不出现（R09 不展示假效果）。",
+          "格式与存储：导出 MP4 h264/aac 44.1k；输入白名单 mp4/webm/mov/m4a/wav/mp3；私有 data/studio/media/{pid}/ 与公开 data/studio/public/{releaseId}/ 物理分离。",
+          "取消/失败/重试：杀进程组/超时10分钟/stderr 尾留痕/同 ConfirmedEdit 同版重试，不重复收费调用（与 ROOT-04 边界衔接）。"
+        ],
+        "evidence": [
+          "docs/studio/evidence/media-kernel-poc-2026-10-04.md（完整运行日志与实测值）",
+          "architecture/appendices/08-media-kernel.md",
+          "scripts/media_kernel_poc.py",
+          "tests/fixtures/studio/media/{test_a.mp4,test_b.mp4,tone_440.m4a,poc_manifest.json}（sha256 记录于证据文档）"
+        ],
+        "limitations": [
+          "浏览器播放侧一致性待 GATE-04/05 真实浏览器验收；本轮仅证明服务端导出侧。",
+          "Release/观看的媒体访问细节（白名单文件清单、poster 字段）在 ROOT-04 的发布附录中落实；附录08 只冻结存储与格式。"
+        ]
+      }
     },
     {
       "id": "ROOT-04",
@@ -202,11 +225,35 @@
         "R01",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "由主模型确定此准备/验收卡的准确范围",
+      "allowlist_scope": "主模型冻结卡：产出 appendices/09–11（任务/供应商/会话/提案/发布），不改应用文件",
       "attempts": [],
-      "acceptance": null
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "tested_baseline": "studio-rebuild HEAD（见 git log：docs(studio): ROOT-03/04…）",
+        "scope": "freeze_jobs_agent_publish",
+        "checks": [
+          "StudioJob 族（附录09）：jobs/attempts/events 三表 + 5 个 job kind 注册表（asset_generate/shot_generate/transcode/export/release_publish，各含触发/前置/输入/产物/确认点/恢复）；StudioJob 为新流程唯一任务状态权威；无旧 Task/stage/node/读者分支任何字段。",
+          "计费边界（R08）：提交前记 client/provider 请求号；结果不确定 → indeterminate 终态，有厂商号只轮询、无厂商号不自动重试（人工确认后才新 attempt）；usage/cost 记实际值或 null，UI 不显示虚构金额。",
+          "供应商适配器抽取白名单（附录09 §5）：只抽 llm_stream/image_provider/providers 的纯协议；task_id→job/attempt、DATA/media→附录08存储、image_errors/provider_usage→attempt 字段与事件；workflows.py/worker.py/diagnostics 整体不抽取；不绑定旧 prompt payload。",
+          "会话/提案（附录10）：每（项目,作用域,人）一会话、上下文 20 条+8K 预算、提案白名单 21 类且应用=执行对应命令（必预览者只开 ChangePreview）——响应不直接写业务表。",
+          "媒体/剪辑/发布（附录11）：media_artifact、edit 草稿/实例/confirmed_edit、release 五表冻结；同名发布=predecessor 版本链、新旧公开目录共存、退役=状态变更不删文件；poster=项目封面来源（补 01 附录承诺）；edit_confirm/release_publish 两种 preview 的 payload/impact 收尾（07 附录占位清除）。",
+          "13 聚合全部冻结，契约 2.1→2.2；domain-contracts §9 更新为全量附录索引。"
+        ],
+        "evidence": [
+          "architecture/appendices/09-jobs-and-providers.md",
+          "architecture/appendices/10-conversations.md",
+          "architecture/appendices/11-releases.md",
+          "architecture/domain-contracts.md §9（v2.2 全量索引）",
+          "architecture/decisions.md 变更记录（2026-10-04 ROOT-03/ROOT-04 条目）"
+        ],
+        "limitations": [
+          "本卡为设计冻结，无代码产物；infrastructure/providers 抽取与 jobs 运行时代码由 JOB-01..08/CHAT/MEDIA 卡实施（依赖现全部满足，按批次派发）。",
+          "视频供应商 MiniMax/火山方舟的真实调用行为沿用旧栈既有验证（inventory 记录），新 adapter 实施卡需以真实提交复验一次（计费边界内的首次验证）。"
+        ]
+      }
     },
     {
       "id": "ROOT-05",
