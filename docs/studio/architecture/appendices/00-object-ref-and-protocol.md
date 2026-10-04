@@ -108,3 +108,13 @@
 - 范围 = UTF-16 code unit 半开区间 `[start, end)`，相对 canonical 文本（`offset_policy="lf-utf16-v1"`）。
 - 拒绝（`range_invalid`）：非整数/缺失、`end<=start`（空）、越界（`end>len` 或 `start<0`）、区间内全空白（blank）、劈开代理对（区间边界落在代理对内侧）、非连续选择（前台选区必须在提交前合成单一连续区间）。
 - 冲突（`range_overlap`）：与**同 (project, source_revision) 下所有未退役候选/确认**逐一判 `a.start < b.end && b.start < a.end`；重复、相交、包含、被包含均冲突，边界相接合法。AI 提案与用户操作走同一服务端规则。
+
+## 8. 前端 HTTP 客户端传输（BASE-02 的冻结依据）
+
+- **Base URL**：默认 `http://127.0.0.1:3011`（ROOT-01 的 backend_port）；可用构建期环境变量 `NEXT_PUBLIC_STUDIO_API_BASE` 覆盖；**永不指向旧后端 8000**。后端 CORS 白名单只放行 `http://127.0.0.1:3021`（ROOT-01 的 frontend_port，BASE-01-b 已装配）。
+- **鉴权**：`Authorization: Bearer <token>`；token 存 `localStorage` 键 `sl_studio_token`（登录/注册成功后由登录界面写入；登录端点属 `/api/studio/auth/*`，由 BASE-03-c 接线）。无 token 时请求照常发出，服务端 401 `unauthenticated`。
+- **请求体**：各附录冻结的命令 DTO；需要幂等的命令携带 `command_id`（UUID，客户端对**每个用户动作生成一次**）；需要 CAS 的命令携带对应 `expected_*` 字段。**重试/重发同一逻辑命令必须复用原 command_id**（客户端提供“保留 id 重试”能力；服务端 CommandRecord 按 (owner_id, command_id) 去重，重复请求返回首次结果）。
+- **超时**：默认 30s（AbortController）；超时/断网/HTTP 层失败 → `network` 错误（无响应体），UI 显示“连接失败，请重试”；**任何失败都不得映射为成功或空数组/空对象**。
+- **前端错误类型**（与 §4 对齐）：`StudioApiError { ok:false, status?:number, code, message, details? }`，`code ∈ §4 十二码 | "network"`；`details` 原样保留（range_overlap 的 conflicts[]、revision_conflict 的 object/expected/actual 等），UI 用 message 展示、用 details 定位冲突对象。
+- **成功类型**：`StudioApiResult<T> { ok:true, data:T }`；列表接口的 `data = {items, next_cursor}`（§6）。
+- 客户端只被 `web/features/studio/**` 使用；旧 app 代码不 import 它，它不 import 旧代码。
