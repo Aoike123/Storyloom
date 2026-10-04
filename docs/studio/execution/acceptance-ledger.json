@@ -1010,6 +1010,12 @@
           "backend/studio/assets/models.py",
           "tests/studio/test_asset_models.py",
           "tests/studio/conftest.py"
+        ],
+        "followups": [
+          {
+            "date": "2026-10-04",
+            "note": "studio_media_artifacts 占位闭环（DB-10 验收轮）：MediaArtifact 声明类交付并验证全 12 列后，conftest 占位块移除，media_artifact_id FK 由真表承载，套件 108/108。"
+          }
         ]
       }
     },
@@ -1253,16 +1259,43 @@
         "R09",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "backend/studio/edits/models.py、backend/studio/media/models.py、backend/studio/publishing/models.py、tests/studio/test_edit_models.py",
-      "attempts": [],
+      "allowlist_scope": "backend/studio/{media,edits,publishing}/{__init__,models}.py + tests/studio/test_edit_models.py（4 实现文件例外卡）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
       "acceptance": {
-        "preconditions": [
-          {
-            "date": "2026-10-04",
-            "note": "MediaArtifact 声明类将按名覆盖 conftest 中的 studio_media_artifacts 占位 Table（DB-05 验收裁定）。验收时必须：(1) 确认 session DB 建出的是全列真表（列集合含 MediaArtifact 全部冻结列）；(2) 从 conftest 移除占位块；(3) 确认移除后套件仍绿（media_artifact_id FK 由真表承载）。"
-          }
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.4",
+        "tested_baseline": "5ec31be + 7 新文件 + 主模型三项集成（本卡提交）",
+        "scope": "media_artifact_edit_draft_instance_confirmed_edit_release_models",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 108/108（8 新 + 100 既有）；data/ 无 studio-test-* 残留。",
+          "五表与附录 11 §1 逐列一致：MediaArtifact 12 列（CK kind/source + source_job_id FK）；EditDraft UQ(edit,rev)+cas；EditInstance UQ(draft,instance)（重复 clip=独立实例）；ConfirmedEdit UQ(edit,rev)；Release 12 列 + v2.4 条件唯一 partial index（同名 published+retired 共存=版本链，第二存活行拒绝）。"
+        ],
+        "contract_question_ruling": [
+          "裁定1（confirmed_edit_id 语义）：FK→studio_confirmed_edits.id（行 PK）按规格字面保留，无需契约变更。依据：R12“发布固定确认版本”钉的是具体确认版本行（该 revision 的冻结实例），而非稳定 edit_id 对象；且 edit_id 列无唯一约束，按对象 FK 需另加 UQ（超出冻结表结构）。列名易混已在 ConfirmedEdit 类注释说明。",
+          "裁定2（ConfirmedEdit 归属）：卡面白名单遗漏（同 DB-01 漏 ProductionScope 一类）。附录 11 五表均属 DB-10，ConfirmedEdit 属“确认不可变剪辑”聚合 → 由主模型补入 edits/models.py（声明类，与草稿/实例同模块）；执行器在测试文件的全列 Table 占位（带按名让位保护）移除。",
+          "裁定3（extend_existing）：执行器在 MediaArtifact 加 extend_existing 以原位升级 conftest 占位 Table——机制本身接受（SQLAlchemy 公开机制，保持 Table 对象同一性使既有 FK 引用同步），但主模型移除 conftest 占位后其为死代码 → 一并移除并更新 docstring。v2.4 前置条件闭环：占位移除后 MediaArtifact 为唯一声明者，套件仍 108/108。"
+        ],
+        "integration_by_main": [
+          "edits/models.py 补入 ConfirmedEdit 声明类（白名单遗漏）",
+          "conftest 移除 studio_media_artifacts 占位块（v2.4 前置条件）+ 注册表追加 media/edits/publishing 三 import",
+          "media/models.py 移除 extend_existing 死代码；test_edit_models.py 移除 confirmed 占位 Table；清理未用 import"
+        ],
+        "evidence": [
+          "backend/studio/media/models.py",
+          "backend/studio/edits/models.py",
+          "backend/studio/publishing/models.py",
+          "tests/studio/test_edit_models.py",
+          "tests/studio/conftest.py"
         ]
       }
     },
