@@ -38,6 +38,7 @@ import backend.studio.projects.models  # noqa: F401,E402
 import backend.studio.sources.models  # noqa: F401,E402
 import backend.studio.sources.fragment_models  # noqa: F401,E402
 import backend.studio.scripts.models  # noqa: F401,E402
+import backend.studio.storyboard.models  # noqa: F401,E402
 import backend.studio.contracts.models  # noqa: F401,E402
 import backend.studio.jobs.models  # noqa: F401,E402
 

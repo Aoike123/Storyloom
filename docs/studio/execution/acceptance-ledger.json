@@ -928,11 +928,36 @@
         "R09",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "backend/studio/storyboard/models.py、tests/studio/test_shot_models.py",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/storyboard/{__init__,models}.py + tests/studio/test_shot_models.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.3",
+        "tested_baseline": "c1aeb6b + 3 新文件 + 主模型注册表追加（本卡提交）",
+        "scope": "scene_shot_shot_revision_models",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 68/68（8 新 + 60 既有）；data/ 无 studio-test-* 残留。",
+          "三表与附录 04 §1 逐列一致（UQ project+seq / scene+seq / shot+revision；layout_cas 默认 1；镜头唯一父级+无删除语义列恰 9 列；FK 环 DEFERRED commit 校验）。"
+        ],
+        "integration_by_main": [
+          "conftest 模型注册表追加 backend.studio.storyboard.models"
+        ],
+        "evidence": [
+          "backend/studio/storyboard/models.py",
+          "tests/studio/test_shot_models.py",
+          "tests/studio/conftest.py"
+        ]
+      }
     },
     {
       "id": "DB-05",
