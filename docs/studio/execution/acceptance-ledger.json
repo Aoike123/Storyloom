@@ -1671,11 +1671,39 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、tests/studio/test_fragments.py",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/sources/{fragment_service,fragments_api}.py + tests/studio/test_fragments.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.6",
+        "tested_baseline": "3a8c7e1 + 3 卡文件（本卡提交）",
+        "scope": "fragment_create_command_f1 + range_set CAS 唯一写入点",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 265/265（18 新 + 247 既有）；fragment 测试独立重跑 3 次（含 T18 Barrier 并发）全绿——累计 9 次干净，无 database is locked、无断言波动。",
+          "代码审查：写事务首语句即写语句抢 DB 级写锁（无行 INSERT / 有行 no-op UPDATE）→ WAL 下获锁重读重验 CAS → 全量重叠比对（非退役、当前版本、严格 <、id 排序确定性）→ 写序 range_set→(fragment+revision deferred 环)→CommandRecord；IntegrityError→回滚→重读赢家映射 revision_conflict。附录 02 §3 并发语义完整落地，无半次保存。",
+          "F1 冻结行为逐条：401；404 kind=project / kind=source 不泄漏；precondition_failed(source_revision_inactive, blocked_by.id=active)；name required/max_length/trim 保存；range 五判定（empty/out_of_bounds/proxy_split/blank/non_integer 防御）message 含 canonical 长度；expected=null 遇已有集合 409；CAS 不符 409（expected/actual 精确）；重叠 409 全部冲突点名首个；相接 201；重放 200 零副作用；reused 422；失败零残留（T17）。"
+        ],
+        "contract_question_ruling": [
+          "裁定1（测试前置构造）：S4/S5 激活命令尚未放行，T4 在丢弃库直改 project.active_source_revision_id 构造\"非 active\"前置——可接受（测试库专用、无生产路径依赖）；S4/S5 卡验收时应将此类直改替换为真实激活调用（记入该卡验收 checklist）。",
+          "裁定2（non_integer 防御性分支）：HTTP 层 Pydantic int 先行拒绝/强转，non_integer 仅服务层直调可达——冻结规则表含该 rule（00 §4），服务层实现防御性映射合理；契约不变。",
+          "裁定3（重放比对经 object_ref 反查）：F1 冻结 201 体不含 source_revision_id，重放一致性比对经 payload.object_ref.id → Fragment 行取 source_revision_id 再比——冻结 DTO 不动，反查为正确执行；契约不变。"
+        ],
+        "evidence": [
+          "backend/studio/sources/fragment_service.py",
+          "backend/studio/sources/fragments_api.py",
+          "tests/studio/test_fragments.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-04",
