@@ -1769,12 +1769,45 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "只改名称，身份及来源依据不变。",
-      "allowlist_scope": "backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、tests/studio/test_fragments.py",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/sources/{fragment_service,fragments_api}.py + tests/studio/test_fragments.py（追加）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor(475cb5d3)",
+          "date": "2026-10-04",
+          "result": "partial——会话在未写测试前中止（service+api 完成，报告缺失）"
+        },
+        {
+          "n": 2,
+          "by": "主模型",
+          "date": "2026-10-04",
+          "result": "adopt+complete——独立审查采纳实现，补写 T27–T33 并全量验收入账"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.8",
+        "tested_baseline": "09aa8f8 + 3 文件（本卡提交）",
+        "scope": "fragment_rename_command_f4（就地改名：ID 不变、不产生 revision、不动 range_set cas）",
+        "process_note": "执行器 475cb5d3 会话在写完 service/api 后、写测试前中止且未交付报告；其 05-b 并行派发（ee5f6723，主模型误操作——违反串行纪律）因脏树基线检查正确地未写入任何文件。处置：主模型独立逐行审查 rename_fragment 实现（六步冻结校验序/写事务/F3 DTO 全部与派发规格一致）后采纳，并按原派发规格补写 T27–T33 七条测试。串行纪律重申：批次内卡片必须前卡入账提交后才派发后卡。",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 280/280（7 新 T27–T33 + 273 既有零回归）。",
+          "代码审查（主模型逐行）：校验序冻结 1 项目 404 → 2 片段 404 不泄漏 → 3 active 前置 → 4 name trim/required/max_length（先于 CAS）→ 5 幂等重放（比对 object_ref.id+name）→ 6 CAS 409 revision_conflict(409，v2.7 修正后)；写事务 fragment 就地 UPDATE→CommandRecord 单事务；200 体=F3 形状 DTO（ID 不变、revision 不变、range 回显）；不改任何 range_set/revision 行。",
+          "F4 冻结行为逐条（T27–T33）：401；404 kind=fragment（不存在=跨项目同形状，不泄漏）；非 active 422 source_revision_inactive（blocked_by 精确）；name 空/121 → 422 required/max_length 且先于 CAS（expected=99 仍先报 name）；过期 CAS 409（object/expected/actual 精确）；有效改名 200（ID 不变、name trimmed、revision 仍 1、FragmentRevision 行数不变、cas 不变、updated_at 前移）；重放 200 原 body 零副作用 + 同 command_id 异 name → 422 reused。"
+        ],
+        "integration_by_main": [
+          "tests/studio/test_fragments.py T27–T33（执行器会话中止前未写测试；主模型按原派发规格补写并修正 validation_failed 断言路径为 error.details.violations）"
+        ],
+        "evidence": [
+          "backend/studio/sources/fragment_service.py",
+          "backend/studio/sources/fragments_api.py",
+          "tests/studio/test_fragments.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-05-b",

@@ -28,7 +28,7 @@ from .fragment_models import Fragment, FragmentRevision, RangeSet
 from .models import SourceRevision
 from .ranges import ranges_overlap, utf16_len, validate_range
 
-__all__ = ["create_fragment", "confirm_fragment"]
+__all__ = ["create_fragment", "confirm_fragment", "rename_fragment"]
 
 # F1 写事务内的 CAS 冲突 message（面向用户，给出定位信息）
 _CAS_MSG = "范围集合版本已变化，请刷新片段列表后重试。"
@@ -479,6 +479,160 @@ def confirm_fragment(
             )
         )
         session.flush()
+        session.add(
+            CommandRecord(
+                id=make_ulid(),
+                owner_id=user.id,
+                project_id=pid,
+                command_id=command_id,
+                result_payload=json.dumps(body, ensure_ascii=False),
+                created_at=now,
+            )
+        )
+    return body
+
+
+def rename_fragment(
+    session,
+    user,
+    pid,
+    fid,
+    name,
+    expected_revision,
+    command_id,
+) -> dict:
+    """F4 片段就地改名（附录 02 §2 F4；ID 不变、改名不产生 revision、
+    不动 range_set cas——附录 02 §1/§3）。
+
+    校验顺序（冻结，按序短路；与 F1 同序惯例）：
+    1. 项目不存在/非属主 → 404 not_found(kind=project)（不泄漏）；
+    2. 片段不存在**或**不属本项目 → 一律 404 not_found(kind=fragment)（不泄漏）；
+    3. fragment.source_revision_id != project.active_source_revision_id →
+       422 precondition_failed(reason=source_revision_inactive，
+       blocked_by.id = active id 或 null，同 F1；附录 02 §1：任何写命令
+       要求 active)；
+    4. name：strip 后空 → 422 validation_failed(rule=required)；>120 →
+       rule=max_length；保存 trimmed（同 F1）。**name 校验先于 CAS**（冻结顺序）；
+    5. 幂等（附录 00 §3，同 F1/F6 模式）：(owner_id, command_id) 记录存在 →
+       result_payload 的 object_ref.id == fid 且 name == trimmed（与首次一致）
+       = 重放：返回首次 result_payload 并附内部标记 ``_replay=True``（路由转
+       200，零写零 commit）；不一致 → 422 validation_failed(rule=reused)；
+    6. CAS：expected_revision != current（fragment.current_revision_id 所指
+       FragmentRevision 行的 revision 号）→ 409 revision_conflict
+       (object={fragment,fid}, expected, actual)。
+
+    写事务（单事务，无半次保存；不动 range_set cas——附录 02 §3：F4–F7
+    不改范围布局；不新建 FragmentRevision——改名不产生 revision，实体 ID
+    与版本分离）：
+    fragment 就地 UPDATE（name=trimmed、updated_at=now；首条语句即写语句）
+    → CommandRecord（result_payload = 完整 200 体），同一 ``session.begin()``。
+    任何异常 → 回滚，无半次保存。
+
+    返回 200 体（F3 形状片段 DTO，与 F6 确认返回同形：state = 持久状态；
+    本路径绑定版本 == active → 有效状态 = 持久状态，revision_is_active=true）；
+    重放时附 ``_replay=True``。
+    """
+    # 1) 项目（属主校验，404 不泄漏存在性）
+    p = session.scalar(select(StudioProject).where(StudioProject.id == pid))
+    if p is None or p.owner_id != user.id:
+        raise StudioAPIError.not_found("project", pid)
+
+    # 2) 片段：不存在或不属本项目 → 一律 404（不泄漏存在性）
+    frag = session.scalar(
+        select(Fragment).where(Fragment.id == fid, Fragment.project_id == pid)
+    )
+    if frag is None:
+        raise StudioAPIError.not_found("fragment", fid)
+
+    # 3) 绑定版本须为项目 active（附录 02 §1：任何写命令要求 active，同 F1）
+    if frag.source_revision_id != p.active_source_revision_id:
+        raise StudioAPIError.precondition_failed(
+            "source_revision_inactive",
+            {"kind": "source", "id": p.active_source_revision_id, "revision": None},
+            "该正文版本不是项目当前活跃版本，不能基于它改名片段。",
+        )
+
+    # 4) name：trim 后校验，保存 trimmed（冻结顺序：先于幂等与 CAS，同 F1）
+    name_s = name.strip()
+    violations: list[dict[str, str]] = []
+    if not name_s:
+        violations.append({"field": "name", "rule": "required", "message": "片段名不能为空。"})
+    if len(name_s) > 120:
+        violations.append({"field": "name", "rule": "max_length", "message": "片段名最长 120 个字符。"})
+    if violations:
+        raise StudioAPIError.validation_failed(violations)
+
+    # 5) 幂等（附录 00 §3，同 F1/F6 模式）：读查询，先于写事务
+    record = session.scalar(
+        select(CommandRecord).where(
+            CommandRecord.owner_id == user.id,
+            CommandRecord.command_id == command_id,
+        )
+    )
+    if record is not None:
+        payload = json.loads(record.result_payload) if record.result_payload else {}
+        ref = payload.get("object_ref") or {}
+        if ref.get("id") == fid and payload.get("name") == name_s:
+            # 重放：返回首次 result_payload，零写零 commit
+            return dict(payload, _replay=True)
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "command_id",
+                    "rule": "reused",
+                    "message": "command_id 已被其他命令使用，请生成新的。",
+                }
+            ]
+        )
+
+    # 6) CAS：current = current_revision_id 所指版本行的 revision 号
+    rv = session.get(FragmentRevision, frag.current_revision_id)
+    if rv is None:  # 理论上不可达（current_revision_id NOT NULL FK）
+        raise StudioAPIError.internal()
+    current = rv.revision
+    if expected_revision != current:
+        raise StudioAPIError.revision_conflict(
+            "fragment",
+            fid,
+            expected_revision,
+            current,
+            "片段版本已变化，请刷新片段详情后重试。",
+        )
+
+    # 读事务快照（DTO 字段；写阶段不再回读）
+    summary_s = frag.summary
+    state_s = frag.state
+    src_id = frag.source_revision_id
+    created_at = frag.created_at
+    retired_at = frag.retired_at
+    rng_start = rv.range_start
+    rng_end = rv.range_end
+    predecessor_ids = json.loads(rv.predecessor_fragment_ids or "[]")
+    session.commit()  # 结束读事务；写阶段另起事务
+
+    # 写事务：单事务，无半次保存；fragment 就地 UPDATE（首条语句即写语句；
+    # 不新建 FragmentRevision——改名不产生 revision；不动 range_set cas——
+    # 不改范围布局）→ CommandRecord
+    now = time.time()
+    body = {
+        "object_ref": {"kind": "fragment", "id": fid, "revision": current},
+        "name": name_s,
+        "summary": summary_s,
+        "state": state_s,
+        "revision_is_active": True,
+        "range": {"start": rng_start, "end": rng_end},
+        "source_revision_id": src_id,
+        "predecessor_ids": predecessor_ids,
+        "created_at": created_at,
+        "updated_at": now,
+        "retired_at": retired_at,
+    }
+    with session.begin():
+        session.execute(
+            update(Fragment)
+            .where(Fragment.id == fid)
+            .values(name=name_s, updated_at=now)
+        )
         session.add(
             CommandRecord(
                 id=make_ulid(),

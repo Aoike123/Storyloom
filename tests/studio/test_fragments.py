@@ -1,4 +1,5 @@
 """F1 原子保存候选片段（附录 02 §2 F1）—— POST /api/studio/projects/{pid}/fragments 行为验证；
+F4 片段就地改名（附录 02 §2 F4）—— POST /api/studio/projects/{pid}/fragments/{fid}/rename 行为验证；
 F6 确认片段（附录 02 §2 F6）—— POST /api/studio/projects/{pid}/fragments/{fid}/confirm 行为验证。
 
 丢弃库由 tests/studio/conftest.py 在 session 级统一设定（engine 是进程单例）；
@@ -96,6 +97,14 @@ def _confirm(client, token, pid, fid, expected, command_id=None):
     return client.post(
         f"/api/studio/projects/{pid}/fragments/{fid}/confirm",
         json={"expected_revision": expected, "command_id": command_id or _cmd()},
+        headers=_auth(token),
+    )
+
+
+def _rename(client, token, pid, fid, name, expected, command_id=None):
+    return client.post(
+        f"/api/studio/projects/{pid}/fragments/{fid}/rename",
+        json={"name": name, "expected_revision": expected, "command_id": command_id or _cmd()},
         headers=_auth(token),
     )
 
@@ -687,3 +696,179 @@ def test_t26_replay_200(db, client):
         )
     assert len(dec_after) == 1
     assert _count("studio_command_records") == cmd_records_before
+
+
+# T27 无 token → 401
+def test_t27_no_token_401(db, client):
+    r = client.post(
+        "/api/studio/projects/01010101010101010101010101/fragments/02020202020202020202020202/rename",
+        json={"name": "x", "expected_revision": 1, "command_id": _cmd()},
+    )
+    assert r.status_code == 401, r.text
+    assert r.json()["error"]["code"] == "unauthenticated"
+
+
+# T28 fid 不存在 / 跨项目 → 404 kind=fragment（不泄漏）
+def test_t28_unknown_and_cross_project_404(db, client):
+    token_a = _register(client, "f4_t28_alice")
+    token_b = _register(client, "f4_t28_bob")
+    pid_a = _create_project(client, token_a, "T28A")
+    pid_b = _create_project(client, token_b, "T28B")
+    v1a = _import_active(client, token_a, pid_a, TEXT_A)
+    v1b = _import_active(client, token_b, pid_b, TEXT_A)
+    rc = _create_fragment(client, token_a, pid_a, v1a["id"], 0, 5, "FA")
+    assert rc.status_code == 201, rc.text
+    fid_a = rc.json()["object_ref"]["id"]
+
+    # 不存在（合法 26 字符 id）
+    ghost = "03" * 13
+    r = _rename(client, token_a, pid_a, ghost, "n", 1)
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["details"] == {"kind": "fragment", "id": ghost}
+
+    # 跨项目：B 项目路径下问 A 的片段 → 同形状 404
+    r = _rename(client, token_b, pid_b, fid_a, "n", 1)
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["details"] == {"kind": "fragment", "id": fid_a}
+
+
+# T29 非 active 版本上的片段 → 422 precondition_failed
+def test_t29_inactive_source_422(db, client):
+    token = _register(client, "f4_t29_carol")
+    pid = _create_project(client, token, "T29Proj")
+    v1 = _import_active(client, token, pid, TEXT_A)
+    time.sleep(0.002)
+    r2 = _import(client, token, pid, "second version content")
+    assert r2.status_code == 201, r2.text
+    v2 = r2.json()
+    rc = _create_fragment(client, token, pid, v1["id"], 0, 5, "F29")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    # 直改 active 指针 → v2（S4/S5 未放行，测试库专用构造）
+    with Session() as s:
+        s.execute(
+            update(StudioProject)
+            .where(StudioProject.id == pid)
+            .values(active_source_revision_id=v2["id"])
+        )
+        s.commit()
+    r = _rename(client, token, pid, fid, "n", 1)
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "precondition_failed"
+    assert err["details"]["reason"] == "source_revision_inactive"
+    assert err["details"]["blocked_by"] == {
+        "kind": "source",
+        "id": v2["id"],
+        "revision": None,
+    }
+
+
+# T30 name 校验（先于 CAS）
+def test_t30_name_validation_before_cas(db, client):
+    token = _register(client, "f4_t30_dora")
+    pid = _create_project(client, token, "T30Proj")
+    v1 = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, v1["id"], 0, 5, "F30")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+
+    for bad in ("", "   "):
+        r = _rename(client, token, pid, fid, bad, 1)
+        assert r.status_code == 422, r.text
+        v = r.json()["error"]["details"]["violations"][0]
+        assert (v["field"], v["rule"]) == ("name", "required")
+
+    r = _rename(client, token, pid, fid, "x" * 121, 1)
+    assert r.status_code == 422, r.text
+    v = r.json()["error"]["details"]["violations"][0]
+    assert (v["field"], v["rule"]) == ("name", "max_length")
+
+    # 顺序冻结：expected 给错值（99）时仍先返回 name 校验错而非 409
+    r = _rename(client, token, pid, fid, "  ", 99)
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "validation_failed"
+
+
+# T31 过期 CAS → 409 revision_conflict
+def test_t31_stale_cas_409(db, client):
+    token = _register(client, "f4_t31_erin")
+    pid = _create_project(client, token, "T31Proj")
+    v1 = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, v1["id"], 0, 5, "F31")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    r = _rename(client, token, pid, fid, "n", 2)  # current=1
+    assert r.status_code == 409, r.text
+    err = r.json()["error"]
+    assert err["code"] == "revision_conflict"
+    assert err["details"]["object"] == {"kind": "fragment", "id": fid}
+    assert err["details"]["expected"] == 2
+    assert err["details"]["actual"] == 1
+
+
+# T32 有效改名 → 200，ID 不变、不产生 revision、不动 cas
+def test_t32_rename_ok_200(db, client):
+    token = _register(client, "f4_t32_frank")
+    pid = _create_project(client, token, "T32Proj")
+    v1 = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, v1["id"], 0, 5, "F32")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    with Session() as s:
+        frag_before = s.get(Fragment, fid)
+        cas_before = s.execute(
+            select(RangeSet).where(RangeSet.project_id == pid)
+        ).scalar_one().cas_revision
+        revs_before = _fragment_revisions(fid)
+    assert len(revs_before) == 1 and revs_before[0].revision == 1
+    assert frag_before.created_at == frag_before.updated_at
+
+    r = _rename(client, token, pid, fid, "  新名字  ", 1)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["object_ref"] == {"kind": "fragment", "id": fid, "revision": 1}
+    assert body["name"] == "新名字"
+    assert body["state"] == "candidate"
+    assert body["revision_is_active"] is True
+    assert body["range"] == {"start": 0, "end": 5}
+    assert body["updated_at"] > body["created_at"]
+
+    with Session() as s:
+        frag = s.get(Fragment, fid)
+        assert frag.name == "新名字"
+        assert frag.updated_at > frag.created_at
+        cas_after = s.execute(
+            select(RangeSet).where(RangeSet.project_id == pid)
+        ).scalar_one().cas_revision
+        assert cas_after == cas_before  # 不动 cas
+    revs_after = _fragment_revisions(fid)
+    assert len(revs_after) == 1 and revs_after[0].revision == 1  # 不产生 revision
+
+
+# T33 重放 → 200 原 body，零副作用
+def test_t33_replay_200_no_side_effect(db, client):
+    token = _register(client, "f4_t33_gina")
+    pid = _create_project(client, token, "T33Proj")
+    v1 = _import_active(client, token, pid, TEXT_A)
+    cid = _cmd()
+    rc = _create_fragment(client, token, pid, v1["id"], 0, 5, "F33", command_id=cid)
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    cid_r = _cmd()
+    r1 = _rename(client, token, pid, fid, "原名", 1, command_id=cid_r)
+    assert r1.status_code == 200, r1.text
+    with Session() as s:
+        updated_after_1 = s.get(Fragment, fid).updated_at
+    # 同 command_id + 同 name → 重放
+    r2 = _rename(client, token, pid, fid, "原名", 1, command_id=cid_r)
+    assert r2.status_code == 200, r2.text  # 非 201
+    assert r2.json() == r1.json()
+    with Session() as s:
+        frag = s.get(Fragment, fid)
+        assert frag.updated_at == updated_after_1  # 零副作用
+    assert len(_fragment_revisions(fid)) == 1
+    # 同 command_id 不同 name → 422 reused
+    r3 = _rename(client, token, pid, fid, "另一名", 1, command_id=cid_r)
+    assert r3.status_code == 422, r3.text
+    assert r3.json()["error"]["details"]["violations"][0]["rule"] == "reused"

@@ -86,3 +86,32 @@ def confirm_fragment_route(
     )
     result.pop("_replay", False)
     return JSONResponse(content=result, status_code=200)
+
+
+class RenameFragmentBody(BaseModel):
+    name: str
+    expected_revision: int
+    command_id: str
+
+
+@router.post("/projects/{pid}/fragments/{fid}/rename")
+def rename_fragment_route(
+    pid: str,
+    fid: str,
+    body: RenameFragmentBody,
+    db=Depends(_session),
+    user=Depends(require_user),
+):
+    """F4 片段就地改名：200 DTO（F3 形状，ID 不变；改名不产生 revision、
+    不动 range_set cas）；幂等重放命中 → 200（原 result_payload，零写零 commit）。"""
+    result = fragment_service.rename_fragment(
+        db,
+        user,
+        pid,
+        fid,
+        body.name,
+        body.expected_revision,
+        body.command_id,
+    )
+    result.pop("_replay", False)
+    return JSONResponse(content=result, status_code=200)
