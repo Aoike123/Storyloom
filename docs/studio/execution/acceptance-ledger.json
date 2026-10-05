@@ -1825,12 +1825,45 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "只退役有效范围，保留历史产物依据。",
-      "allowlist_scope": "backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、tests/studio/test_fragments.py",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/sources/{fragment_service,fragments_api}.py + tests/studio/test_fragments.py（追加）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor(4690c36c)",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.8",
+        "tested_baseline": "987bdaa + 3 文件（本卡提交）",
+        "scope": "fragment_retire_command_f7（preview/apply 两步 + 跨域 impact 三列表 + TTL/失鲜/决定落账）",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 291/291（11 新 T34–T44 + 280 既有零回归）；代码审查：preview 七步冻结短路序 + 单事务 ChangePreview(baseline/impact/pending/expires=+1800)+CommandRecord、200 恰 4 字段；impact=后继组传递闭包（predecessor 链）+ 五类 affected + job 组 needs_review + MediaArtifact→EditInstance→Release 证据链，各列表 id 排序、空表空列表不省键、缺表 OperationalError 降级不 500；apply=404 不泄漏(kind=preview)→mismatch→幂等→非 pending 409 preview_stale(惰性 expired/终态不改写)→CAS 先报→baseline 写事务内重读失配全收集+superseded→单事务 retired+决定+preview+记录（不动 cas）。",
+          "F7 冻结行为逐条（T34–T44）：401×2；404 kind=fragment/preview 不泄漏；target≠路径 422 mismatch；非 active 422；已退役 422 already_retired(v2.8)；preview 200 恰 4 字段+baseline 精确+TTL 窗；跨域 impact 四类 affected+job+artifact 全等断言；apply 200 retired（cas 不变、决定恰 1 行 digest 独立重算相等）；F1 使 cas+1 → 409 preview_stale 恰 1 冲突+superseded；applied 再 apply 409(actual=applied)；apply 重放 200 零副作用；preview 自身重放 200 原 body 且预览恰 1 行（主模型补测 T44）。"
+        ],
+        "contract_question_ruling": [
+          "裁定1（幂等先于状态检查）：派发规格把幂等列为第 5 步（状态检查后）系笔误——00 §3 重放语义要求原命令重放返回首次结果、不受对象/预览后续状态阻断（T43b 在预览已 applied 时必须 200，字面顺序不可达）。裁定冻结模式：preview/apply 类命令的幂等判定置于 404/mismatch 之后、状态/TTL/CAS/baseline 之前；F8/F9/F10 派发规格按此修正。00 §3 本身未变，不升契约版本。",
+          "裁定2（写序：决定先 INSERT 再回填 preview.decision_id）：preview.decision_id→decisions.id FK 非 deferrable，规格字面序在 FK 强制下必失败；决定行 id 预生成 ULID 后先 INSERT 再回填，可观察终态与规格一致。附录 07/00 §5 只规定终态不规定语句序——不升契约版本；后续预览卡按\"决定先 INSERT\"写规格。",
+          "裁定3（EditInstance/Release 缺表降级）：raw SQL 守卫（OperationalError→该规则空列表）适配 edits/publishing 路由未挂载的中间态，不 500——接受。T40 卡面 6 种子行未含二者、EditInstance 需 edit_drafts 链，按\"仅当可行种子时断言\"降级——接受（本卡无缺陷）；更深种子断言留待 reviews/edits 域卡（记入其 checklist）。",
+          "裁定4（过期惰性置位同时写 resolved_at）：00 §5.4 仅要求置 expired 状态；实现对称写 resolved_at（离开 pending 的统一语义，superseded/applied/rejected 同样写）——模型无 CK 禁止、语义一致，接受。不升契约版本。",
+          "裁定5（Shot 当前 revision 号）：studio_shots 无 revision 列，取 studio_shot_revisions.revision（经 shot.current_revision_id deferrable 环）——全域统一的 current-pointer 设计（同 ScriptObject/Fragment），接受为\"当前 revision 号\"的实现。",
+          "裁定6（跨域种子须显式给 ORM 侧默认值）：studio_jobs.attempts 等为 Python 侧 default（非 SQL DEFAULT），raw INSERT 必须显式给值——test_fragments.py 的 _seed_t40 helper 已封装，后续跨域种子卡复用该 helper 模式。"
+        ],
+        "integration_by_main": [
+          "tests/studio/test_fragments.py T44（preview 命令自身重放：200 原 body、预览恰 1 行零副作用——执行器 remaining 所列缺口，主模型补测；其 reused 子断言经 HTTP 不可达（target≠fid 先触发 mismatch），改写为 mismatch 断言，同 F1 non_integer 防御模式）"
+        ],
+        "evidence": [
+          "backend/studio/sources/fragment_service.py",
+          "backend/studio/sources/fragments_api.py",
+          "tests/studio/test_fragments.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-05",

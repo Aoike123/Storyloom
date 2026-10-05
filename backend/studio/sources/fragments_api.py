@@ -115,3 +115,63 @@ def rename_fragment_route(
     )
     result.pop("_replay", False)
     return JSONResponse(content=result, status_code=200)
+
+
+class RetirePreviewBody(BaseModel):
+    target_fragment_id: str
+    command_id: str
+
+
+class RetireApplyBody(BaseModel):
+    preview_id: str
+    command_id: str
+    expected_revision: int
+    expected_range_set_revision: int
+
+
+@router.post("/projects/{pid}/fragments/{fid}/retire")
+def preview_retire_route(
+    pid: str,
+    fid: str,
+    body: RetirePreviewBody,
+    db=Depends(_session),
+    user=Depends(require_user),
+):
+    """F7 预览退役片段：200 恰 4 字段 {preview_id, kind, baseline, impact}
+    （00 §5.1；preview 是一次幂等写，记录 state=pending 不外露）；
+    幂等重放命中 → 200（原 result_payload，零写零 commit）。"""
+    result = fragment_service.preview_fragment_retire(
+        db,
+        user,
+        pid,
+        fid,
+        body.target_fragment_id,
+        body.command_id,
+    )
+    result.pop("_replay", False)
+    return JSONResponse(content=result, status_code=200)
+
+
+@router.post("/projects/{pid}/fragments/{fid}/retire/apply")
+def apply_retire_route(
+    pid: str,
+    fid: str,
+    body: RetireApplyBody,
+    db=Depends(_session),
+    user=Depends(require_user),
+):
+    """F7 应用退役片段：200（F3 形状 DTO，state='retired'、retired_at=now；
+    不删除任何产物——R11 失效≠删除；退役不动 range_set cas）；
+    幂等重放命中 → 200（原 result_payload，零写零 commit）。"""
+    result = fragment_service.apply_fragment_retire(
+        db,
+        user,
+        pid,
+        fid,
+        body.preview_id,
+        body.command_id,
+        body.expected_revision,
+        body.expected_range_set_revision,
+    )
+    result.pop("_replay", False)
+    return JSONResponse(content=result, status_code=200)

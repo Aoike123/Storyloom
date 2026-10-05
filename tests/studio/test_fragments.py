@@ -872,3 +872,646 @@ def test_t33_replay_200_no_side_effect(db, client):
     r3 = _rename(client, token, pid, fid, "另一名", 1, command_id=cid_r)
     assert r3.status_code == 422, r3.text
     assert r3.json()["error"]["details"]["violations"][0]["rule"] == "reused"
+
+
+# ───────────────────── F7 片段退役 preview/apply（T34–T43，附录 02 §2 v2.8 + 00 §5） ─────────────────────
+# 跨域表（source_relations/script_*/jobs/media_artifacts/scenes/shots/edit_instances/releases）
+# 经下列模块导入注册进 Base.metadata，丢弃库 create_all 建表；种子行直接 INSERT
+# 构造（与 T4/T22/T29 直改 active 同款已接受模式）。不写 STUDIO_* env。
+
+import backend.studio.relations.models  # noqa: F401,E402
+import backend.studio.scripts.models  # noqa: F401,E402
+import backend.studio.jobs.models  # noqa: F401,E402
+import backend.studio.media.models  # noqa: F401,E402
+import backend.studio.storyboard.models  # noqa: F401,E402
+import backend.studio.edits.models  # noqa: F401,E402
+import backend.studio.publishing.models  # noqa: F401,E402
+
+from backend.core.db import make_ulid  # noqa: E402
+from backend.studio.reviews.models import ChangePreview  # noqa: E402
+
+
+def _retire_preview(client, token, pid, fid, target=None, command_id=None):
+    return client.post(
+        f"/api/studio/projects/{pid}/fragments/{fid}/retire",
+        json={
+            "target_fragment_id": target if target is not None else fid,
+            "command_id": command_id or _cmd(),
+        },
+        headers=_auth(token),
+    )
+
+
+def _retire_apply(
+    client,
+    token,
+    pid,
+    fid,
+    preview_id,
+    command_id=None,
+    expected_revision=1,
+    expected_range_set_revision=None,
+):
+    return client.post(
+        f"/api/studio/projects/{pid}/fragments/{fid}/retire/apply",
+        json={
+            "preview_id": preview_id,
+            "command_id": command_id or _cmd(),
+            "expected_revision": expected_revision,
+            "expected_range_set_revision": expected_range_set_revision,
+        },
+        headers=_auth(token),
+    )
+
+
+def _user_id(username) -> str:
+    with Session() as s:
+        return s.execute(
+            text("SELECT id FROM users WHERE username = :u"), {"u": username}
+        ).scalar()
+
+
+def _preview_row(preview_id) -> dict:
+    with Session() as s:
+        pv = s.get(ChangePreview, preview_id)
+        return {
+            "state": pv.state,
+            "kind": pv.kind,
+            "project_id": pv.project_id,
+            "owner_id": pv.owner_id,
+            "payload": pv.payload,
+            "baseline": pv.baseline,
+            "impact": pv.impact,
+            "decision_id": pv.decision_id,
+            "created_at": pv.created_at,
+            "resolved_at": pv.resolved_at,
+            "expires_at": pv.expires_at,
+        }
+
+
+def _seed_t40(pid, uid, fid) -> dict:
+    """跨域种子行直接 INSERT（满足各表 NOT NULL/外键约束；项目/正文先行；
+    Scene 行支撑 Shot；ScriptObject 经 deferred FK 环与 ScriptRevision 同事务落两行）。"""
+    now = time.time()
+    scene_id = make_ulid()
+    object_id = make_ulid()
+    object_rev_id = make_ulid()
+    adoption_id = make_ulid()
+    shot_id = make_ulid()
+    shot_rev_id = make_ulid()
+    relation_id = make_ulid()
+    job_id = make_ulid()
+    artifact_id = make_ulid()
+    with Session() as s:
+        s.execute(
+            text(
+                "INSERT INTO studio_scenes (id, project_id, name, seq, "
+                "layout_cas_revision, created_at, updated_at) "
+                "VALUES (:id, :pid, 'S1', 1, 1, :now, :now)"
+            ),
+            {"id": scene_id, "pid": pid, "now": now},
+        )
+        # ScriptObject ↔ ScriptRevision deferred FK 环：同事务两行，commit 时校验
+        s.execute(
+            text(
+                "INSERT INTO studio_script_objects (id, project_id, fragment_id, kind, "
+                "seq, speaker, current_revision_id, created_at, updated_at, retired_at) "
+                "VALUES (:id, :pid, :fid, 'dialogue', 1, 'L1', :cur, :now, :now, NULL)"
+            ),
+            {"id": object_id, "pid": pid, "fid": fid, "cur": object_rev_id, "now": now},
+        )
+        s.execute(
+            text(
+                "INSERT INTO studio_script_revisions (id, object_id, revision, text, "
+                "speaker, adaptation_note, source_fragment_revision, created_at) "
+                "VALUES (:id, :oid, 1, 'hello', 'L1', NULL, 1, :now)"
+            ),
+            {"id": object_rev_id, "oid": object_id, "now": now},
+        )
+        s.execute(
+            text(
+                "INSERT INTO studio_script_adoptions (id, project_id, fragment_id, "
+                "object_revisions, content_hash, previous_adoption_id, created_at) "
+                "VALUES (:id, :pid, :fid, :objs, :hash, NULL, :now)"
+            ),
+            {
+                "id": adoption_id,
+                "pid": pid,
+                "fid": fid,
+                "objs": json.dumps([{"object_id": object_id, "revision": 1}]),
+                "hash": "ab" * 32,
+                "now": now,
+            },
+        )
+        s.execute(
+            text(
+                "INSERT INTO studio_shots (id, project_id, scene_id, seq, name, "
+                "script_adoption_id, current_revision_id, created_at, updated_at) "
+                "VALUES (:id, :pid, :scene, 1, 'SH1', :ad, :cur, :now, :now)"
+            ),
+            {
+                "id": shot_id,
+                "pid": pid,
+                "scene": scene_id,
+                "ad": adoption_id,
+                "cur": shot_rev_id,
+                "now": now,
+            },
+        )
+        s.execute(
+            text(
+                "INSERT INTO studio_shot_revisions (id, shot_id, revision, visual, "
+                "action, dialogue, transition_in, transition_out, duration_hint_ms, "
+                "created_at) VALUES (:id, :sid, 1, '{}', '{}', NULL, NULL, NULL, NULL, :now)"
+            ),
+            {"id": shot_rev_id, "sid": shot_id, "now": now},
+        )
+        s.execute(
+            text(
+                "INSERT INTO studio_source_relations (id, project_id, "
+                "source_fragment_id, source_fragment_revision, target_kind, target_id, "
+                "target_revision, created_at) "
+                "VALUES (:id, :pid, :fid, 1, 'script_object', :tid, 1, :now)"
+            ),
+            {"id": relation_id, "pid": pid, "fid": fid, "tid": object_id, "now": now},
+        )
+        # 冻结输入 payload 含 fid 字面（子串）
+        s.execute(
+            text(
+                "INSERT INTO studio_jobs (id, project_id, owner_id, kind, ref_kind, "
+                "ref_id, payload, status, priority, created_at, submitted_by, "
+                "attempts, usage, last_error, finished_at) "
+                "VALUES (:id, :pid, :uid, 'shot_generate', NULL, NULL, :payload, "
+                "'pending', 0, :now, :uid, 0, NULL, NULL, NULL)"
+            ),
+            {
+                "id": job_id,
+                "pid": pid,
+                "uid": uid,
+                "payload": json.dumps({"fragment_id": fid}),
+                "now": now,
+            },
+        )
+        s.execute(
+            text(
+                "INSERT INTO studio_media_artifacts (id, project_id, media_kind, "
+                "filename, size_bytes, sha256, duration_ms, width, height, source, "
+                "source_job_id, created_at) "
+                "VALUES (:id, :pid, 'image', 'a.png', 12, :sha, NULL, NULL, NULL, "
+                "'shot_generate', :jid, :now)"
+            ),
+            {
+                "id": artifact_id,
+                "pid": pid,
+                "sha": "cd" * 32,
+                "jid": job_id,
+                "now": now,
+            },
+        )
+        s.commit()
+    return {
+        "scene_id": scene_id,
+        "object_id": object_id,
+        "object_rev_id": object_rev_id,
+        "adoption_id": adoption_id,
+        "shot_id": shot_id,
+        "shot_rev_id": shot_rev_id,
+        "relation_id": relation_id,
+        "job_id": job_id,
+        "artifact_id": artifact_id,
+    }
+
+
+# T34 无 token → 401（preview 与 apply 各一）
+def test_t34_no_token_401(db, client):
+    ghost = "03" * 13
+    pid = "01" * 13
+    r1 = client.post(
+        f"/api/studio/projects/{pid}/fragments/{ghost}/retire",
+        json={"target_fragment_id": ghost, "command_id": _cmd()},
+    )
+    assert r1.status_code == 401, r1.text
+    assert r1.json()["error"]["code"] == "unauthenticated"
+    r2 = client.post(
+        f"/api/studio/projects/{pid}/fragments/{ghost}/retire/apply",
+        json={
+            "preview_id": ghost,
+            "command_id": _cmd(),
+            "expected_revision": 1,
+            "expected_range_set_revision": 1,
+        },
+    )
+    assert r2.status_code == 401, r2.text
+    assert r2.json()["error"]["code"] == "unauthenticated"
+
+
+# T35 preview fid 不存在 → 404 kind=fragment；跨项目 fid → 同形状（不泄漏）
+def test_t35_unknown_and_cross_project_fid_404(db, client):
+    ta = _register(client, "f7_t35_alice")
+    tc = _register(client, "f7_t35_carol")
+    pa = _create_project(client, ta, "T35A")
+    pc = _create_project(client, tc, "T35C")
+    _import_active(client, ta, pa, TEXT_A)
+    revc = _import_active(client, tc, pc, TEXT_A)
+    rc = _create_fragment(client, tc, pc, revc["id"], 0, 5, "F35")
+    assert rc.status_code == 201, rc.text
+    fid_c = rc.json()["object_ref"]["id"]
+
+    ghost = "03" * 13
+    r = _retire_preview(client, ta, pa, ghost, target=ghost)
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["code"] == "not_found"
+    assert r.json()["error"]["details"] == {"kind": "fragment", "id": ghost}
+
+    r = _retire_preview(client, ta, pa, fid_c, target=fid_c)
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["code"] == "not_found"
+    assert r.json()["error"]["details"] == {"kind": "fragment", "id": fid_c}
+
+
+# T36 target_fragment_id ≠ 路径 fid → 422 validation_failed rule=mismatch
+def test_t36_target_mismatch_422(db, client):
+    token = _register(client, "f7_t36_bob")
+    pid = _create_project(client, token, "T36Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, rev["id"], 0, 5, "F36")
+    fid = rc.json()["object_ref"]["id"]
+    r = _retire_preview(client, token, pid, fid, target="04" * 13)
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "validation_failed"
+    v = err["details"]["violations"][0]
+    assert v["field"] == "target_fragment_id"
+    assert v["rule"] == "mismatch"
+    assert v["message"] == "target_fragment_id 必须与路径片段一致。"
+
+
+# T37 非 active 版本上的片段 preview（直改 active，T4 同款构造）
+# → 422 precondition_failed reason=source_revision_inactive
+def test_t37_inactive_source_422(db, client):
+    token = _register(client, "f7_t37_carol")
+    pid = _create_project(client, token, "T37Proj")
+    v1 = _import_active(client, token, pid, TEXT_A)
+    time.sleep(0.002)  # 保证 ULID 严格递增
+    r2 = _import(client, token, pid, "second version content")
+    assert r2.status_code == 201, r2.text
+    v2 = r2.json()
+    rc = _create_fragment(client, token, pid, v1["id"], 0, 5, "F37")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    # 直改 active 指针 → v2（S4/S5 未放行，测试库专用构造）
+    with Session() as s:
+        s.execute(
+            update(StudioProject)
+            .where(StudioProject.id == pid)
+            .values(active_source_revision_id=v2["id"])
+        )
+        s.commit()
+    r = _retire_preview(client, token, pid, fid)
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "precondition_failed"
+    assert err["details"]["reason"] == "source_revision_inactive"
+    assert err["details"]["blocked_by"] == {
+        "kind": "source",
+        "id": v2["id"],
+        "revision": None,
+    }
+
+
+# T38 已退役片段 preview（直改 state='retired'+retired_at）
+# → 422 precondition_failed reason=already_retired（v2.8：422 非 409）
+def test_t38_already_retired_422(db, client):
+    token = _register(client, "f7_t38_dave")
+    pid = _create_project(client, token, "T38Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, rev["id"], 0, 5, "F38")
+    fid = rc.json()["object_ref"]["id"]
+    with Session() as s:
+        s.execute(
+            update(Fragment)
+            .where(Fragment.id == fid)
+            .values(state="retired", retired_at=time.time())
+        )
+        s.commit()
+    r = _retire_preview(client, token, pid, fid)
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "precondition_failed"
+    assert err["details"]["reason"] == "already_retired"
+    assert err["details"]["blocked_by"] == {
+        "kind": "fragment",
+        "id": fid,
+        "revision": 1,
+    }
+
+
+# T39 有效 preview（candidate 片段）→ 200 恰 4 字段；baseline 精确；
+# impact 三列表键齐（空）；DB：preview 行 state='pending'、expires_at=created_at+30min
+def test_t39_preview_200(db, client):
+    token = _register(client, "f7_t39_erin")
+    pid = _create_project(client, token, "T39Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, rev["id"], 0, 10, "F39")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    set_row = _range_sets(pid, rev["id"])[0]
+    set_id, cas = set_row.id, set_row.cas_revision
+
+    r = _retire_preview(client, token, pid, fid)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # 恰 4 字段（00 §5.1 冻结；记录 state=pending 不外露）
+    assert set(body.keys()) == {"preview_id", "kind", "baseline", "impact"}
+    assert body["kind"] == "fragment_retire"
+    assert len(body["preview_id"]) == 26
+    assert body["baseline"] == {
+        "fragment": {"kind": "fragment", "id": fid, "revision": 1},
+        "range_set": {"id": set_id, "cas": cas},
+    }
+    # impact 三列表键齐（本库无跨域引用 → 空列表，不省略键）
+    assert body["impact"] == {"affected": [], "needs_review": [], "preservable": []}
+
+    pv = _preview_row(body["preview_id"])
+    assert pv["state"] == "pending"
+    assert pv["kind"] == "fragment_retire"
+    assert pv["project_id"] == pid
+    assert pv["owner_id"] == _user_id("f7_t39_erin")
+    assert pv["decision_id"] is None
+    assert pv["resolved_at"] is None
+    assert json.loads(pv["payload"]) == {"target_fragment_id": fid}
+    # 30 分钟 TTL：expires_at = created_at + 1800（容差区间内）
+    assert 1700 < pv["expires_at"] - pv["created_at"] < 1900
+
+
+# T40 跨域 impact：种子 SourceRelation/ScriptObject/ScriptAdoption/Shot/StudioJob/
+# MediaArtifact → affected 恰 4、needs_review 恰 1（job）、preservable 恰 1
+# （media_artifact）；各列表按 object_ref.id 排序
+def test_t40_cross_domain_impact(db, client):
+    token = _register(client, "f7_t40_frank")
+    pid = _create_project(client, token, "T40Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, rev["id"], 0, 10, "F40")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    seeds = _seed_t40(pid, _user_id("f7_t40_frank"), fid)
+
+    r = _retire_preview(client, token, pid, fid)
+    assert r.status_code == 200, r.text
+    impact = r.json()["impact"]
+
+    # affected 恰 4 条：source_relation/script_object/script_adoption/shot
+    expected_affected = [
+        {"object_ref": {"kind": "source_relation", "id": seeds["relation_id"], "revision": 1}},
+        {"object_ref": {"kind": "script_object", "id": seeds["object_id"], "revision": 1}},
+        {"object_ref": {"kind": "script_adoption", "id": seeds["adoption_id"], "revision": None}},
+        {"object_ref": {"kind": "shot", "id": seeds["shot_id"], "revision": 1}},
+    ]
+    expected_affected.sort(key=lambda x: x["object_ref"]["id"])
+    assert impact["affected"] == expected_affected
+
+    # needs_review 恰 1（pending job，冻结输入含 fid）
+    assert impact["needs_review"] == [
+        {
+            "object_ref": {"kind": "job", "id": seeds["job_id"], "revision": None},
+            "reason": "frozen_input_contains_fragment",
+        }
+    ]
+
+    # preservable 恰 1（media_artifact，经 source_job_id 证据链）
+    assert impact["preservable"] == [
+        {"object_ref": {"kind": "media_artifact", "id": seeds["artifact_id"], "revision": None}}
+    ]
+
+
+# T41 有效 apply（新 command_id）→ 200：state='retired'、retired_at 非 null；
+# DB：fragment retired、range_set.cas 不变、preview applied（resolved_at/decision_id
+# 非 null）、ReviewDecision 恰 1 行（decision=applied、preview_id 正确、
+# baseline_digest==sha256(规范化 baseline) 独立重算）
+def test_t41_apply_200(db, client):
+    token = _register(client, "f7_t41_grace")
+    pid = _create_project(client, token, "T41Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, rev["id"], 0, 10, "F41")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    cas = _range_sets(pid, rev["id"])[0].cas_revision
+
+    rp = _retire_preview(client, token, pid, fid)
+    assert rp.status_code == 200, rp.text
+    preview_id = rp.json()["preview_id"]
+
+    ra = _retire_apply(
+        client,
+        token,
+        pid,
+        fid,
+        preview_id,
+        expected_revision=1,
+        expected_range_set_revision=cas,
+    )
+    assert ra.status_code == 200, ra.text
+    body = ra.json()
+    assert body["object_ref"] == {"kind": "fragment", "id": fid, "revision": 1}
+    assert body["state"] == "retired"
+    assert body["retired_at"] is not None
+    assert body["revision_is_active"] is True
+    assert body["range"] == {"start": 0, "end": 10}
+    assert body["name"] == "F41"
+    assert body["summary"] is None
+    assert body["source_revision_id"] == rev["id"]
+    assert body["predecessor_ids"] == []
+
+    with Session() as s:
+        f = s.get(Fragment, fid)
+        assert f.state == "retired"
+        assert f.retired_at is not None
+        assert f.updated_at > f.created_at
+    # range_set 不加 1（附录 02 §3：F4–F7 不动 cas）
+    assert _range_sets(pid, rev["id"])[0].cas_revision == cas
+
+    pv = _preview_row(preview_id)
+    assert pv["state"] == "applied"
+    assert pv["resolved_at"] is not None
+    assert pv["decision_id"] is not None
+
+    with Session() as s:
+        decisions = (
+            s.execute(select(ReviewDecision).where(ReviewDecision.project_id == pid))
+            .scalars()
+            .all()
+        )
+    assert len(decisions) == 1
+    d = decisions[0]
+    assert d.decision == "applied"
+    assert d.preview_id == preview_id
+    assert d.id == pv["decision_id"]
+    assert d.owner_id == _user_id("f7_t41_grace")
+    assert json.loads(d.target_ref) == {"kind": "fragment", "id": fid, "revision": 1}
+    # baseline_digest = sha256(规范化 preview.baseline)（独立重算）
+    base = json.loads(_preview_row(preview_id)["baseline"])
+    expected_digest = hashlib.sha256(
+        json.dumps(base, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    assert d.baseline_digest == expected_digest
+
+
+# T42 baseline 失鲜：preview 后 F1 再建一片段（cas+1）→ apply →
+# 409 preview_stale：details.preview_id 正确、conflicts 恰含 range_set 项
+# {expected:<preview 时 cas>, actual:<+1>}；preview.state=='superseded'
+def test_t42_baseline_stale_409(db, client):
+    token = _register(client, "f7_t42_heidi")
+    pid = _create_project(client, token, "T42Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc1 = _create_fragment(client, token, pid, rev["id"], 0, 10, "F42a")
+    assert rc1.status_code == 201, rc1.text
+    fid = rc1.json()["object_ref"]["id"]
+    set_row = _range_sets(pid, rev["id"])[0]
+    cas0 = set_row.cas_revision
+    cas1 = cas0 + 1
+
+    rp = _retire_preview(client, token, pid, fid)
+    assert rp.status_code == 200, rp.text
+    preview_id = rp.json()["preview_id"]
+
+    rc2 = _create_fragment(client, token, pid, rev["id"], 10, 20, "F42b", expected=cas0)
+    assert rc2.status_code == 201, rc2.text
+    assert _range_sets(pid, rev["id"])[0].cas_revision == cas1
+
+    ra = _retire_apply(
+        client,
+        token,
+        pid,
+        fid,
+        preview_id,
+        expected_revision=1,
+        expected_range_set_revision=cas1,
+    )
+    assert ra.status_code == 409, ra.text
+    err = ra.json()["error"]
+    assert err["code"] == "preview_stale"
+    assert err["details"]["preview_id"] == preview_id
+    conf = err["details"]["conflicts"]
+    assert len(conf) == 1
+    assert conf[0] == {
+        "object": {"kind": "range_set", "id": set_row.id},
+        "expected": cas0,
+        "actual": cas1,
+    }
+    pv = _preview_row(preview_id)
+    assert pv["state"] == "superseded"
+    assert pv["resolved_at"] is not None
+
+
+# T43 已 applied preview 再 apply（新 command_id）→ 409 preview_stale
+# （actual=='applied'）；原 command_id 重放 → 200 原 body、零副作用
+# （retired_at 与 ReviewDecision 行数不变）
+def test_t43_applied_reapply_and_replay(db, client):
+    token = _register(client, "f7_t43_ivan")
+    pid = _create_project(client, token, "T43Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, rev["id"], 0, 10, "F43")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    cas = _range_sets(pid, rev["id"])[0].cas_revision
+
+    rp = _retire_preview(client, token, pid, fid)
+    assert rp.status_code == 200, rp.text
+    preview_id = rp.json()["preview_id"]
+
+    cmd_a = _cmd()
+    ra1 = _retire_apply(
+        client,
+        token,
+        pid,
+        fid,
+        preview_id,
+        command_id=cmd_a,
+        expected_revision=1,
+        expected_range_set_revision=cas,
+    )
+    assert ra1.status_code == 200, ra1.text
+    body1 = ra1.json()
+
+    # (a) 新 command_id 再 apply → 409 preview_stale（actual=='applied'）
+    ra2 = _retire_apply(
+        client,
+        token,
+        pid,
+        fid,
+        preview_id,
+        expected_revision=1,
+        expected_range_set_revision=cas,
+    )
+    assert ra2.status_code == 409, ra2.text
+    err = ra2.json()["error"]
+    assert err["code"] == "preview_stale"
+    assert err["details"]["preview_id"] == preview_id
+    assert err["details"]["conflicts"] == [
+        {
+            "object": {"kind": "preview", "id": preview_id},
+            "expected": "pending",
+            "actual": "applied",
+        }
+    ]
+
+    # (b) 原 command_id 重放 → 200 原 body
+    ra3 = _retire_apply(
+        client,
+        token,
+        pid,
+        fid,
+        preview_id,
+        command_id=cmd_a,
+        expected_revision=1,
+        expected_range_set_revision=cas,
+    )
+    assert ra3.status_code == 200, (ra3.status_code, ra3.text)
+    assert ra3.json() == body1
+
+    # 零副作用：retired_at 不变、ReviewDecision 行数仍 1
+    with Session() as s:
+        f = s.get(Fragment, fid)
+        assert f.retired_at == body1["retired_at"]
+        decisions = (
+            s.execute(select(ReviewDecision).where(ReviewDecision.project_id == pid))
+            .scalars()
+            .all()
+        )
+    assert len(decisions) == 1
+
+
+# T44 preview 命令自身重放（00 §3）：同 command_id+target → 200 原 body、
+# ChangePreview 恰 1 行（零副作用）；同 command_id 不同 target → 422 reused。
+def test_t44_preview_replay_idempotent(db, client):
+    token = _register(client, "f7_t44_finn")
+    pid = _create_project(client, token, "T44Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, rev["id"], 0, 10, "F44")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+
+    cid = _cmd()
+    r1 = _retire_preview(client, token, pid, fid, target=fid, command_id=cid)
+    assert r1.status_code == 200, r1.text
+    pv1 = _preview_row(r1.json()["preview_id"])
+
+    # 重放：同 command_id + 同 target → 200 原 body，预览行不变
+    r2 = _retire_preview(client, token, pid, fid, target=fid, command_id=cid)
+    assert r2.status_code == 200, r2.text  # 非 201
+    assert r2.json() == r1.json()
+    assert r2.json()["preview_id"] == r1.json()["preview_id"]
+    pv2 = _preview_row(r1.json()["preview_id"])
+    assert pv2["created_at"] == pv1["created_at"]
+    with Session() as s:
+        n = s.execute(
+            text("SELECT COUNT(*) FROM studio_change_previews")
+        ).scalar()
+    assert n == 1  # 零副作用：不产生第二行
+
+    # 同 command_id 不同 target：请求本身非法（target≠路径 fid），
+    # 第 3 步 mismatch 先于幂等步触发 → 422 mismatch（reused 分支经 HTTP
+    # 不可达，同 F1 non_integer 防御模式——SOURCE-03 裁定 2 同款）
+    r3 = _retire_preview(client, token, pid, fid, target="04" * 13, command_id=cid)
+    assert r3.status_code == 422, r3.text
+    assert r3.json()["error"]["details"]["violations"][0]["rule"] == "mismatch"
