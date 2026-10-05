@@ -175,3 +175,70 @@ def apply_retire_route(
     )
     result.pop("_replay", False)
     return JSONResponse(content=result, status_code=200)
+
+
+# ───────────────────── F8 片段边界变更（preview/apply，附录 02 §2 F8 + 00 §5） ─────────────────────
+
+
+class BoundaryPreviewBody(BaseModel):
+    target_fragment_id: str
+    new_range: FragmentRange
+    command_id: str
+
+
+class BoundaryApplyBody(BaseModel):
+    preview_id: str
+    command_id: str
+    expected_revision: int
+    expected_range_set_revision: int
+
+
+@router.post("/projects/{pid}/fragments/{fid}/boundary")
+def preview_boundary_route(
+    pid: str,
+    fid: str,
+    body: BoundaryPreviewBody,
+    db=Depends(_session),
+    user=Depends(require_user),
+):
+    """F8 预览片段边界变更：200 恰 4 字段 {preview_id, kind, baseline, impact}
+    （00 §5.1；kind=fragment_boundary；preview 是一次幂等写，记录 state=pending
+    不外露；range/重叠/版本非 active 均在 preview 阶段即校验——F8 行冻结）；
+    幂等重放命中 → 200（原 result_payload，零写零 commit）。"""
+    result = fragment_service.preview_fragment_boundary(
+        db,
+        user,
+        pid,
+        fid,
+        body.target_fragment_id,
+        {"start": body.new_range.start, "end": body.new_range.end},
+        body.command_id,
+    )
+    result.pop("_replay", False)
+    return JSONResponse(content=result, status_code=200)
+
+
+@router.post("/projects/{pid}/fragments/{fid}/boundary/apply")
+def apply_boundary_route(
+    pid: str,
+    fid: str,
+    body: BoundaryApplyBody,
+    db=Depends(_session),
+    user=Depends(require_user),
+):
+    """F8 应用片段边界变更：200（F3 形状 DTO：新 FragmentRevision
+    reason='boundary'、ID 不变、revision+1、range=new_range；range_set 是 CAS
+    写点，cas+1——附录 02 §3）；幂等重放命中 → 200（原 result_payload，
+    零写零 commit）。"""
+    result = fragment_service.apply_fragment_boundary(
+        db,
+        user,
+        pid,
+        fid,
+        body.preview_id,
+        body.command_id,
+        body.expected_revision,
+        body.expected_range_set_revision,
+    )
+    result.pop("_replay", False)
+    return JSONResponse(content=result, status_code=200)

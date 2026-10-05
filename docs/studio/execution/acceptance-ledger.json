@@ -1910,11 +1910,39 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、backend/studio/reviews/impact.py、tests/studio/test_fragment_changes.py",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/sources/{fragment_service,fragments_api}.py + backend/studio/reviews/impact.py + tests/studio/test_fragment_changes.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor(9a59fbd9)",
+          "date": "2026-10-04",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-04",
+        "contract_version": "2.8",
+        "tested_baseline": "8b3e73f + 4 文件（本卡提交）",
+        "scope": "fragment_boundary_command_f8 + impact 计算模块化（reviews/impact.py，F7–F10 预览共用）",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 302/302（11 新 T1–T11 + 291 既有零回归，含 F7 44 条零回归硬门槛）；代码审查：impact 三函数逐字迁入 impact.py（对外仅 compute_impact，无循环 import）；preview 八步冻结短路（幂等位置按裁定 1；range 五判定 + preview 阶段即查重叠，除本片段外非退役当前版本严格 < 相接合法）；apply=幂等先于状态检查→非 pending 409→CAS 先报→写事务首语句 no-op 抢锁→WAL 重读→baseline 失配全收集+superseded(独立提交)→409；执行 INSERT 新 revision(reason=boundary, predecessor=[], 先 flush)→UPDATE fragment→cas+1→ReviewDecision(先 INSERT)→preview→CommandRecord 单事务。",
+          "F8 冻结行为逐条：401×2；404 不泄漏(kind=fragment/preview)；mismatch 422；非 active 422；range 五判定 4 子用例（empty/out_of_bounds/proxy_split/blank，message 含长度）；preview 阶段重叠 409（conflicts 恰 1 按 id 排序点名首个）/相接 200；200 恰 4 字段+baseline 精确+TTL；apply 200（revision+1、range=new_range、reason=boundary、cas+1、digest 独立重算相等）；CAS 冲突无半次（superseded 且 revision/cas/current/决定全部零变化）；R11 旧引用逐字段不迁移；preview/apply 重放零副作用。"
+        ],
+        "contract_question_ruling": [
+          "确认1（T6 相接子例为派发笔误，执行器修正）：原规格\"第一个{0,10} preview {10,15} 与第二个{10,20}相接\"数学上 [10,15)∩[10,20)=[10,15) 实为重叠；执行器改为 preview 右侧片段 {10,20}→{10,15}（新范围与左侧 {0,10} 在 10 处相接，严格 < 无重叠→200），完整复用规格数字且与冻结重叠判定自洽——确认为派发笔误修正，判定逻辑未变。",
+          "确认2（F8 preview 幂等比对经 ChangePreview.payload 取 new_range）：冻结 200 体恰 4 字段、baseline 与 F7 同形均不含 new_range；首次 new_range 的唯一持久来源即 preview.payload（target_fragment_id+new_range）——从 payload 比对为\"与首次一致\"的正确执行，00 §3 语义不变。",
+          "确认3（F8 apply 幂等：ref.id==fid 且 ref.revision==expected_revision+1）：边界 apply 推进 revision（200 体 revision=current+1），F7 的 revision==expected 判定不适用；执行器改用\"重放同 expected 恒等\"（ref.revision==expected+1）——同一 00 §3 语义对推进型命令的自然泛化；preview 的 kind/target 已在前置步校验，足以区分跨命令复用。F9/F10 同型命令的派发规格将采用此泛化。"
+        ],
+        "evidence": [
+          "backend/studio/reviews/impact.py",
+          "backend/studio/sources/fragment_service.py",
+          "backend/studio/sources/fragments_api.py",
+          "tests/studio/test_fragment_changes.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-07",
