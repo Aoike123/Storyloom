@@ -1886,11 +1886,30 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "allowlist_scope": "backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、tests/studio/test_fragments.py",
       "attempts": [],
-      "acceptance": null
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-06",
+        "contract_version": "2.9",
+        "scope": "片段改名与退役命令全部 2 子卡（F4 就地改名 + F7 退役 preview/apply）",
+        "checks": [
+          "全部子卡 SOURCE-05-a（F4 改名，契约 2.6→2.7）与 SOURCE-05-b（F7 退役 preview/apply，契约 2.7→2.8）已于 2026-10-04 逐张独立验收（各自 acceptance 块）；父卡白名单 fragment_service.py/fragments_api.py/test_fragments.py 全程未越界。",
+          "家族级行为闭环：F4 就地改名（ID 不变、409 CAS、幂等重放）+ F7 退役两步（preview impact 三类清单 → apply CAS 先报 + superseded 语义；退役不删除任何产物，R11）；裁定 1（幂等先于状态检查）确立并被后续 F8/F9/F10 与 S4/S5 全部沿用。",
+          "2026-10-06 复核：SOURCE-05 裁定 1 遗留项已兑现——chore 53fea9c 将 test_fragments.py/test_fragment_changes.py 全部 7 处直改 active 前置替换为真实 S4/S5 激活调用（S4/S5 已随 SOURCE-09/10 放行），350/350 零回归。"
+        ],
+        "contract_question_ruling": [
+          "汇总子卡裁定：F4/F5 失败码笔误修正 422→409（05-a，契约 2.7）；F7 preview 失败码笔误修正 409→422 + 裁定 1 幂等位置冻结（05-b，契约 2.8）。均见子卡块与 decisions.md。"
+        ],
+        "evidence": [
+          "backend/studio/sources/fragment_service.py",
+          "backend/studio/sources/fragments_api.py",
+          "tests/studio/test_fragments.py",
+          "tests/studio/test_fragment_changes.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-06",
