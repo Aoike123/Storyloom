@@ -374,3 +374,36 @@ def apply_merge_route(
     )
     result.pop("_replay", False)
     return JSONResponse(content=result, status_code=200)
+
+
+# ───────────────────── F2/F3 片段纯读（附录 02 §2 F2/F3；SOURCE-03-a） ─────────────────────
+# 路由注册顺序：本组是 /fragments 命名空间下仅有的 GET；POST /fragments/merge
+# 等字面量路由方法不同不冲突；当前无其他字面量 GET 会被 /fragments/{fid} 吞掉。
+
+
+@router.get("/projects/{pid}/fragments")
+def list_fragments_route(
+    pid: str,
+    cursor: str | None = None,
+    state: str | None = None,
+    limit: int = 50,
+    db=Depends(_session),
+    user=Depends(require_user),
+):
+    """F2 片段列表：200 {items, next_cursor}（只列绑定项目当前 active 版本的
+    片段，state=有效状态；limit clamp 到 [1, 200]、cursor 格式与 state 合法值
+    校验在 service 内完成，逐字对齐 P2——行为冻结）；纯读，不接受 command_id、
+    不产生任何副作用。"""
+    return fragment_service.list_fragments(db, user, pid, cursor, state, limit)
+
+
+@router.get("/projects/{pid}/fragments/{fid}")
+def get_fragment_route(
+    pid: str,
+    fid: str,
+    db=Depends(_session),
+    user=Depends(require_user),
+):
+    """F3 读取片段详情：200 F3 行冻结 DTO（任何版本片段都可读——含绑定非
+    active 版本与已 retired）；纯读，不接受 command_id、不产生任何副作用。"""
+    return fragment_service.get_fragment(db, user, pid, fid)

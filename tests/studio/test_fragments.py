@@ -1516,3 +1516,447 @@ def test_t44_preview_replay_idempotent(db, client):
     r3 = _retire_preview(client, token, pid, fid, target="04" * 13, command_id=cid)
     assert r3.status_code == 422, r3.text
     assert r3.json()["error"]["details"]["violations"][0]["rule"] == "mismatch"
+
+
+# ───────────────────── F2/F3 片段纯读（T45–T55，附录 02 §2 F2/F3，SOURCE-03-a） ─────────────────────
+# F3 行冻结字段集（附录 02 §2 F3 行逐字清单；与 F6/F4/F7 成功体 DTO 同形）
+_F3_KEYS = {
+    "object_ref",
+    "name",
+    "summary",
+    "state",
+    "revision_is_active",
+    "range",
+    "source_revision_id",
+    "predecessor_ids",
+    "created_at",
+    "updated_at",
+    "retired_at",
+}
+
+
+def _get_fragment(client, token, pid, fid):
+    """F3 GET /projects/{pid}/fragments/{fid}。"""
+    return client.get(
+        f"/api/studio/projects/{pid}/fragments/{fid}", headers=_auth(token)
+    )
+
+
+def _list_fragments(client, token, pid, query=""):
+    """F2 GET /projects/{pid}/fragments（query 为带前导 ? 的查询串）。"""
+    return client.get(
+        f"/api/studio/projects/{pid}/fragments{query}", headers=_auth(token)
+    )
+
+
+# T45 无 token → 401（F2/F3 两路由各一）
+def test_t45_no_token_401(db, client):
+    pid = "01" * 13
+    fid = "03" * 13
+    r1 = client.get(f"/api/studio/projects/{pid}/fragments")
+    assert r1.status_code == 401, r1.text
+    assert r1.json()["error"]["code"] == "unauthenticated"
+    r2 = client.get(f"/api/studio/projects/{pid}/fragments/{fid}")
+    assert r2.status_code == 401, r2.text
+    assert r2.json()["error"]["code"] == "unauthenticated"
+
+
+# T46 项目不存在（26 字符）/跨属主 → 两路由均 404 kind=project（同形状不泄漏）
+def test_t46_project_404_same_shape(db, client):
+    ta = _register(client, "f23_t46_alice")
+    tb = _register(client, "f23_t46_bob")
+    pb = _create_project(client, tb, "T46ProjB")
+    ghost_pid = "01" * 13
+    ghost_fid = "03" * 13
+    for pid in (ghost_pid, pb):  # 不存在 / 跨属主，两路同形状
+        r = _list_fragments(client, ta, pid)
+        assert r.status_code == 404, r.text
+        assert r.json()["error"]["code"] == "not_found"
+        assert r.json()["error"]["details"] == {"kind": "project", "id": pid}
+        r = _get_fragment(client, ta, pid, ghost_fid)
+        assert r.status_code == 404, r.text
+        assert r.json()["error"]["code"] == "not_found"
+        assert r.json()["error"]["details"] == {"kind": "project", "id": pid}
+
+
+# T47 F3 有效读 → 200：字段集精确 == F3 行冻结集（新建片段 revision=1、
+# predecessor_ids=[]、range 精确、retired_at=None）；纯读零副作用
+def test_t47_get_200_exact_fields(db, client):
+    token = _register(client, "f23_t47_carol")
+    pid = _create_project(client, token, "T47Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, rev["id"], 0, 10, "F47")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+
+    cmd_before = _count("studio_command_records")
+    r = _get_fragment(client, token, pid, fid)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert set(body.keys()) == _F3_KEYS
+    assert body["object_ref"] == {"kind": "fragment", "id": fid, "revision": 1}
+    assert body["name"] == "F47"
+    assert body["summary"] is None
+    assert body["state"] == "candidate"
+    assert body["revision_is_active"] is True
+    assert body["range"] == {"start": 0, "end": 10}
+    assert body["source_revision_id"] == rev["id"]
+    assert body["predecessor_ids"] == []
+    assert body["retired_at"] is None
+    assert isinstance(body["created_at"], (int, float))
+    assert isinstance(body["updated_at"], (int, float))
+    assert body["created_at"] == body["updated_at"]  # 新建未改
+    # 纯读：零副作用（command_records 行数不变）
+    assert _count("studio_command_records") == cmd_before
+
+
+# T48 F3 fid 不存在（26 字符字面量）/跨项目 → 404 kind=fragment（两路同形状不泄漏）
+def test_t48_get_unknown_and_cross_project_404(db, client):
+    ta = _register(client, "f23_t48_dave")
+    tc = _register(client, "f23_t48_erin")
+    pa = _create_project(client, ta, "T48A")
+    pc = _create_project(client, tc, "T48C")
+    _import_active(client, ta, pa, TEXT_A)
+    revc = _import_active(client, tc, pc, TEXT_A)
+    rc = _create_fragment(client, tc, pc, revc["id"], 0, 5, "F48")
+    assert rc.status_code == 201, rc.text
+    fid_c = rc.json()["object_ref"]["id"]
+
+    ghost = "03" * 13  # 26 字符字面量
+    r = _get_fragment(client, ta, pa, ghost)
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["code"] == "not_found"
+    assert r.json()["error"]["details"] == {"kind": "fragment", "id": ghost}
+    # 跨项目：A 项目路径下问 C 的片段 → 同形状 404（不泄漏存在性）
+    r = _get_fragment(client, ta, pa, fid_c)
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["code"] == "not_found"
+    assert r.json()["error"]["details"] == {"kind": "fragment", "id": fid_c}
+
+
+# T49 F3 派生状态（附录 02 §1 读时推导，不落库）：真实 S4/S5 激活 v2 后读
+# v1 片段 → pending_review、revision_is_active=false、持久行不变；回切 v1 →
+# 恢复 candidate；F7 退役 → retired、retired_at 非空；再切走 retired 恒 retired
+def test_t49_derived_state_pending_review_and_retired(db, client):
+    token = _register(client, "f23_t49_frank")
+    pid = _create_project(client, token, "T49Proj")
+    v1 = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, v1["id"], 0, 10, "F49")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    time.sleep(0.002)  # 保证 ULID 严格递增
+    r2 = _import(client, token, pid, "second version content")
+    assert r2.status_code == 201, r2.text
+    v2 = r2.json()
+
+    # (a) 激活 v2 → rev1 片段派生 pending_review（持久行不变）
+    _activate(client, token, pid, v2["id"], expected_active_revision_id=v1["id"])
+    r = _get_fragment(client, token, pid, fid)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["state"] == "pending_review"
+    assert body["revision_is_active"] is False
+    assert body["source_revision_id"] == v1["id"]
+    with Session() as s:
+        f = s.get(Fragment, fid)
+        assert f.state == "candidate"  # 持久行不变（pending_review 不落库）
+
+    # (b) 回切 v1 → 恢复 candidate（派生标记自动消失，无回写）
+    _activate(client, token, pid, v1["id"], expected_active_revision_id=v2["id"])
+    r = _get_fragment(client, token, pid, fid)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["state"] == "candidate"
+    assert body["revision_is_active"] is True
+
+    # (c) F7 退役（v1 active）→ state='retired'、retired_at 非空
+    cas = _range_sets(pid, v1["id"])[0].cas_revision
+    rp = _retire_preview(client, token, pid, fid)
+    assert rp.status_code == 200, rp.text
+    ra = _retire_apply(
+        client, token, pid, fid, rp.json()["preview_id"],
+        expected_revision=1, expected_range_set_revision=cas,
+    )
+    assert ra.status_code == 200, ra.text
+    r = _get_fragment(client, token, pid, fid)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["state"] == "retired"
+    assert body["retired_at"] is not None
+    assert body["revision_is_active"] is True
+
+    # (d) 再切 v2：retired 恒 'retired'（不派生 pending_review）
+    _activate(client, token, pid, v2["id"], expected_active_revision_id=v1["id"])
+    r = _get_fragment(client, token, pid, fid)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["state"] == "retired"
+    assert body["revision_is_active"] is False
+    assert body["retired_at"] is not None
+
+
+# T50 F9 split 后继片段 F3 读：左/右 predecessor_ids == [原 id] 精确；
+# 原片段（已退役）仍可读 state='retired'
+def test_t50_split_successor_predecessor_ids(db, client):
+    token = _register(client, "f23_t50_grace")
+    pid = _create_project(client, token, "T50Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, rev["id"], 0, 10, "F50")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    cas = _range_sets(pid, rev["id"])[0].cas_revision
+
+    # F9 拆分（preview → apply，直连 HTTP，同 test_fragment_changes helper 形状）
+    rp = client.post(
+        f"/api/studio/projects/{pid}/fragments/{fid}/split",
+        json={
+            "target_fragment_id": fid,
+            "split_point": 4,
+            "left_name": None,
+            "right_name": None,
+            "command_id": _cmd(),
+        },
+        headers=_auth(token),
+    )
+    assert rp.status_code == 200, rp.text
+    ra = client.post(
+        f"/api/studio/projects/{pid}/fragments/{fid}/split/apply",
+        json={
+            "preview_id": rp.json()["preview_id"],
+            "command_id": _cmd(),
+            "expected_revision": 1,
+            "expected_range_set_revision": cas,
+        },
+        headers=_auth(token),
+    )
+    assert ra.status_code == 200, ra.text
+    left_id = ra.json()["left"]["object_ref"]["id"]
+    right_id = ra.json()["right"]["object_ref"]["id"]
+
+    # 左片段：predecessor_ids == [原 id]，range/revision/字段集精确
+    rl = _get_fragment(client, token, pid, left_id)
+    assert rl.status_code == 200, rl.text
+    lb = rl.json()
+    assert set(lb.keys()) == _F3_KEYS
+    assert lb["object_ref"] == {"kind": "fragment", "id": left_id, "revision": 1}
+    assert lb["predecessor_ids"] == [fid]
+    assert lb["range"] == {"start": 0, "end": 4}
+    assert lb["state"] == "candidate"
+    assert lb["revision_is_active"] is True
+    # 右片段同 predecessor
+    rr = _get_fragment(client, token, pid, right_id)
+    assert rr.status_code == 200, rr.text
+    assert rr.json()["predecessor_ids"] == [fid]
+    assert rr.json()["range"] == {"start": 4, "end": 10}
+    # 原片段（已退役）仍可读：state='retired'（任何版本片段都可读）
+    ro = _get_fragment(client, token, pid, fid)
+    assert ro.status_code == 200, ro.text
+    assert ro.json()["state"] == "retired"
+    assert ro.json()["retired_at"] is not None
+
+
+# T51 F2 只列绑定当前 active 版本的片段：rev1 两片 + rev2 一片；active=rev1
+# 时 items 恰 2、切 rev2 后恰 1、回切 rev1 恢复恰 2；items 元素为完整 DTO
+def test_t51_list_only_active_revision(db, client):
+    token = _register(client, "f23_t51_heidi")
+    pid = _create_project(client, token, "T51Proj")
+    v1 = _import_active(client, token, pid, TEXT_A)
+    f1 = _create_fragment(client, token, pid, v1["id"], 0, 10, "T51a")
+    assert f1.status_code == 201, f1.text
+    fid1 = f1.json()["object_ref"]["id"]
+    f2 = _create_fragment(client, token, pid, v1["id"], 10, 20, "T51b", expected=2)
+    assert f2.status_code == 201, f2.text
+    fid2 = f2.json()["object_ref"]["id"]
+
+    # active=v1：恰 2 条，元素为 F3 形状完整 DTO（revision_is_active=True）
+    r = _list_fragments(client, token, pid)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["next_cursor"] is None
+    assert {it["object_ref"]["id"] for it in body["items"]} == {fid1, fid2}
+    for it in body["items"]:
+        assert set(it.keys()) == _F3_KEYS
+        assert it["revision_is_active"] is True
+        assert it["source_revision_id"] == v1["id"]
+
+    # 导入 v2 并真实激活；v2 下建 1 片
+    time.sleep(0.002)  # 保证 ULID 严格递增
+    r2 = _import(client, token, pid, "second version content!")
+    assert r2.status_code == 201, r2.text
+    v2 = r2.json()
+    _activate(client, token, pid, v2["id"], expected_active_revision_id=v1["id"])
+    f3 = _create_fragment(client, token, pid, v2["id"], 0, 5, "T51c")
+    assert f3.status_code == 201, f3.text
+    fid3 = f3.json()["object_ref"]["id"]
+
+    # active=v2：恰 1 条（rev1 两片不出现，不泄漏）
+    r = _list_fragments(client, token, pid)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert [it["object_ref"]["id"] for it in body["items"]] == [fid3]
+    assert body["next_cursor"] is None
+
+    # 回切 v1：恰 2 条（v2 片不出现）
+    _activate(client, token, pid, v1["id"], expected_active_revision_id=v2["id"])
+    r = _list_fragments(client, token, pid)
+    assert r.status_code == 200, r.text
+    assert {it["object_ref"]["id"] for it in r.json()["items"]} == {fid1, fid2}
+
+
+# T52 空列表 200 与项目 404 严格分开：项目存在无 active 修订 → 200 空列表；
+# 项目存在有 active 无片段 → 200 空列表（R12：空列表 ≠ 读失败）；
+# 项目不存在 → 404 kind=project
+def test_t52_empty_list_200_vs_project_404(db, client):
+    token = _register(client, "f23_t52_ivan")
+    # (a) 项目存在、无 active 修订（未导入正文）→ 200 空列表
+    pid_empty = _create_project(client, token, "T52Empty")
+    r = _list_fragments(client, token, pid_empty)
+    assert r.status_code == 200, r.text
+    assert r.json() == {"items": [], "next_cursor": None}
+
+    # (b) 项目存在、有 active 修订但无片段 → 200 空列表
+    pid_active = _create_project(client, token, "T52Active")
+    _import_active(client, token, pid_active, TEXT_A)
+    r = _list_fragments(client, token, pid_active)
+    assert r.status_code == 200, r.text
+    assert r.json() == {"items": [], "next_cursor": None}
+
+    # (c) 项目不存在 → 404 kind=project（≠ 空列表）
+    ghost = "01" * 13
+    r = _list_fragments(client, token, ghost)
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["code"] == "not_found"
+    assert r.json()["error"]["details"] == {"kind": "project", "id": ghost}
+
+
+# T53 F2 ?state= 过滤：candidate/confirmed/retired 各精确；派生值
+# pending_review 合法但恒空集（只列 active 版本）→ 200 空列表；
+# 非法值 → 422 validation_failed(field=state, rule=invalid)，message 列合法值
+def test_t53_state_filter_and_invalid_422(db, client):
+    token = _register(client, "f23_t53_judy")
+    pid = _create_project(client, token, "T53Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    f1 = _create_fragment(client, token, pid, rev["id"], 0, 5, "T53a")
+    assert f1.status_code == 201, f1.text
+    fid1 = f1.json()["object_ref"]["id"]
+    f2 = _create_fragment(client, token, pid, rev["id"], 5, 10, "T53b", expected=2)
+    assert f2.status_code == 201, f2.text
+    fid2 = f2.json()["object_ref"]["id"]
+    f3 = _create_fragment(client, token, pid, rev["id"], 10, 15, "T53c", expected=3)
+    assert f3.status_code == 201, f3.text
+    fid3 = f3.json()["object_ref"]["id"]
+
+    # F1 确认、F2 退役（F7 preview/apply；退役不动 cas）
+    r = _confirm(client, token, pid, fid1, 1)
+    assert r.status_code == 200, r.text
+    cas = _range_sets(pid, rev["id"])[0].cas_revision
+    rp = _retire_preview(client, token, pid, fid2)
+    assert rp.status_code == 200, rp.text
+    ra = _retire_apply(
+        client, token, pid, fid2, rp.json()["preview_id"],
+        expected_revision=1, expected_range_set_revision=cas,
+    )
+    assert ra.status_code == 200, ra.text
+
+    # 无过滤 → 3 条全列（含 retired）
+    r = _list_fragments(client, token, pid)
+    assert r.status_code == 200, r.text
+    assert {it["object_ref"]["id"] for it in r.json()["items"]} == {fid1, fid2, fid3}
+
+    # state 过滤各精确
+    r = _list_fragments(client, token, pid, "?state=candidate")
+    assert r.status_code == 200, r.text
+    items = r.json()["items"]
+    assert [it["object_ref"]["id"] for it in items] == [fid3]
+    assert items[0]["state"] == "candidate"
+    r = _list_fragments(client, token, pid, "?state=confirmed")
+    assert r.status_code == 200, r.text
+    items = r.json()["items"]
+    assert [it["object_ref"]["id"] for it in items] == [fid1]
+    assert items[0]["state"] == "confirmed"
+    r = _list_fragments(client, token, pid, "?state=retired")
+    assert r.status_code == 200, r.text
+    items = r.json()["items"]
+    assert [it["object_ref"]["id"] for it in items] == [fid2]
+    assert items[0]["state"] == "retired"
+    assert items[0]["retired_at"] is not None
+
+    # 派生值 pending_review：合法过滤值，active 版本内恒空集 → 200 空列表
+    r = _list_fragments(client, token, pid, "?state=pending_review")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"items": [], "next_cursor": None}
+
+    # 非法值 → 422 validation_failed(field=state, rule=invalid)，message 列合法值
+    r = _list_fragments(client, token, pid, "?state=bogus")
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "validation_failed"
+    v = err["details"]["violations"][0]
+    assert v["field"] == "state"
+    assert v["rule"] == "invalid"
+    assert v["message"] == "state 必须是 candidate/confirmed/retired/pending_review 之一。"
+
+
+# T54 F2 keyset 分页（逐字对齐 P2）：默认序 id DESC（新→旧）；limit=1 两页 +
+# next_cursor 续读；limit clamp（0→1、500→200）不报 422
+def test_t54_pagination_keyset_desc(db, client):
+    token = _register(client, "f23_t54_karen")
+    pid = _create_project(client, token, "T54Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    f1 = _create_fragment(client, token, pid, rev["id"], 0, 5, "T54a")
+    assert f1.status_code == 201, f1.text
+    fid1 = f1.json()["object_ref"]["id"]
+    time.sleep(0.002)  # 保证 ULID 严格递增
+    f2 = _create_fragment(client, token, pid, rev["id"], 5, 10, "T54b", expected=2)
+    assert f2.status_code == 201, f2.text
+    fid2 = f2.json()["object_ref"]["id"]
+    assert fid2 > fid1, "ULID 应严格递增"
+
+    # 默认序 id DESC（新→旧），无溢出 → next_cursor 为 null
+    r = _list_fragments(client, token, pid)
+    assert r.status_code == 200, r.text
+    assert [it["object_ref"]["id"] for it in r.json()["items"]] == [fid2, fid1]
+    assert r.json()["next_cursor"] is None
+
+    # 第一页 limit=1 → 最新 1 条，next_cursor = 该条 id
+    r1 = _list_fragments(client, token, pid, "?limit=1")
+    assert r1.status_code == 200, r1.text
+    b1 = r1.json()
+    assert [it["object_ref"]["id"] for it in b1["items"]] == [fid2]
+    assert b1["next_cursor"] == fid2
+
+    # 第二页 cursor 续读 → 最旧 1 条，next_cursor = null
+    r2 = _list_fragments(client, token, pid, f"?cursor={fid2}&limit=1")
+    assert r2.status_code == 200, r2.text
+    b2 = r2.json()
+    assert [it["object_ref"]["id"] for it in b2["items"]] == [fid1]
+    assert b2["next_cursor"] is None
+
+    # limit clamp（P2 同款）：0→1、500→200，不报 422
+    r0 = _list_fragments(client, token, pid, "?limit=0")
+    assert r0.status_code == 200, r0.text
+    assert len(r0.json()["items"]) == 1
+    r500 = _list_fragments(client, token, pid, "?limit=500")
+    assert r500.status_code == 200, r500.text
+    assert len(r500.json()["items"]) == 2
+
+
+# T55 F2 cursor 格式非法（非 26 字符 Crockford 小写；含空串）→
+# 422 validation_failed(field=cursor, rule=format)
+def test_t55_cursor_format_422(db, client):
+    token = _register(client, "f23_t55_laura")
+    pid = _create_project(client, token, "T55Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    f1 = _create_fragment(client, token, pid, rev["id"], 0, 5, "T55a")
+    assert f1.status_code == 201, f1.text
+    r = _list_fragments(client, token, pid, "?cursor=xyz")
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "validation_failed"
+    v0 = err["details"]["violations"][0]
+    assert v0["field"] == "cursor" and v0["rule"] == "format"
+    assert v0["message"] == "cursor 必须是 26 字符 ULID。"
+    # 空串 cursor 同样 422
+    r0 = _list_fragments(client, token, pid, "?cursor=")
+    assert r0.status_code == 422, r0.text
+    assert r0.json()["error"]["details"]["violations"][0]["rule"] == "format"

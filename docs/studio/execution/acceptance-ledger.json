@@ -1721,12 +1721,39 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "F2 列表只含 active 版本片段（有效状态）+ F3 详情读时派生 state/revision_is_active。",
       "allowlist_scope": "backend/studio/sources/{fragment_service,fragments_api}.py + tests/studio/test_fragments.py（追加）",
-      "attempts": [],
-      "acceptance": null
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor(948a6ca1)",
+          "date": "2026-10-06",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-06",
+        "contract_version": "2.9",
+        "tested_baseline": "42c1759 + 3 文件追加（本卡提交）",
+        "scope": "fragment_reads_f2_f3（计划缺口补登）",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 361/361（11 新 T45–T55 + 350 既有零回归，含 F7 44 条零回归硬门槛）；白名单外零改动（恰 3 文件纯追加）；代码审查：_fragment_dto 派生逻辑逐条对附录 02 §1（retired 恒 retired；active→持久 state；非 active candidate/confirmed→pending_review；revision_is_active 与绑定比对）；get_fragment/list_fragments 纯读零写零 commit；F2 只列绑定 active 版本片段；keyset 分页逐字对齐 P2（cursor 26 字符 format 422、limit clamp [1,200]、limit+1 溢出判 next_cursor、id DESC）。",
+          "F2/F3 冻结行为逐条：401×2；项目/片段 404 不泄漏两路同形状；F3 任何版本片段可读（含非 active/retired）、DTO 11 键全精确（predecessor_ids 自当前 revision 行 JSON 解析）；派生状态：真实 S4/S5 激活后 rev1 片段 pending_review+revision_is_active=false+持久行不变、回切恢复 candidate、retired 恒 retired、split 后继 predecessor_ids==[原 id]；F2 active 版本切换恰 2/1/2、无 active 空列表 200（≠读失败）、state 过滤 candidate/confirmed/retired 精确+非法值 422 invalid、分页两页续读+DESC 序+cursor 格式 422；空列表与 404 严格分开。"
+        ],
+        "contract_question_ruling": [
+          "确认1（派发规格\"恰 10 字段\"计数笔误）：枚举实列 11 键，与附录 02 §2 F3 行清单及既有 F4/F6/F7 成功体 DTO 同形——以 11 键为准，笔误不改正文（派发规格非契约文档），无需改码、不升契约版本。",
+          "确认2（F2 参数校验顺序）：项目 404 → state invalid 422 → limit clamp → cursor format 422 → 无 active 空列表；非法参数即使结果恒空也先 422，与 P2 空账号下 cursor=xyz 仍 422 的既有行为一致。",
+          "确认3（F2 排序 id DESC）：附录 F2 行未定方向，从 P2 裁定的域倒序惯例（新→旧；与 RV4/F12 历史倒序同族）。"
+        ],
+        "evidence": [
+          "backend/studio/sources/fragment_service.py",
+          "backend/studio/sources/fragments_api.py",
+          "tests/studio/test_fragments.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-04",

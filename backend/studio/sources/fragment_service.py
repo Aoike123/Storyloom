@@ -14,6 +14,7 @@ F7 退役 → F8 边界 → F9 拆分 → F10 合并）。
 """
 import hashlib
 import json
+import re
 import time
 
 from sqlalchemy import select, update
@@ -41,6 +42,8 @@ __all__ = [
     "apply_fragment_split",
     "preview_fragment_merge",
     "apply_fragment_merge",
+    "get_fragment",
+    "list_fragments",
 ]
 
 # F1 写事务内的 CAS 冲突 message（面向用户，给出定位信息）
@@ -2963,3 +2966,148 @@ def apply_fragment_merge(
             pass
         raise
     return body
+
+
+# ───────────────────── F2/F3 片段纯读（附录 02 §2 F2/F3；SOURCE-03-a） ─────────────────────
+
+# cursor 格式（附录 01 §2 P2 裁定，逐字对齐 projects/service.py list_projects）：
+# 必须是 26 字符 Crockford base32 小写
+_CURSOR_RE = re.compile(r"^[0-9a-z]{26}$")
+
+# F2 ?state= 合法值：持久三态 + 派生值 pending_review（附录 02 §1；
+# pending_review 不落库，只列 active 版本时该过滤恒为空集）
+_FRAGMENT_STATES = ("candidate", "confirmed", "retired", "pending_review")
+
+
+def _fragment_dto(project, frag, rv) -> dict:
+    """片段 DTO（附录 02 §2 F3 行冻结字段形状；F2 列表项与 F3 详情共用）。
+
+    state = 有效状态（读时推导，不落库，附录 02 §1）：retired 恒 'retired'；
+    绑定版本 == 项目 active → 持久 state；否则持久 state ∈ (candidate,
+    confirmed) → 'pending_review'。revision_is_active 一并回。
+    """
+    revision_is_active = frag.source_revision_id == project.active_source_revision_id
+    if frag.state == "retired":
+        state = "retired"
+    elif revision_is_active:
+        state = frag.state
+    else:
+        state = "pending_review"
+    return {
+        "object_ref": {"kind": "fragment", "id": frag.id, "revision": rv.revision},
+        "name": frag.name,
+        "summary": frag.summary,
+        "state": state,
+        "revision_is_active": revision_is_active,
+        "range": {"start": rv.range_start, "end": rv.range_end},
+        "source_revision_id": frag.source_revision_id,
+        "predecessor_ids": json.loads(rv.predecessor_fragment_ids or "[]"),
+        "created_at": frag.created_at,
+        "updated_at": frag.updated_at,
+        "retired_at": frag.retired_at,
+    }
+
+
+def get_fragment(session, user, pid, fid) -> dict:
+    """F3 读取片段详情（附录 02 §2 F3；纯读：不写任何表、不 commit、无 command_id）。
+
+    校验顺序（冻结，按序短路）：
+    1. 项目不存在/非属主 → 404 not_found(kind=project)（不泄漏存在性，
+       读写统一 404，SOURCE-01 验收裁定）；
+    2. 片段不存在或不属本项目 → 一律 404 not_found(kind=fragment)（不泄漏，
+       两路同形状）。
+
+    任何版本片段都可读（含绑定非 active 版本与已 retired）；返回
+    _fragment_dto 的 F3 行冻结 DTO（state=有效状态）。
+    """
+    # 1) 项目（属主校验，404 不泄漏存在性）
+    p = session.scalar(select(StudioProject).where(StudioProject.id == pid))
+    if p is None or p.owner_id != user.id:
+        raise StudioAPIError.not_found("project", pid)
+
+    # 2) 片段：不存在或不属本项目 → 一律 404（不泄漏存在性）
+    frag = session.scalar(
+        select(Fragment).where(Fragment.id == fid, Fragment.project_id == pid)
+    )
+    if frag is None:
+        raise StudioAPIError.not_found("fragment", fid)
+
+    rv = session.get(FragmentRevision, frag.current_revision_id)
+    if rv is None:  # 理论上不可达（current_revision_id NOT NULL FK）
+        raise StudioAPIError.internal()
+    return _fragment_dto(p, frag, rv)
+
+
+def list_fragments(session, user, pid, cursor: str | None, state: str | None, limit: int) -> dict:
+    """F2 片段列表（附录 02 §2 F2，附录 00 §6 查询 DTO；纯读：不写任何表、
+    不 commit、无 command_id）。
+
+    校验顺序（冻结，按序短路）：
+    1. 项目不存在/非属主 → 404 not_found(kind=project)（不泄漏）；
+    2. ?state= 非法值 → 422 validation_failed(field=state, rule=invalid，
+       message 列合法值）；合法值含派生 pending_review（只列 active 版本时
+       派生 state 恒等于持久 state，故该过滤恒为空集，返回 200 空列表）；
+    3. keyset 参数（逐字对齐 P2 list_projects）：limit 缺省 50，clamp 到
+       [1, 200]，越界不报 422；cursor 非 ^[0-9a-z]{26}$ → 422
+       validation_failed(field=cursor, rule=format)；
+    4. 只列绑定项目当前 active 版本的片段；无 active →
+       {"items": [], "next_cursor": None}（空列表 ≠ 读失败，R12）。
+
+    查询：id DESC（新→旧；P2 裁定的域倒序惯例，附录未定方向），取 limit+1
+    判溢出，next_cursor = 溢出时本页末项 id 否则 None；items 元素 =
+    _fragment_dto 的完整 DTO。
+    """
+    # 1) 项目（属主校验，404 不泄漏存在性）
+    p = session.scalar(select(StudioProject).where(StudioProject.id == pid))
+    if p is None or p.owner_id != user.id:
+        raise StudioAPIError.not_found("project", pid)
+
+    # 2) state 过滤值（合法值含派生 pending_review）
+    if state is not None and state not in _FRAGMENT_STATES:
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "state",
+                    "rule": "invalid",
+                    "message": "state 必须是 candidate/confirmed/retired/pending_review 之一。",
+                }
+            ]
+        )
+
+    # 3) keyset 参数（逐字对齐 P2 list_projects）
+    limit = max(1, min(int(limit), 200))
+    if cursor is not None and not _CURSOR_RE.match(cursor):
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "cursor",
+                    "rule": "format",
+                    "message": "cursor 必须是 26 字符 ULID。",
+                }
+            ]
+        )
+
+    # 4) 只列绑定当前 active 版本的片段；无 active → 空列表（≠读失败）
+    if p.active_source_revision_id is None:
+        return {"items": [], "next_cursor": None}
+    stmt = select(Fragment).where(
+        Fragment.project_id == pid,
+        Fragment.source_revision_id == p.active_source_revision_id,
+    )
+    if state is not None:
+        stmt = stmt.where(Fragment.state == state)
+    if cursor is not None:
+        stmt = stmt.where(Fragment.id < cursor)
+    rows = session.scalars(
+        stmt.order_by(Fragment.id.desc()).limit(limit + 1)
+    ).all()
+    items = []
+    for frag in rows[:limit]:
+        rv = session.get(FragmentRevision, frag.current_revision_id)
+        if rv is None:  # 理论上不可达（current_revision_id NOT NULL FK）
+            raise StudioAPIError.internal()
+        items.append(_fragment_dto(p, frag, rv))
+    next_cursor = (
+        items[-1]["object_ref"]["id"] if len(rows) > limit and items else None
+    )
+    return {"items": items, "next_cursor": next_cursor}
