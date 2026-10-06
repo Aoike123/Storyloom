@@ -2008,11 +2008,39 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、tests/studio/test_fragment_changes.py",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/sources/{fragment_service,fragments_api}.py + tests/studio/test_fragment_changes.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor(948a6ca1)",
+          "date": "2026-10-06",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-06",
+        "contract_version": "2.8",
+        "tested_baseline": "a51df5a + 3 文件（本卡提交）",
+        "scope": "fragment_merge_command_f10",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 322/322（10 新 T22–T31 + 312 既有零回归，含 F7 44 条零回归硬门槛）；白名单外零改动（git status 恰 3 文件）；代码审查：preview 11 步冻结短路（形状 cardinality/duplicate → 404 不泄漏 → 非 active/已 retired a→b 序 → 幂等（裁定 1 位置，经 ChangePreview.payload 请求序精确比对 [a,b]≠[b,a]）→ 命名派生校验 → 相接 not_contiguous → 重叠 range_overlap 409（除 a,b 外非退役当前版本严格 <））；apply=kind mismatch 422 → 幂等（双原片变体）先于状态检查 → 非 pending 409（惰性 expired 独立提交）→ CAS 先报 a→b→range_set → 写事务双行字典序 no-op 抢锁 → WAL 重读 → baseline 失配全收集+superseded(独立提交)→409；执行写序 UPDATE a/b retired → INSERT merged revision(flush, reason=merge, predecessor=[a,b] 请求序) → merged fragment → cas+1 → ReviewDecision(flush, target_ref=merged object_ref) → preview applied → CommandRecord 单事务。",
+          "F10 冻结行为逐条：401×2；404 不泄漏(kind=fragment/preview)；cardinality/duplicate 422；非 active/已 retired 422；not_contiguous 422（message 按请求序含两范围数值，双向均验）；命名 trim/缺省派生 \"左＋右\"(U+FF0B)/max_length(含 122)/required；preview 200 恰 4 字段+baseline fragment_a/fragment_b/range_set 精确+payload 存请求序+几何 left/right+派生名；apply 200 恰 2 字段（merged 新 ID revision=1 reason=merge range [左start,右end)、predecessors 请求序各 state=retired 不新建 revision、cas+1、digest 独立重算相等）；[b,a] 请求序子例 merged range/派生名不变、predecessors 保持请求序；CAS 冲突无半次（superseded 且 a/b/cas/决定全部零变化）；R11 旧引用逐字段不迁移（SourceRelation 仍指 a+rev1、job payload 不变），impact 双 fid 并集去重各恰 1；preview/apply 重放零副作用。",
+          "已知不可达分支说明：preview 第 10 步重叠校验在当前不变量下不可达（相接两片并集若有第三片严格重叠，则该片早已与 a/b 重叠而无法经 F1/F8/F9 落库）——按 F10 行\"合并范围再走重叠校验\"作为纵深防御实现，形状逐字同 F8 preview；T29 覆盖相接合法的非重叠路径。"
+        ],
+        "contract_question_ruling": [
+          "确认1（F10 行未冻结项的派发冻结）：merged_name 缺省派生 \"{左name}＋{右name}\"（左/右按当前 revision range_start 几何排序，连接符全角 U+FF0B），strip 后非空/≤120 校验同 F9；not_contiguous 的 blocked_by 冻结为几何右片段 ObjectRef（00 §4 要求 ObjectRef 形状），message 按请求序报告两片范围数值；fragment_ids 形状失败码 422 validation_failed(rule=cardinality/duplicate)。附录行为不变，不升契约版本。",
+          "确认2（F10 apply 幂等：SOURCE-07 确认 2 的双原片变体）：合并退役 a/b 但不推进其 revision（200 体 predecessors 各 revision==current），确认 3 的 expected+1 推进型判定不适用；采用 predecessors[0/1] 逐一比对（id==a/b 且 revision==expected_revision_a/b）+ merged 行 DB 存在校验——merged 新 ID 行存在即\"与首次一致\"的完备证据。ReviewDecision.target_ref 取 merged object_ref（决定产物；F8/F9 的单原片引用不适用于双原片）。",
+          "确认3（F10 impact 双 fid 并集）：compute_impact 签名单 fid，F10 目标为两片——派发冻结 _merge_impacts 并集 helper（置 fragment_service.py，impact.py 不在本卡白名单）：三键各自合并、按 object_ref (kind,id) 去重（保留先见条目）、按 id 排序，确定性不变。"
+        ],
+        "evidence": [
+          "backend/studio/sources/fragment_service.py",
+          "backend/studio/sources/fragments_api.py",
+          "tests/studio/test_fragment_changes.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-09",

@@ -3,8 +3,8 @@
 /api/studio/projects/{pid}/fragments/{fid}/boundary/apply 行为验证。
 
 本文件覆盖 F8–F10（边界/拆分/合并）preview/apply 命令族；SOURCE-06 实现并
-验收 F8 边界，SOURCE-07 实现并验收 F9 拆分，F10 合并在后续子卡填充（复用同一
-fixture/helper 模式）。
+验收 F8 边界，SOURCE-07 实现并验收 F9 拆分，SOURCE-08 实现并验收 F10 合并
+（复用同一 fixture/helper 模式）。
 
 fixture/helper 从 tests/studio/test_fragments.py 复制模式（db fixture、
 _register/_auth/_cmd/_create_project/_import/_import_active/_create_fragment/
@@ -1404,5 +1404,678 @@ def test_t21_replay_zero_side_effects(db, client):
     assert len(_fragment_revisions(left_id)) == 1
     assert len(_fragment_revisions(right_id)) == 1
     assert len(_fragment_revisions(fid)) == 1  # 原片段不新建 revision
+    assert len(_decision_rows()) == 1  # 零副作用
+    assert _count("studio_change_previews") == 1
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# F10 片段合并 helper（复用本文件 fixture/helper 模式；不写 STUDIO_* env）
+# ────────────────────────────────────────────────────────────────────────────
+def _merge_preview(client, token, pid, fragment_ids, merged_name=None, command_id=None):
+    return client.post(
+        f"/api/studio/projects/{pid}/fragments/merge",
+        json={
+            "fragment_ids": fragment_ids,
+            "merged_name": merged_name,
+            "command_id": command_id or _cmd(),
+        },
+        headers=_auth(token),
+    )
+
+
+def _merge_apply(
+    client,
+    token,
+    pid,
+    preview_id,
+    command_id=None,
+    expected_revision_a=1,
+    expected_revision_b=1,
+    expected_range_set_revision=None,
+):
+    return client.post(
+        f"/api/studio/projects/{pid}/fragments/merge/apply",
+        json={
+            "preview_id": preview_id,
+            "command_id": command_id or _cmd(),
+            "expected_revision_a": expected_revision_a,
+            "expected_revision_b": expected_revision_b,
+            "expected_range_set_revision": expected_range_set_revision,
+        },
+        headers=_auth(token),
+    )
+
+
+# F10 CAS 冲突用例正文（40 字符，无空白：四片 {0,10}/{10,20}/{20,30}/{30,40}）
+TEXT_E = "0123456789" * 4
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T22 无 token → 401（preview/apply 各一）
+# ────────────────────────────────────────────────────────────────────────────
+def test_t22_no_token_401(db, client):
+    ghost = "03" * 13
+    pid = "01" * 13
+    r1 = client.post(
+        f"/api/studio/projects/{pid}/fragments/merge",
+        json={
+            "fragment_ids": [ghost, "04" * 13],
+            "command_id": _cmd(),
+        },
+    )
+    assert r1.status_code == 401
+    assert r1.json()["error"]["code"] == "unauthenticated"
+    r2 = client.post(
+        f"/api/studio/projects/{pid}/fragments/merge/apply",
+        json={
+            "preview_id": ghost,
+            "command_id": _cmd(),
+            "expected_revision_a": 1,
+            "expected_revision_b": 1,
+            "expected_range_set_revision": 1,
+        },
+    )
+    assert r2.status_code == 401
+    assert r2.json()["error"]["code"] == "unauthenticated"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T23 404 不泄漏：preview 侧 fragment 不存在（26 字符字面量）/跨项目 → 404
+#     kind=fragment；apply 侧 preview 不存在/跨项目 → 404 kind=preview
+# ────────────────────────────────────────────────────────────────────────────
+def test_t23_unknown_and_cross_project_404(db, client):
+    ta = _register(client, "f10_t23_alice")
+    tc = _register(client, "f10_t23_carol")
+    pa = _create_project(client, ta, "T23A")
+    pc = _create_project(client, tc, "T23C")
+    rev_a = _import_active(client, ta, pa, TEXT_A)
+    rev_c = _import_active(client, tc, pc, TEXT_A)
+    # pa 两个相接片段（merge preview/apply 路径用）
+    ra1 = _create_fragment(client, ta, pa, rev_a["id"], 0, 10, "T23a1")
+    assert ra1.status_code == 201, ra1.text
+    fid_a1 = ra1.json()["object_ref"]["id"]
+    ra2 = _create_fragment(client, ta, pa, rev_a["id"], 10, 20, "T23a2", expected=2)
+    assert ra2.status_code == 201, ra2.text
+    fid_a2 = ra2.json()["object_ref"]["id"]
+    cas_a = _range_sets(pa, rev_a["id"])[0].cas_revision
+    # pc 一个片段（跨项目用）
+    rc1 = _create_fragment(client, tc, pc, rev_c["id"], 0, 10, "T23c1")
+    assert rc1.status_code == 201, rc1.text
+    fid_c1 = rc1.json()["object_ref"]["id"]
+
+    ghost = "03" * 13  # 26 字符
+    # preview：fragment_ids[0] 不存在 → 404 kind=fragment
+    r = _merge_preview(client, ta, pa, [ghost, fid_a1])
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["code"] == "not_found"
+    assert r.json()["error"]["details"] == {"kind": "fragment", "id": ghost}
+    # preview：跨项目 fid（第二元素）→ 404 kind=fragment（不泄漏存在性）
+    r = _merge_preview(client, ta, pa, [fid_a1, fid_c1])
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["details"] == {"kind": "fragment", "id": fid_c1}
+
+    # apply：preview 不存在 → 404 kind=preview
+    r = _merge_apply(
+        client, ta, pa, ghost,
+        expected_revision_a=1, expected_revision_b=1,
+        expected_range_set_revision=cas_a,
+    )
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["code"] == "not_found"
+    assert r.json()["error"]["details"] == {"kind": "preview", "id": ghost}
+    # apply：跨项目 preview → 404 kind=preview（不泄漏存在性）
+    rp = _merge_preview(client, ta, pa, [fid_a1, fid_a2])
+    assert rp.status_code == 200, rp.text
+    r = client.post(
+        f"/api/studio/projects/{pc}/fragments/merge/apply",
+        json={
+            "preview_id": rp.json()["preview_id"],
+            "command_id": _cmd(),
+            "expected_revision_a": 1,
+            "expected_revision_b": 1,
+            "expected_range_set_revision": 1,
+        },
+        headers=_auth(tc),
+    )
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["code"] == "not_found"
+    assert r.json()["error"]["details"] == {"kind": "preview", "id": rp.json()["preview_id"]}
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T24 422 形状：fragment_ids 长度 1 与 3（rule=cardinality）；两 id 相同
+#     （rule=duplicate）；422 短路在写事务前（预览 0 行）
+# ────────────────────────────────────────────────────────────────────────────
+def test_t24_shape_422(db, client):
+    token = _register(client, "f10_t24_bob")
+    pid = _create_project(client, token, "T24Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    ra = _create_fragment(client, token, pid, rev["id"], 0, 10, "T24a")
+    assert ra.status_code == 201, ra.text
+    fid_a = ra.json()["object_ref"]["id"]
+    rb = _create_fragment(client, token, pid, rev["id"], 10, 20, "T24b", expected=2)
+    assert rb.status_code == 201, rb.text
+    fid_b = rb.json()["object_ref"]["id"]
+
+    # 长度 1 → cardinality
+    r = _merge_preview(client, token, pid, [fid_a])
+    assert r.status_code == 422, r.text
+    v = r.json()["error"]["details"]["violations"][0]
+    assert (v["field"], v["rule"]) == ("fragment_ids", "cardinality")
+    assert v["message"] == "fragment_ids 必须恰好包含两个片段 ID。"
+    # 长度 3 → cardinality（先于 duplicate 判定）
+    r = _merge_preview(client, token, pid, [fid_a, fid_b, fid_a])
+    assert r.status_code == 422, r.text
+    v = r.json()["error"]["details"]["violations"][0]
+    assert (v["field"], v["rule"]) == ("fragment_ids", "cardinality")
+    assert v["message"] == "fragment_ids 必须恰好包含两个片段 ID。"
+    # 两 id 相同 → duplicate
+    r = _merge_preview(client, token, pid, [fid_a, fid_a])
+    assert r.status_code == 422, r.text
+    v = r.json()["error"]["details"]["violations"][0]
+    assert (v["field"], v["rule"]) == ("fragment_ids", "duplicate")
+    assert v["message"] == "fragment_ids 中的两个片段 ID 不能相同。"
+    # 形状校验短路在写事务前：零 preview 行
+    assert _count("studio_change_previews") == 0
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T25 非 active（直改 active 构造，同 T4/T15 模式）→ 422
+#     source_revision_inactive；a 已 retired（先走 F7 退役）→ 422
+#     already_retired（a→b 序首个失败即报）
+# ────────────────────────────────────────────────────────────────────────────
+def test_t25_inactive_and_retired_422(db, client):
+    # (a) 非 active 版本（两片均绑 v1，直改 active → v2，a→b 序首个失败即报）
+    token_a = _register(client, "f10_t25_alice")
+    pid_a = _create_project(client, token_a, "T25a")
+    v1 = _import_active(client, token_a, pid_a, TEXT_A)
+    time.sleep(0.002)
+    r2 = _import(client, token_a, pid_a, "second version content")
+    assert r2.status_code == 201, r2.text
+    v2 = r2.json()
+    fa = _create_fragment(client, token_a, pid_a, v1["id"], 0, 10, "T25a1")
+    assert fa.status_code == 201, fa.text
+    fid_a1 = fa.json()["object_ref"]["id"]
+    fb = _create_fragment(client, token_a, pid_a, v1["id"], 10, 20, "T25a2", expected=2)
+    assert fb.status_code == 201, fb.text
+    fid_a2 = fb.json()["object_ref"]["id"]
+    # 直改 active 指针 → v2（S4/S5 未放行，测试库专用构造）
+    with Session() as s:
+        s.execute(
+            update(StudioProject)
+            .where(StudioProject.id == pid_a)
+            .values(active_source_revision_id=v2["id"])
+        )
+        s.commit()
+    r = _merge_preview(client, token_a, pid_a, [fid_a1, fid_a2])
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "precondition_failed"
+    assert err["details"]["reason"] == "source_revision_inactive"
+    assert err["details"]["blocked_by"] == {"kind": "source", "id": v2["id"], "revision": None}
+
+    # (b) a 已 retired（先走 F7 退役）→ 422 already_retired
+    token_b = _register(client, "f10_t25_bob")
+    pid_b = _create_project(client, token_b, "T25b")
+    rev_b = _import_active(client, token_b, pid_b, TEXT_A)
+    f1 = _create_fragment(client, token_b, pid_b, rev_b["id"], 0, 10, "T25b1")
+    assert f1.status_code == 201, f1.text
+    fid_b1 = f1.json()["object_ref"]["id"]
+    f2 = _create_fragment(client, token_b, pid_b, rev_b["id"], 10, 20, "T25b2", expected=2)
+    assert f2.status_code == 201, f2.text
+    fid_b2 = f2.json()["object_ref"]["id"]
+    cas_b = _range_sets(pid_b, rev_b["id"])[0].cas_revision
+    # F7 退役 a：preview → apply（退役不动 cas）
+    rp = client.post(
+        f"/api/studio/projects/{pid_b}/fragments/{fid_b1}/retire",
+        json={"target_fragment_id": fid_b1, "command_id": _cmd()},
+        headers=_auth(token_b),
+    )
+    assert rp.status_code == 200, rp.text
+    ra = client.post(
+        f"/api/studio/projects/{pid_b}/fragments/{fid_b1}/retire/apply",
+        json={
+            "preview_id": rp.json()["preview_id"],
+            "command_id": _cmd(),
+            "expected_revision": 1,
+            "expected_range_set_revision": cas_b,
+        },
+        headers=_auth(token_b),
+    )
+    assert ra.status_code == 200, ra.text
+    assert ra.json()["state"] == "retired"
+    # merge preview：a 已 retired → 422 already_retired（a→b 序首个失败即报）
+    r = _merge_preview(client, token_b, pid_b, [fid_b1, fid_b2])
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "precondition_failed"
+    assert err["details"]["reason"] == "already_retired"
+    assert err["details"]["blocked_by"] == {"kind": "fragment", "id": fid_b1, "revision": 1}
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T26 不相接（{0,5} 与 {8,12} 有间隙）→ 422 precondition_failed
+#     reason=not_contiguous，message 含两范围数值（按请求序报告）；
+#     blocked_by = 几何右片
+# ────────────────────────────────────────────────────────────────────────────
+def test_t26_not_contiguous_422(db, client):
+    token = _register(client, "f10_t26_carol")
+    pid = _create_project(client, token, "T26Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    fa = _create_fragment(client, token, pid, rev["id"], 0, 5, "T26a")
+    assert fa.status_code == 201, fa.text
+    fid_a = fa.json()["object_ref"]["id"]
+    fb = _create_fragment(client, token, pid, rev["id"], 8, 12, "T26b", expected=2)
+    assert fb.status_code == 201, fb.text
+    fid_b = fb.json()["object_ref"]["id"]
+
+    r = _merge_preview(client, token, pid, [fid_a, fid_b])
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "precondition_failed"
+    assert err["details"]["reason"] == "not_contiguous"
+    assert err["details"]["blocked_by"] == {"kind": "fragment", "id": fid_b, "revision": 1}
+    msg = err["message"]
+    assert "[0, 5)" in msg and "[8, 12)" in msg
+    assert msg.index("[0, 5)") < msg.index("[8, 12)")  # 请求序 [a, b] 报告
+
+    # 子例：请求序 [b, a] → message 两片范围顺序按请求序（[8, 12) 在前）
+    r = _merge_preview(client, token, pid, [fid_b, fid_a])
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["details"]["reason"] == "not_contiguous"
+    assert err["details"]["blocked_by"] == {"kind": "fragment", "id": fid_b, "revision": 1}
+    msg = err["message"]
+    assert "[0, 5)" in msg and "[8, 12)" in msg
+    assert msg.index("[8, 12)") < msg.index("[0, 5)")  # 请求序 [b, a] 报告
+    assert _count("studio_change_previews") == 0
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T27 有效合并全程：a={0,10}、b={10,20} @ TEXT_A，merged_name 缺省 → preview
+#     200 恰 4 字段（kind=fragment_merge；baseline fragment_a/fragment_b/
+#     range_set 精确；impact 三键空列表）；apply 200 冻结形状恰 2 字段 + DB
+#     全量断言；子例：请求序 [b,a] 亦可合并且 predecessors 保持请求序、
+#     merged range 不变
+# ────────────────────────────────────────────────────────────────────────────
+def test_t27_valid_merge_full(db, client):
+    token = _register(client, "f10_t27_dave")
+    pid = _create_project(client, token, "T27Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    fa = _create_fragment(client, token, pid, rev["id"], 0, 10, "T27L")
+    assert fa.status_code == 201, fa.text
+    fid_a = fa.json()["object_ref"]["id"]
+    fb = _create_fragment(client, token, pid, rev["id"], 10, 20, "T27R", expected=2)
+    assert fb.status_code == 201, fb.text
+    fid_b = fb.json()["object_ref"]["id"]
+    sets = _range_sets(pid, rev["id"])
+    assert len(sets) == 1
+    set_id = sets[0].id
+    cas0 = sets[0].cas_revision
+
+    # preview：200 恰 4 字段
+    rp = _merge_preview(client, token, pid, [fid_a, fid_b])
+    assert rp.status_code == 200, rp.text
+    body = rp.json()
+    assert set(body.keys()) == {"preview_id", "kind", "baseline", "impact"}
+    assert body["kind"] == "fragment_merge"
+    assert body["baseline"] == {
+        "fragment_a": {"kind": "fragment", "id": fid_a, "revision": 1},
+        "fragment_b": {"kind": "fragment", "id": fid_b, "revision": 1},
+        "range_set": {"id": set_id, "cas": cas0},
+    }
+    assert body["impact"] == {"affected": [], "needs_review": [], "preservable": []}
+    preview_id = body["preview_id"]
+    # preview 行 payload：fragment_ids 请求序 + 几何左/右 + 派生名（全角＋）
+    pv = _preview_row(preview_id)
+    assert pv["kind"] == "fragment_merge"
+    assert pv["state"] == "pending"
+    assert json.loads(pv["payload"]) == {
+        "fragment_ids": [fid_a, fid_b],
+        "left_id": fid_a,
+        "right_id": fid_b,
+        "merged_name": "T27L＋T27R",
+    }
+
+    # apply：200 冻结形状恰 2 字段
+    ra = _merge_apply(
+        client, token, pid, preview_id,
+        expected_revision_a=1, expected_revision_b=1,
+        expected_range_set_revision=cas0,
+    )
+    assert ra.status_code == 200, ra.text
+    ab = ra.json()
+    assert set(ab.keys()) == {"merged", "predecessors"}
+    merged = ab["merged"]
+    merged_id = merged["object_ref"]["id"]
+    assert merged["object_ref"] == {"kind": "fragment", "id": merged_id, "revision": 1}
+    assert merged["range"] == {"start": 0, "end": 20}
+    assert merged["name"] == "T27L＋T27R"
+    assert merged_id != fid_a and merged_id != fid_b
+    assert ab["predecessors"] == [
+        {"object_ref": {"kind": "fragment", "id": fid_a, "revision": 1}, "state": "retired"},
+        {"object_ref": {"kind": "fragment", "id": fid_b, "revision": 1}, "state": "retired"},
+    ]
+
+    # DB：a、b 均 retired（retired_at 非空）且各自 revision 行数不变（仍 1）
+    with Session() as s:
+        fa_now = s.get(Fragment, fid_a)
+        fb_now = s.get(Fragment, fid_b)
+    assert fa_now.state == "retired" and fa_now.retired_at is not None
+    assert fb_now.state == "retired" and fb_now.retired_at is not None
+    assert len(_fragment_revisions(fid_a)) == 1
+    assert len(_fragment_revisions(fid_b)) == 1
+
+    # merged 片段：state=candidate、恰 1 revision 行（revision=1、reason=merge、
+    # predecessor=[a,b] 请求序、range [0,20)、source_revision_id 同原）
+    with Session() as s:
+        mf = s.get(Fragment, merged_id)
+    assert mf is not None
+    assert mf.project_id == pid
+    assert mf.source_revision_id == rev["id"]
+    assert mf.range_set_id == set_id
+    assert mf.name == "T27L＋T27R"
+    assert mf.summary is None
+    assert mf.state == "candidate"
+    assert mf.retired_at is None
+    revs = _fragment_revisions(merged_id)
+    assert len(revs) == 1
+    mr = revs[0]
+    assert mr.revision == 1
+    assert mr.reason == "merge"
+    assert mr.range_start == 0 and mr.range_end == 20
+    assert mr.source_revision_id == rev["id"]
+    assert json.loads(mr.predecessor_fragment_ids) == [fid_a, fid_b]  # 请求序
+    assert mf.current_revision_id == mr.id
+
+    # cas == 原 + 1
+    assert _range_sets(pid, rev["id"])[0].cas_revision == cas0 + 1
+
+    # ReviewDecision 恰 1 行：target_ref==merged object_ref、digest 独立重算相等
+    decisions = _decision_rows()
+    assert len(decisions) == 1
+    d = decisions[0]
+    assert d.decision == "applied"
+    assert d.preview_id == preview_id
+    assert json.loads(d.target_ref) == {"kind": "fragment", "id": merged_id, "revision": 1}
+    assert d.baseline_digest == hashlib.sha256(
+        json.dumps(
+            {
+                "fragment_a": {"kind": "fragment", "id": fid_a, "revision": 1},
+                "fragment_b": {"kind": "fragment", "id": fid_b, "revision": 1},
+                "range_set": {"id": set_id, "cas": cas0},
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    # preview applied
+    assert _preview_row(preview_id)["state"] == "applied"
+
+    # 子例：请求序 [b, a] 亦可合并；predecessors 保持请求序、merged range 不变
+    token2 = _register(client, "f10_t27_eve")
+    pid2 = _create_project(client, token2, "T27Proj2")
+    rev2 = _import_active(client, token2, pid2, TEXT_A)
+    g1 = _create_fragment(client, token2, pid2, rev2["id"], 0, 10, "T27m")
+    assert g1.status_code == 201, g1.text
+    gid_a = g1.json()["object_ref"]["id"]
+    g2 = _create_fragment(client, token2, pid2, rev2["id"], 10, 20, "T27n", expected=2)
+    assert g2.status_code == 201, g2.text
+    gid_b = g2.json()["object_ref"]["id"]
+    cas2 = _range_sets(pid2, rev2["id"])[0].cas_revision
+    rp2 = _merge_preview(client, token2, pid2, [gid_b, gid_a])  # 请求序 [b, a]
+    assert rp2.status_code == 200, rp2.text
+    assert json.loads(_preview_row(rp2.json()["preview_id"])["payload"])["fragment_ids"] == [gid_b, gid_a]
+    ra2 = _merge_apply(
+        client, token2, pid2, rp2.json()["preview_id"],
+        expected_revision_a=1, expected_revision_b=1,
+        expected_range_set_revision=cas2,
+    )
+    assert ra2.status_code == 200, ra2.text
+    ab2 = ra2.json()
+    assert ab2["merged"]["range"] == {"start": 0, "end": 20}  # merged range 不变
+    assert ab2["merged"]["name"] == "T27m＋T27n"  # 派生按几何左→右
+    assert [p["object_ref"]["id"] for p in ab2["predecessors"]] == [gid_b, gid_a]  # 请求序
+    revs2 = _fragment_revisions(ab2["merged"]["object_ref"]["id"])
+    assert json.loads(revs2[0].predecessor_fragment_ids) == [gid_b, gid_a]  # 请求序
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T28 命名：给定 merged_name="  M1  " → trim 落库；缺省派生 "左＋右"（全角
+#     ＋，T27 已全量断言）；派生超长（左 name 60 字符 + 右 name 61 字符 →
+#     122>120）→ 422 max_length；全空白名 → 422 required
+# ────────────────────────────────────────────────────────────────────────────
+def test_t28_naming_trim_derive_max_length(db, client):
+    # (a) 给定 merged_name="  M1  " → trim 落库
+    token_a = _register(client, "f10_t28_alice")
+    pid_a = _create_project(client, token_a, "T28a")
+    rev_a = _import_active(client, token_a, pid_a, TEXT_A)
+    fa = _create_fragment(client, token_a, pid_a, rev_a["id"], 0, 10, "T28aL")
+    assert fa.status_code == 201, fa.text
+    fid_a1 = fa.json()["object_ref"]["id"]
+    fb = _create_fragment(client, token_a, pid_a, rev_a["id"], 10, 20, "T28aR", expected=2)
+    assert fb.status_code == 201, fb.text
+    fid_a2 = fb.json()["object_ref"]["id"]
+    cas_a = _range_sets(pid_a, rev_a["id"])[0].cas_revision
+    rp = _merge_preview(client, token_a, pid_a, [fid_a1, fid_a2], merged_name="  M1  ")
+    assert rp.status_code == 200, rp.text
+    assert json.loads(_preview_row(rp.json()["preview_id"])["payload"])["merged_name"] == "M1"
+    ra = _merge_apply(
+        client, token_a, pid_a, rp.json()["preview_id"],
+        expected_revision_a=1, expected_revision_b=1,
+        expected_range_set_revision=cas_a,
+    )
+    assert ra.status_code == 200, ra.text
+    assert ra.json()["merged"]["name"] == "M1"
+    with Session() as s:
+        mf = s.get(Fragment, ra.json()["merged"]["object_ref"]["id"])
+    assert mf.name == "M1"  # trim 落库
+
+    # (b) 派生超长：左 name 60 字符 + 右 name 61 字符 → 60+1+61=122 > 120
+    token_b = _register(client, "f10_t28_bob")
+    pid_b = _create_project(client, token_b, "T28b")
+    rev_b = _import_active(client, token_b, pid_b, TEXT_A)
+    fc = _create_fragment(client, token_b, pid_b, rev_b["id"], 0, 10, "x" * 60)
+    assert fc.status_code == 201, fc.text
+    fid_b1 = fc.json()["object_ref"]["id"]
+    fd = _create_fragment(client, token_b, pid_b, rev_b["id"], 10, 20, "y" * 61, expected=2)
+    assert fd.status_code == 201, fd.text
+    fid_b2 = fd.json()["object_ref"]["id"]
+    r = _merge_preview(client, token_b, pid_b, [fid_b1, fid_b2])  # 缺省派生
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "validation_failed"
+    v = err["details"]["violations"][0]
+    assert (v["field"], v["rule"]) == ("merged_name", "max_length")
+    assert "122" in v["message"]
+
+    # (c) 全空白名 → 422 required
+    r = _merge_preview(client, token_b, pid_b, [fid_b1, fid_b2], merged_name="   ")
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "validation_failed"
+    v = err["details"]["violations"][0]
+    assert (v["field"], v["rule"]) == ("merged_name", "required")
+    # 命名校验短路在写事务前：仅 (a) 成功 preview 的 1 行，(b)/(c) 零写入
+    assert _count("studio_change_previews") == 1
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T29 CAS 冲突无半次：preview 后 F1 建新片段（cas+1）→ apply（expected 用
+#     刷新后 cas，使失配落在 baseline 步）→ 409 preview_stale conflicts 恰 1
+#     （range_set）+ preview superseded；DB 零变化
+# ────────────────────────────────────────────────────────────────────────────
+def test_t29_cas_conflict_no_half_save(db, client):
+    token = _register(client, "f10_t29_frank")
+    pid = _create_project(client, token, "T29Proj")
+    rev = _import_active(client, token, pid, TEXT_E)  # 40 字符
+    fa = _create_fragment(client, token, pid, rev["id"], 0, 10, "T29a")
+    assert fa.status_code == 201, fa.text
+    fid_a = fa.json()["object_ref"]["id"]
+    fb = _create_fragment(client, token, pid, rev["id"], 10, 20, "T29b", expected=2)
+    assert fb.status_code == 201, fb.text
+    fid_b = fb.json()["object_ref"]["id"]
+    fc = _create_fragment(client, token, pid, rev["id"], 20, 30, "T29c", expected=3)
+    assert fc.status_code == 201, fc.text
+    fid_c = fc.json()["object_ref"]["id"]
+    cas0 = _range_sets(pid, rev["id"])[0].cas_revision
+
+    # preview（merged {0,20} 与 c {20,30} 相接，不冲突）
+    rp = _merge_preview(client, token, pid, [fid_a, fid_b])
+    assert rp.status_code == 200, rp.text
+    preview_id = rp.json()["preview_id"]
+
+    # preview 后另一 F1 建新片段 → cas +1
+    rd = _create_fragment(client, token, pid, rev["id"], 30, 40, "T29d", expected=cas0)
+    assert rd.status_code == 201, rd.text
+    cas1 = _range_sets(pid, rev["id"])[0].cas_revision
+    assert cas1 == cas0 + 1
+
+    # 快照 apply 前 DB 状态（用于验证零变化）
+    dec_before = _count("studio_review_decisions")
+    cmds_before = _count("studio_command_records")
+
+    # apply：expected 用刷新后 cas（CAS 预检 step 6 通过，失配落在 baseline step 7）
+    ra = _merge_apply(
+        client, token, pid, preview_id,
+        expected_revision_a=1, expected_revision_b=1,
+        expected_range_set_revision=cas1,
+    )
+    assert ra.status_code == 409, ra.text
+    err = ra.json()["error"]
+    assert err["code"] == "preview_stale"
+    assert err["details"]["preview_id"] == preview_id
+    conflicts = err["details"]["conflicts"]
+    assert len(conflicts) == 1
+    assert conflicts[0] == {
+        "object": {"kind": "range_set", "id": _range_sets(pid, rev["id"])[0].id},
+        "expected": cas0,
+        "actual": cas1,
+    }
+    # 预览置 superseded
+    assert _preview_row(preview_id)["state"] == "superseded"
+
+    # DB 零变化：a、b 仍 candidate、无 merged 行、cas 不再变、无决定、无 record
+    with Session() as s:
+        fa_now = s.get(Fragment, fid_a)
+        fb_now = s.get(Fragment, fid_b)
+        fc_now = s.get(Fragment, fid_c)
+    assert fa_now.state == "candidate" and fa_now.retired_at is None
+    assert fb_now.state == "candidate" and fb_now.retired_at is None
+    assert fc_now.state == "candidate"
+    assert len(_fragments(pid)) == 4  # a、b、c、d，无合并产物
+    assert len(_fragment_revisions(fid_a)) == 1
+    assert len(_fragment_revisions(fid_b)) == 1
+    assert _range_sets(pid, rev["id"])[0].cas_revision == cas1  # 未再 +1
+    assert _count("studio_review_decisions") == dec_before
+    assert _count("studio_command_records") == cmds_before  # 失败的 apply 不写 record
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T30 R11 旧引用不迁移 + 下游待复核：种子 SourceRelation（指 a、rev1）+
+#     pending Job（payload 含 a id）（复用 _seed_impact 模式）→ preview
+#     impact：affected 恰 1、needs_review 恰 1（并集去重，b 无引用不重复计）；
+#     apply 后 SourceRelation 逐字段不变（仍指 a）、job payload 不变
+# ────────────────────────────────────────────────────────────────────────────
+def test_t30_old_refs_not_migrated(db, client):
+    token = _register(client, "f10_t30_gina")
+    uid = _user_id("f10_t30_gina")
+    pid = _create_project(client, token, "T30Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    fa = _create_fragment(client, token, pid, rev["id"], 0, 10, "T30a")
+    assert fa.status_code == 201, fa.text
+    fid_a = fa.json()["object_ref"]["id"]
+    fb = _create_fragment(client, token, pid, rev["id"], 10, 20, "T30b", expected=2)
+    assert fb.status_code == 201, fb.text
+    fid_b = fb.json()["object_ref"]["id"]
+    cas0 = _range_sets(pid, rev["id"])[0].cas_revision
+    seeds = _seed_impact(pid, uid, fid_a)  # 仅指 a（rev1）+ payload 含 a id 的 pending job
+
+    # preview：impact = a、b 并集（按 (kind,id) 去重）；affected 恰 1
+    # （source_relation rev1）、needs_review 恰 1（job）——b 无引用不重复计
+    rp = _merge_preview(client, token, pid, [fid_a, fid_b])
+    assert rp.status_code == 200, rp.text
+    impact = rp.json()["impact"]
+    assert impact["affected"] == [
+        {"object_ref": {"kind": "source_relation", "id": seeds["relation_id"], "revision": 1}}
+    ]
+    assert impact["needs_review"] == [
+        {
+            "object_ref": {"kind": "job", "id": seeds["job_id"], "revision": None},
+            "reason": "frozen_input_contains_fragment",
+        }
+    ]
+    assert impact["preservable"] == []
+
+    # apply 前快照
+    rel_before = _source_relation_row(seeds["relation_id"])
+    job_before = _job_row(seeds["job_id"])
+    assert rel_before is not None and job_before is not None
+
+    ra = _merge_apply(
+        client, token, pid, rp.json()["preview_id"],
+        expected_revision_a=1, expected_revision_b=1,
+        expected_range_set_revision=cas0,
+    )
+    assert ra.status_code == 200, ra.text
+
+    # apply 后：SourceRelation 逐字段不变（仍指 a——a 已 retired，引用不迁移）、
+    # job payload 不变
+    rel_after = _source_relation_row(seeds["relation_id"])
+    job_after = _job_row(seeds["job_id"])
+    assert rel_after == rel_before
+    assert job_after == job_before
+    assert rel_after[2] == fid_a  # source_fragment_id 列不变
+    assert rel_after[3] == 1  # source_fragment_revision 仍 1
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T31 重放零副作用：preview 同 command_id+同 body → 200 原体、预览恰 1 行；
+#     apply 同 command_id → 200 原体、merged 恰 1 行、决定恰 1 行、无重复创建
+# ────────────────────────────────────────────────────────────────────────────
+def test_t31_replay_zero_side_effects(db, client):
+    token = _register(client, "f10_t31_hank")
+    pid = _create_project(client, token, "T31Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    fa = _create_fragment(client, token, pid, rev["id"], 0, 10, "T31a")
+    assert fa.status_code == 201, fa.text
+    fid_a = fa.json()["object_ref"]["id"]
+    fb = _create_fragment(client, token, pid, rev["id"], 10, 20, "T31b", expected=2)
+    assert fb.status_code == 201, fb.text
+    fid_b = fb.json()["object_ref"]["id"]
+    cas0 = _range_sets(pid, rev["id"])[0].cas_revision
+
+    # (a) preview 幂等：同 command_id + 同 body → 200 原 body，预览恰 1 行
+    c1 = _cmd()
+    r1 = _merge_preview(client, token, pid, [fid_a, fid_b], command_id=c1)
+    assert r1.status_code == 200, r1.text
+    r2 = _merge_preview(client, token, pid, [fid_a, fid_b], command_id=c1)
+    assert r2.status_code == 200, r2.text  # 重放（非新建）
+    assert r2.json() == r1.json()
+    assert r2.json()["preview_id"] == r1.json()["preview_id"]
+    assert _count("studio_change_previews") == 1  # 零副作用：不产生第二行
+
+    # (b) apply 幂等：新 command_id 正常 apply → 再同 command_id → 200 原 body，
+    #     merged 恰 1 行、决定恰 1 行、无重复创建
+    c2 = _cmd()
+    a1 = _merge_apply(
+        client, token, pid, r1.json()["preview_id"],
+        command_id=c2, expected_revision_a=1, expected_revision_b=1,
+        expected_range_set_revision=cas0,
+    )
+    assert a1.status_code == 200, a1.text
+    a2 = _merge_apply(
+        client, token, pid, r1.json()["preview_id"],
+        command_id=c2, expected_revision_a=1, expected_revision_b=1,
+        expected_range_set_revision=cas0,
+    )
+    assert a2.status_code == 200, a2.text  # 重放
+    assert a2.json() == a1.json()
+
+    merged_id = a1.json()["merged"]["object_ref"]["id"]
+    assert len(_fragments(pid)) == 3  # a、b + merged，无重复创建
+    assert len(_fragment_revisions(merged_id)) == 1
+    assert len(_fragment_revisions(fid_a)) == 1
+    assert len(_fragment_revisions(fid_b)) == 1
     assert len(_decision_rows()) == 1  # 零副作用
     assert _count("studio_change_previews") == 1

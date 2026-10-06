@@ -311,3 +311,66 @@ def apply_split_route(
     )
     result.pop("_replay", False)
     return JSONResponse(content=result, status_code=200)
+
+
+class MergePreviewBody(BaseModel):
+    fragment_ids: list[str]
+    merged_name: str | None = None
+    command_id: str
+
+
+class MergeApplyBody(BaseModel):
+    preview_id: str
+    command_id: str
+    expected_revision_a: int
+    expected_revision_b: int
+    expected_range_set_revision: int
+
+
+@router.post("/projects/{pid}/fragments/merge")
+def preview_merge_route(
+    pid: str,
+    body: MergePreviewBody,
+    db=Depends(_session),
+    user=Depends(require_user),
+):
+    """F10 预览片段合并：200 恰 4 字段 {preview_id, kind, baseline, impact}
+    （00 §5.1；kind=fragment_merge；preview 是一次幂等写；恰两个/同 active
+    版本/未退役/命名派生（缺省派生 "左＋右"，全角 U+FF0B）/边界相接/合并
+    范围重叠均在 preview 阶段即校验——F10 行冻结）；幂等重放命中 → 200
+    （原 result_payload，零写零 commit）。"""
+    result = fragment_service.preview_fragment_merge(
+        db,
+        user,
+        pid,
+        body.fragment_ids,
+        body.merged_name,
+        body.command_id,
+    )
+    result.pop("_replay", False)
+    return JSONResponse(content=result, status_code=200)
+
+
+@router.post("/projects/{pid}/fragments/merge/apply")
+def apply_merge_route(
+    pid: str,
+    body: MergeApplyBody,
+    db=Depends(_session),
+    user=Depends(require_user),
+):
+    """F10 应用片段合并：200（F10 冻结形状恰 2 字段 {merged, predecessors}：
+    a/b 退役不新建其 revision，merged 新 ID 得一行 revision=1（reason='merge'、
+    predecessor=[a,b] 请求序）、state='candidate'；range_set cas+1——附录 02
+    §3）；幂等重放命中 → 200（原 result_payload，零写零 commit）。"""
+    result = fragment_service.apply_fragment_merge(
+        db,
+        user,
+        pid,
+        body.preview_id,
+        body.command_id,
+        body.expected_revision_a,
+        body.expected_revision_b,
+        body.expected_range_set_revision,
+    )
+    result.pop("_replay", False)
+    return JSONResponse(content=result, status_code=200)
