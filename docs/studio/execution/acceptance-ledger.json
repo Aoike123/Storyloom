@@ -2060,11 +2060,40 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "backend/studio/sources/changes.py、backend/studio/sources/changes_api.py、tests/studio/test_source_changes.py",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/sources/changes.py、backend/studio/sources/changes_api.py、backend/studio/router.py（+2 行接线）、tests/studio/test_source_changes.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor(948a6ca1)",
+          "date": "2026-10-06",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-06",
+        "contract_version": "2.9",
+        "tested_baseline": "491878d + 4 文件（本卡提交）",
+        "scope": "source_activate_preview_s4",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 332/332（10 新 T1–T10 + 322 既有零回归，含 F7 44 条零回归硬门槛）；白名单外零改动（恰 3 新文件 + router.py +2 行接线）；代码审查：六步冻结短路（404 项目→kind invalid 422→target not_found 422（body 参数，两路逐字节同形状不泄漏）→already_active 422→幂等（裁定 1 位置，经 ChangePreview.payload 比对 target）→读事务快照+impact→单写事务 ChangePreview+CommandRecord）；preview 零业务副作用（业务五行表逐行相等、S3 读不变、active 不动）；baseline={active_revision_id, target_revision_id, target_canonical_hash} 精确；TTL=1800。",
+          "S4 冻结行为逐条（整篇语义，decisions.md 2026-10-04）：401；404 不泄漏；kind 非法 422；target 不存在/跨项目 422 not_found 同形状；已是 active 422 already_active；200 恰 4 字段（2.9 修正后形状）；四形态 diff（插字/删选区/移段/重复字串）needs_review 恰=原 active 全部非退役片段 reason=cross_version_mapping，响应全文无任何新范围/映射字段（不假称恢复）；运行中冻结输入 pending job 恰 1（frozen_input_contains_fragment）、succeeded 不入；preservable 媒体链恰 1；edit/release 缺表降级不 500；重放 200 原体零副作用、reused 422。",
+          "已知导航性表述未改：附录 01 §实施位置行未列 changes.py/changes_api.py（附录 02 实施位置行已含两文件；纯导航、无行为语义，不升契约版本）。S5 apply/S2/S6/RV3 不属本卡。"
+        ],
+        "contract_question_ruling": [
+          "确认1（S4 成功形状冲突按契约修正流程先行处置）：附录 01 S4 行\"201 ChangePreview（附录 07）\"与附录 07 RV1 行\"201 预览 DTO\"同 00 §5.1 冻结形状及 F7–F10 四个已验收实现互斥——先提交契约 2.8→2.9 笔误修正（S4/RV1 均改 200 {preview_id, kind, baseline, impact}；随行 target_canonical_hash 键名精确化、\"409 preview 重放\"→\"重放 200 原结果\"、impact 引用 §3→§2），本卡按 2.9 实现，沿用 v2.7/v2.8 先例以协议附录为准。",
+          "确认2（激活语义\"片段/对象\"的可执行落实）：affected=T 版本全部非退役片段自身 + 各 T 片段 compute_impact(...).affected 并集（引用对象链）；needs_review=O 版本全部非退役片段（reason=cross_version_mapping）+ 各 O 片段 job 项（frozen_input_contains_fragment）；preservable=各 O 片段媒体链；并集 helper _union_entries 置 changes.py（impact.py 不在白名单），按 (kind,id) 去重保留先见、按 id 排序——compute_impact 单 fid 语义对整版本的天然泛化，附录 bullets 不变。",
+          "确认3（S4 失败码形状）：target 不存在/跨项目按 S4 行冻结 422 validation_failed(rule=not_found)（body 参数不走路径参数的 404 约定；两路响应逐字节相同、violations 不回显 id，不泄漏）；kind≠source_activate → 422 rule=invalid；已是 active → 422 precondition_failed(reason=already_active, blocked_by={source_revision, target, null})。"
+        ],
+        "evidence": [
+          "backend/studio/sources/changes.py",
+          "backend/studio/sources/changes_api.py",
+          "backend/studio/router.py",
+          "tests/studio/test_source_changes.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-10",
