@@ -2284,11 +2284,47 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "web/features/studio/source/components/SourceReader.tsx、web/features/studio/source/components/FragmentList.tsx、web/features/studio/source/api.ts",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "web/features/studio/source/{api.ts,components/SourceReader.tsx,components/FragmentList.tsx} + web/tests/studio/source-reader.test.cjs（派发时补入，验收需测试证据）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor(948a6ca1)",
+          "date": "2026-10-06",
+          "result": "submitted"
+        },
+        {
+          "n": 2,
+          "by": "executor(948a6ca1)",
+          "date": "2026-10-06",
+          "result": "submitted",
+          "note": "修正一轮：SourceReader F2 单页 200 上限 → fetchAllFragments 全量翻页（主模型验收发现两视图 >200 片段取数不一致，提取纯函数两组件共用）"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-06",
+        "contract_version": "2.9",
+        "tested_baseline": "1b2fc91 + 4 文件（本卡提交）",
+        "scope": "source_reader + fragment_list 前端视图（F2/F3/P3/S3 消费）",
+        "checks": [
+          "主模型独立复验：web pnpm test → 219 测 208 过 11 败，11 败与基线逐一同名（stash 对照实验：基线 180/169/11，失败全为旧系统遗留 story-stack/reader-panel/story-import/model-status/production-follow，与本卡零交集）；本卡新增 39 个 web 测试全绿；pnpm typecheck exit 0；pytest tests/studio/ → 361/361 零回归（本卡零后端改动）；白名单外零改动（恰 4 新文件）。",
+          "卡验收逐条：无卡片/标题/状态插入正文（正文流仅 span/mark，荧光区域为唯一标记）+ 无自动样例（一切文本来自服务端 canonical_content，字符串断言锁定）；列表可点击定位（scrollIntoView 锚点 studio-fragment-{真实id}+闪烁 class+退役禁用按钮态诚实）、确认状态真实（四态中文标签自服务端 DTO，未知值原样显示不编造）；读失败不伪装为空故事（错误态真实 message+重试，与空态'尚未导入正文'严格分开）。",
+          "api.ts 纯逻辑层：DTO 逐字对齐后端（P3 七字段/S3 十二字段/F2 十一键含派生 pending_review）；query 编码七组合正确；四路错误（404/409/422/network）原样透传不吞；computeSegments 九例（相接无空段/乱序排序/emoji 代理对边界不劈/越界夹取仍铺满 tiling）；fetchAllFragments 五例（两页聚合游标透传/单页一次/页级 404 整体透传/页数上限防御/游标不前进即停——均不静默返回部分数据）。",
+          "已知债务（非本卡范围，记账）：web 旧系统测试 11 个基线失败（pre-rebuild 遗留，story-stack 等）——后续清理卡处理；SourceReader/FragmentList 未接入 StudioApp 壳（壳不在白名单，SOURCE-13/14 链上集成）。"
+        ],
+        "contract_question_ruling": [
+          "确认1（fix-1 提问：客户端分页防御错误 code）：ApiErrorCode 冻结联合无专用值，仿 client.ts network 先例复用 internal_error + details.reason（max_pages_exceeded/cursor_not_advancing）区分——客户端自造错误的既定先例，契约形状不变，不升版本。",
+          "确认2（fix-1 提问：游标不前进的语义）：返回错误而非已聚合部分数据——部分数据会静默重现高亮缺口（诚实优先）；与页级错误透传语义一致。"
+        ],
+        "evidence": [
+          "web/features/studio/source/api.ts",
+          "web/features/studio/source/components/SourceReader.tsx",
+          "web/features/studio/source/components/FragmentList.tsx",
+          "web/tests/studio/source-reader.test.cjs"
+        ]
+      }
     },
     {
       "id": "SOURCE-13",
