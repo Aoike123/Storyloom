@@ -10,6 +10,7 @@ from .projects.api import router as projects_router
 from .sources.api import router as sources_router
 from .sources.changes_api import router as changes_router
 from .sources.fragments_api import router as fragments_router
+from .sources.scopes_api import router as scopes_router
 
 router = APIRouter(prefix="/api/studio", tags=["studio"])
 
@@ -23,3 +24,4 @@ router.include_router(projects_router)
 router.include_router(sources_router)
 router.include_router(fragments_router)
 router.include_router(changes_router)
+router.include_router(scopes_router)

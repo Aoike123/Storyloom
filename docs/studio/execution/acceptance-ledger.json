@@ -2162,11 +2162,40 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "backend/studio/sources/scopes.py、backend/studio/sources/scopes_api.py、tests/studio/test_scopes.py",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/sources/scopes.py、backend/studio/sources/scopes_api.py、backend/studio/router.py（+2 行接线）、tests/studio/test_scopes.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor(948a6ca1)",
+          "date": "2026-10-06",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-06",
+        "contract_version": "2.9",
+        "tested_baseline": "53fea9c + 4 文件（本卡提交）",
+        "scope": "production_scope_submit_f11 + reads_f12",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 350/350（10 新 T1–T10 + 340 既有零回归，含 F7 44 条零回归硬门槛）；白名单外零改动（恰 2 新文件 + router.py +2 行 + 1 新测试文件）；代码审查：F11 九步冻结短路（404 项目→无 active 422 no_active_source→形状 required/duplicate→给定路径 404/source_revision_inactive/not_confirmed（message 含名与持久 state）→缺省路径 confirmed 按 id 排序零个 422→幂等（F1 同型，校验后写前，source_revision+fragment_ids 有效值比对）→duplicate_scope（集合序无关，scope_ref 精确）→覆盖计算（当前 FragmentRevision 行范围，00 §7 v2.5 冻结空白集）→单事务 INSERT scope+CommandRecord，不动 range_set.cas）；F12 纯读零写（限 active 版本、id DESC keyset 游标 P2 同款、current 取 id 最大行、无 active/无行 404 kind=production_scope）。",
+          "F11/F12 冻结行为逐条：401×3；404 不泄漏（project/fragment/production_scope）；空数组 required/重复 duplicate/零副作用；非 active 片段 422、未确认 422；201 恰 6 字段（object_ref/source_revision_id/fragment_ids 请求序/covered/excluded_ranges/created_at）+ DB 行精确；T7 覆盖语义：裁减 confirmed → covered=false 且 excluded_ranges 空白切割精确（[{14,18}]）、缺省 null → 全部 confirmed → covered=true；T8 重放 200 原体零副作用+同覆盖新 command 422 duplicate_scope+裁减后新行只追加；T9 倒序+游标两页续读+空列表/current 404；T10 真实 S4/S5 切版本后 list 限新版本、current 404、提交后 current==新行、旧版本行保留。",
+          "已知留白（后续卡）：F2/F3 片段读端点未放行（T13@SOURCE-10 已记）；RV2/RV3/RV4 预览公共命令未放行；SOURCE-14-h 为 UI 卡。"
+        ],
+        "contract_question_ruling": [
+          "确认1（F11 重放状态码）：执行器提问\"卡片措辞 201 原体 vs 00 §3 重放 200\"——裁定按 00 §3+F1 同型：重放返回首次 result_payload、HTTP 200（路由层 _replay 转）；201 仅指首次创建。无破例，不升契约版本。",
+          "确认2（覆盖语义两读一致）：附录 02 §1 covered=全部非空白码元被范围并集覆盖；卡片验收\"覆盖全部 confirmed 才算覆盖\"为其推论（片段范围创建时即非空白，裁减任一 confirmed 必裸露非空白码元→covered=false）——T7 同场景双读验证一致。excluded_ranges 冻结为范围外按空白切割的最大连续非空白段（半开、start 升序、段内无空白码元）；空白判定按 00 §7 v2.5 冻结集原样实现（ranges.py 判定 helper 私有未导出，不另发明集合）。",
+          "确认3（F11 新 reason/对象形状冻结）：无 active → 422 precondition_failed(reason=no_active_source, blocked_by={source,null,null})；未确认 → reason=not_confirmed、blocked_by={fragment,id,revision}；F12 游标格式校验 422 rule=format（与 P2 裁定完全一致）；范围 DTO 恰 6 字段、revision 恒 null（范围行只追加不改版）。"
+        ],
+        "evidence": [
+          "backend/studio/sources/scopes.py",
+          "backend/studio/sources/scopes_api.py",
+          "backend/studio/router.py",
+          "tests/studio/test_scopes.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-12",
