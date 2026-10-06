@@ -242,3 +242,72 @@ def apply_boundary_route(
     )
     result.pop("_replay", False)
     return JSONResponse(content=result, status_code=200)
+
+
+class SplitPreviewBody(BaseModel):
+    target_fragment_id: str
+    split_point: int
+    left_name: str | None = None
+    right_name: str | None = None
+    command_id: str
+
+
+class SplitApplyBody(BaseModel):
+    preview_id: str
+    command_id: str
+    expected_revision: int
+    expected_range_set_revision: int
+
+
+@router.post("/projects/{pid}/fragments/{fid}/split")
+def preview_split_route(
+    pid: str,
+    fid: str,
+    body: SplitPreviewBody,
+    db=Depends(_session),
+    user=Depends(require_user),
+):
+    """F9 预览片段拆分：200 恰 4 字段 {preview_id, kind, baseline, impact}
+    （00 §5.1；kind=fragment_split；preview 是一次幂等写；命名派生（缺省
+    派生 "<原 name>（左）"/"<原 name>（右）"）与 split_point 五判定均在
+    preview 阶段即校验——F9 行冻结）；幂等重放命中 → 200（原 result_payload，
+    零写零 commit）。"""
+    result = fragment_service.preview_fragment_split(
+        db,
+        user,
+        pid,
+        fid,
+        body.target_fragment_id,
+        body.split_point,
+        body.left_name,
+        body.right_name,
+        body.command_id,
+    )
+    result.pop("_replay", False)
+    return JSONResponse(content=result, status_code=200)
+
+
+@router.post("/projects/{pid}/fragments/{fid}/split/apply")
+def apply_split_route(
+    pid: str,
+    fid: str,
+    body: SplitApplyBody,
+    db=Depends(_session),
+    user=Depends(require_user),
+):
+    """F9 应用片段拆分：200（F9 冻结形状 {left, right, original}：原片段退役
+    不新建其 revision，左/右新片段各得一行 revision=1（reason='split'、
+    predecessor=[原 fid]）、state='candidate'；range_set cas+1——附录 02 §3）；
+    幂等重放命中 → 200（原 result_payload，零写零 commit）。"""
+    result = fragment_service.apply_fragment_split(
+        db,
+        user,
+        pid,
+        fid,
+        body.preview_id,
+        body.command_id,
+        body.expected_revision,
+        body.expected_range_set_revision,
+    )
+    result.pop("_replay", False)
+    return JSONResponse(content=result, status_code=200)

@@ -37,6 +37,8 @@ __all__ = [
     "apply_fragment_retire",
     "preview_fragment_boundary",
     "apply_fragment_boundary",
+    "preview_fragment_split",
+    "apply_fragment_split",
 ]
 
 # F1 写事务内的 CAS 冲突 message（面向用户，给出定位信息）
@@ -1594,6 +1596,636 @@ def apply_fragment_boundary(
                 preview_id=preview_id,
                 target_ref=json.dumps(
                     {"kind": "fragment", "id": fid, "revision": current + 1},
+                    ensure_ascii=False,
+                ),
+                decision="applied",
+                baseline_digest=hashlib.sha256(
+                    json.dumps(base, sort_keys=True, separators=(",", ":")).encode(
+                        "utf-8"
+                    )
+                ).hexdigest(),
+                created_at=now,
+            )
+        )
+        session.flush()  # ReviewDecision 先 INSERT（FK preview.decision_id→decisions.id 非 deferrable）
+        session.execute(
+            update(ChangePreview)
+            .where(ChangePreview.id == preview_id)
+            .values(state="applied", resolved_at=now, decision_id=decision_id)
+        )
+        session.add(
+            CommandRecord(
+                id=make_ulid(),
+                owner_id=user.id,
+                project_id=pid,
+                command_id=command_id,
+                result_payload=json.dumps(body, ensure_ascii=False),
+                created_at=now,
+            )
+        )
+        session.commit()
+    except StudioAPIError:
+        raise
+    except Exception:
+        try:
+            session.rollback()
+        except Exception:
+            pass
+        raise
+    return body
+
+
+# ───────────────────── F9 片段拆分（preview/apply，附录 02 §2 F9 + 00 §5） ─────────────────────
+
+
+def preview_fragment_split(
+    session,
+    user,
+    pid,
+    fid,
+    target_fragment_id,
+    split_point,
+    left_name,
+    right_name,
+    command_id,
+) -> dict:
+    """F9 预览片段拆分（附录 02 §2 F9 + 00 §5；preview 本身是一次幂等写）。
+
+    校验顺序（冻结，按序短路；幂等位置 404/mismatch 之后、其余之前——
+    SOURCE-05-b 裁定 1）：
+    1. 项目不存在/非属主 → 404 not_found(kind=project)（不泄漏）；
+    2. 片段不存在或跨项目 → 404 not_found(kind=fragment)（不泄漏）；
+    3. target_fragment_id != fid → 422 validation_failed(rule=mismatch，F7 同款文案)；
+    4. 绑定版本 ≠ 项目 active → 422 precondition_failed(reason=source_revision_inactive，
+       blocked_by={source, active id 或 null, null})；已 retired → 422
+       precondition_failed(reason=already_retired, blocked_by={fragment, fid, current})；
+    5. 幂等（00 §3）：(owner, command_id) 记录存在 → 经 ChangePreview.payload 取
+       首次 {target_fragment_id, split_point, left_name, right_name} 比对
+       （名称按派生/trim 后有效值，同 F8 确认 2）= 重放 200 原 result_payload
+       （零写零 commit，附 ``_replay``）；不一致 → 422 validation_failed(rule=reused)；
+    6. 命名派生（幂等之后、range 校验之前）：left_name/right_name 缺省 → 派生
+       "<原 name>（左）"/"<原 name>（右）"；派生（或给定，strip 后）须非空且
+       ≤120 → 否则 422 validation_failed(rule=required/max_length)；保存 trimmed；
+    7. split_point 合法性 → 422 range_invalid（冻结五判定：== 端点 → empty
+       （某半空）；越出当前 range → out_of_bounds；否则对两半 validate_range，
+       surrogate_split→proxy_split 映射、其余同名；message 含 canonical 长度、
+       当前 range 与 split_point）；
+    8. 创建 ChangePreview + CommandRecord（单事务，F7/F8 同形）：kind='fragment_split'、
+       payload={target_fragment_id, split_point, left_name, right_name}（trimmed
+       或派生）、baseline 同形（fragment 当前 revision + range_set id/cas）、
+       impact=compute_impact(...)、state='pending'、expires_at=now+1800。
+
+    返回 200 体，**恰 4 字段**（00 §5.1 冻结）：
+    ``{preview_id, kind, baseline, impact}``；重放时附 ``_replay=True``。
+    """
+    # 1) 项目（属主校验，404 不泄漏存在性）
+    p = session.scalar(select(StudioProject).where(StudioProject.id == pid))
+    if p is None or p.owner_id != user.id:
+        raise StudioAPIError.not_found("project", pid)
+
+    # 2) 片段：不存在或不属本项目 → 一律 404（不泄漏存在性）
+    frag = session.scalar(
+        select(Fragment).where(Fragment.id == fid, Fragment.project_id == pid)
+    )
+    if frag is None:
+        raise StudioAPIError.not_found("fragment", fid)
+
+    # 3) target 必须与路径片段一致（F7 同款文案）
+    if target_fragment_id != fid:
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "target_fragment_id",
+                    "rule": "mismatch",
+                    "message": "target_fragment_id 必须与路径片段一致。",
+                }
+            ]
+        )
+
+    # 4) 绑定版本须为项目 active；已退役 → 422（F7 同形，"拆分"文案）
+    if frag.source_revision_id != p.active_source_revision_id:
+        raise StudioAPIError.precondition_failed(
+            "source_revision_inactive",
+            {"kind": "source", "id": p.active_source_revision_id, "revision": None},
+            "该正文版本不是项目当前活跃版本，不能基于它拆分片段。",
+        )
+    rv = session.get(FragmentRevision, frag.current_revision_id)
+    if rv is None:  # 理论上不可达（current_revision_id NOT NULL FK）
+        raise StudioAPIError.internal()
+    current = rv.revision
+    if frag.state == "retired":
+        raise StudioAPIError.precondition_failed(
+            "already_retired",
+            {"kind": "fragment", "id": fid, "revision": current},
+            "该片段已退役，不能再次拆分。",
+        )
+
+    # 命名派生（纯计算；校验短路置于幂等之后——步骤 6）：
+    # 给定名 → strip；缺省 → 派生 "<原 name>（左）"/"<原 name>（右）"
+    left_s = left_name.strip() if left_name is not None else f"{frag.name}（左）"
+    right_s = right_name.strip() if right_name is not None else f"{frag.name}（右）"
+
+    # 5) 幂等（00 §3；404/mismatch 之后、其余之前）：读查询，先于写事务
+    record = session.scalar(
+        select(CommandRecord).where(
+            CommandRecord.owner_id == user.id,
+            CommandRecord.command_id == command_id,
+        )
+    )
+    if record is not None:
+        payload = json.loads(record.result_payload) if record.result_payload else {}
+        if payload.get("kind") == "fragment_split":
+            pv = session.get(ChangePreview, payload.get("preview_id"))
+            pv_payload = (
+                json.loads(pv.payload) if (pv is not None and pv.payload) else {}
+            )
+            # 与首次比对（同 F8 确认 2）：target/split_point 与派生/trim 后有效名
+            # （存储 payload 即 trimmed/派生值）
+            if (
+                pv_payload.get("target_fragment_id") == fid
+                and pv_payload.get("split_point") == split_point
+                and pv_payload.get("left_name") == left_s
+                and pv_payload.get("right_name") == right_s
+            ):
+                # 重放：返回首次 result_payload，零写零 commit
+                return dict(payload, _replay=True)
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "command_id",
+                    "rule": "reused",
+                    "message": "command_id 已被其他命令使用，请生成新的。",
+                }
+            ]
+        )
+
+    # 6) 命名派生校验（幂等之后、range 校验之前）：非空且 ≤120
+    if not left_s:
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "left_name",
+                    "rule": "required",
+                    "message": "left_name 去除首尾空白后不能为空。",
+                }
+            ]
+        )
+    if len(left_s) > 120:
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "left_name",
+                    "rule": "max_length",
+                    "message": f"left_name 长度不得超过 120 个字符（当前 {len(left_s)}）。",
+                }
+            ]
+        )
+    if not right_s:
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "right_name",
+                    "rule": "required",
+                    "message": "right_name 去除首尾空白后不能为空。",
+                }
+            ]
+        )
+    if len(right_s) > 120:
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "right_name",
+                    "rule": "max_length",
+                    "message": f"right_name 长度不得超过 120 个字符（当前 {len(right_s)}）。",
+                }
+            ]
+        )
+
+    # 读事务快照：canonical（range 合法性）+ 当前 range（两半判定 + baseline）
+    sr = session.scalar(
+        select(SourceRevision).where(SourceRevision.id == frag.source_revision_id)
+    )
+    canonical = sr.canonical_content
+    n = utf16_len(canonical)
+    rng_start = rv.range_start
+    rng_end = rv.range_end
+
+    # 7) split_point 合法性（冻结五判定）：== 端点 → empty；越界 → out_of_bounds；
+    #    否则对两半 validate_range（surrogate_split→proxy_split，其余同名）
+    if split_point == rng_start or split_point == rng_end:
+        raise StudioAPIError.range_invalid(
+            "empty",
+            f"split_point 等于片段范围端点，无法形成非空半段：split_point={split_point}，"
+            f"当前范围 [{rng_start}, {rng_end})（正文长度 {n} 个 UTF-16 单位）。",
+        )
+    if split_point < rng_start or split_point > rng_end:
+        raise StudioAPIError.range_invalid(
+            "out_of_bounds",
+            f"split_point 超出片段范围：split_point={split_point}，"
+            f"当前范围 [{rng_start}, {rng_end})（正文长度 {n} 个 UTF-16 单位）。",
+        )
+    left_verdict = validate_range(canonical, rng_start, split_point)
+    right_verdict = validate_range(canonical, split_point, rng_end)
+    if left_verdict != "ok":
+        which, verdict = "左半段", left_verdict
+    elif right_verdict != "ok":
+        which, verdict = "右半段", right_verdict
+    else:
+        verdict = None
+    if verdict is not None:
+        rule = "proxy_split" if verdict == "surrogate_split" else verdict
+        messages = {
+            "empty": f"{which}为空：split_point={split_point}，当前范围 [{rng_start}, {rng_end})（正文长度 {n} 个 UTF-16 单位）。",
+            "out_of_bounds": f"{which}越界：split_point={split_point}，当前范围 [{rng_start}, {rng_end})（正文长度 {n} 个 UTF-16 单位）。",
+            "proxy_split": f"{which}边界劈开了代理对：split_point={split_point}，当前范围 [{rng_start}, {rng_end})（正文长度 {n} 个 UTF-16 单位）。",
+            "blank": f"{which}内容全为空白：split_point={split_point}，当前范围 [{rng_start}, {rng_end})（正文长度 {n} 个 UTF-16 单位）。",
+            "non_integer": f"split_point 必须为整数：split_point={split_point}，当前范围 [{rng_start}, {rng_end})（正文长度 {n} 个 UTF-16 单位）。",
+        }
+        raise StudioAPIError.range_invalid(rule, messages[rule])
+
+    # 读事务快照（baseline 冻结 + impact 计算）
+    S = session.scalar(select(RangeSet).where(RangeSet.id == frag.range_set_id))
+    baseline = {
+        "fragment": {"kind": "fragment", "id": fid, "revision": current},
+        "range_set": {
+            "id": S.id if S is not None else None,
+            "cas": S.cas_revision if S is not None else None,
+        },
+    }
+    impact = compute_impact(session, pid, fid)
+    session.commit()  # 结束读事务；写阶段另起事务
+
+    # 8) 写事务：preview 是一次幂等写（单事务 + CommandRecord，无半次保存）
+    now = time.time()
+    preview_id = make_ulid()
+    body = {
+        "preview_id": preview_id,
+        "kind": "fragment_split",
+        "baseline": baseline,
+        "impact": impact,
+    }
+    with session.begin():
+        session.add(
+            ChangePreview(
+                id=preview_id,
+                project_id=pid,
+                owner_id=user.id,
+                kind="fragment_split",
+                payload=json.dumps(
+                    {
+                        "target_fragment_id": fid,
+                        "split_point": split_point,
+                        "left_name": left_s,
+                        "right_name": right_s,
+                    },
+                    ensure_ascii=False,
+                ),
+                baseline=json.dumps(baseline, ensure_ascii=False, sort_keys=True),
+                impact=json.dumps(impact, ensure_ascii=False, sort_keys=True),
+                state="pending",
+                decision_id=None,
+                created_at=now,
+                resolved_at=None,
+                expires_at=now + _PREVIEW_TTL,
+            )
+        )
+        session.add(
+            CommandRecord(
+                id=make_ulid(),
+                owner_id=user.id,
+                project_id=pid,
+                command_id=command_id,
+                result_payload=json.dumps(body, ensure_ascii=False),
+                created_at=now,
+            )
+        )
+    return body
+
+
+def apply_fragment_split(
+    session,
+    user,
+    pid,
+    fid,
+    preview_id,
+    command_id,
+    expected_revision,
+    expected_range_set_revision,
+) -> dict:
+    """F9 应用片段拆分（附录 02 §2 F9 + 00 §5；原片段退役不新建其 revision，
+    左/右新片段各得一行 revision=1（reason='split'、predecessor=[原 fid]）、
+    state='candidate'；range_set 是 CAS 唯一写点之一，cas+1——附录 02 §3：
+    F1/F8/F9/F10 的 apply 是 range_set.cas_revision 唯一写点）。
+
+    校验顺序（按序短路；幂等先于状态检查——SOURCE-05-b 裁定 1）：
+    1. 项目 404；2. 片段 404（不泄漏）；
+    3. preview 不存在或跨项目 → 404 not_found(kind=preview)；kind≠'fragment_split'
+       或 payload 的 target≠fid → 422 validation_failed(rule=mismatch，F7 同款)；
+    4. 幂等（00 §3；先于状态检查）：(owner, command_id) 记录存在 → 与首次一致
+       （original.object_ref.id==fid 且 original.object_ref.revision==expected_revision
+       ——拆分不推进原 revision；且 200 体 left/right 段引用的片段行在 DB 中存在）
+       = 重放 200 原 result_payload（零写零 commit）；不一致 → 422 reused；
+    5. preview 非 pending：'expired' 或 (pending 且 now>expires_at) → 409 preview_stale
+       {preview_id, conflicts:[{object:{preview,id}, expected:'pending',
+       actual:'expired'}]} 且惰性置 'expired'（00 §5.4）；'applied'/'rejected'/
+       'superseded' → 409 preview_stale 同形（actual=state，终态不可逆，不再改写）；
+    6. CAS（在 baseline 比对之前，冲突先报）：expected_revision≠current → 409
+       revision_conflict(object={fragment,fid})；expected_range_set_revision≠current
+       cas → 409 revision_conflict(object={range_set,id})；
+    7. baseline 比对（写事务内重读为权威，失配项全部收集，00 §5.2）：fragment
+       revision / range_set id+cas 失配 → 409 preview_stale{preview_id, conflicts:[全部]}
+       且预览置 'superseded'+resolved_at（独立提交）；
+    8. 执行（单事务，无半次保存；写序冻结）：UPDATE 原片段 retired → INSERT 左
+       revision（flush）→ INSERT 左 fragment → INSERT 右 revision（flush）→
+       INSERT 右 fragment → UPDATE range_set（cas+1）→ INSERT ReviewDecision
+       （flush）→ UPDATE preview（applied）→ INSERT CommandRecord。
+
+    返回 200 体（F9 冻结形状：{left, right, original}；left/right 各
+    object_ref(revision=1)+range；original 为 object_ref(revision=current)
+    +state='retired'）；重放时附 ``_replay=True``。
+    """
+    # 1) 项目（属主校验，404 不泄漏存在性）
+    p = session.scalar(select(StudioProject).where(StudioProject.id == pid))
+    if p is None or p.owner_id != user.id:
+        raise StudioAPIError.not_found("project", pid)
+
+    # 2) 片段：不存在或不属本项目 → 一律 404（不泄漏存在性）
+    frag = session.scalar(
+        select(Fragment).where(Fragment.id == fid, Fragment.project_id == pid)
+    )
+    if frag is None:
+        raise StudioAPIError.not_found("fragment", fid)
+
+    # 3) preview：不存在或跨项目 → 404（kind=preview）
+    preview = session.scalar(
+        select(ChangePreview).where(
+            ChangePreview.id == preview_id, ChangePreview.project_id == pid
+        )
+    )
+    if preview is None:
+        raise StudioAPIError.not_found("preview", preview_id)
+    pv_payload = json.loads(preview.payload) if preview.payload else {}
+    if preview.kind != "fragment_split" or pv_payload.get("target_fragment_id") != fid:
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "target_fragment_id",
+                    "rule": "mismatch",
+                    "message": "target_fragment_id 必须与路径片段一致。",
+                }
+            ]
+        )
+
+    # 4) 幂等（00 §3；先于状态检查——原命令重放不受预览终态阻断）
+    record = session.scalar(
+        select(CommandRecord).where(
+            CommandRecord.owner_id == user.id,
+            CommandRecord.command_id == command_id,
+        )
+    )
+    if record is not None:
+        payload = json.loads(record.result_payload) if record.result_payload else {}
+        oref = (payload.get("original") or {}).get("object_ref") or {}
+        left_ref = (payload.get("left") or {}).get("object_ref") or {}
+        right_ref = (payload.get("right") or {}).get("object_ref") or {}
+        if (
+            oref.get("id") == fid
+            and oref.get("revision") == expected_revision
+            and left_ref.get("id")
+            and right_ref.get("id")
+            and session.get(Fragment, left_ref.get("id")) is not None
+            and session.get(Fragment, right_ref.get("id")) is not None
+        ):
+            # 重放：返回首次 result_payload，零写零 commit
+            return dict(payload, _replay=True)
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "command_id",
+                    "rule": "reused",
+                    "message": "command_id 已被其他命令使用，请生成新的。",
+                }
+            ]
+        )
+
+    # 5) 状态检查：非 pending（或 pending 已过 TTL）→ 409 preview_stale
+    now = time.time()
+    expired = preview.state == "expired" or (
+        preview.state == "pending" and now > preview.expires_at
+    )
+    if preview.state != "pending" or expired:
+        session.commit()  # 结束读事务（惰性置位需独立事务）
+        if expired and preview.state == "pending":
+            with session.begin():
+                session.execute(
+                    update(ChangePreview)
+                    .where(ChangePreview.id == preview_id)
+                    .values(state="expired", resolved_at=now)
+                )
+        actual = "expired" if expired else preview.state
+        err = StudioAPIError.preview_stale(
+            preview_id, "预览已过期或状态已变化，请重新预览。"
+        )
+        err.details["conflicts"] = [
+            {
+                "object": {"kind": "preview", "id": preview_id},
+                "expected": "pending",
+                "actual": actual,
+            }
+        ]
+        raise err
+
+    # 6) 读阶段：当前 revision + cas（CAS 检查在 baseline 比对之前，冲突先报）
+    rv = session.get(FragmentRevision, frag.current_revision_id)
+    if rv is None:  # 理论上不可达（current_revision_id NOT NULL FK）
+        raise StudioAPIError.internal()
+    current = rv.revision
+    S = session.scalar(select(RangeSet).where(RangeSet.id == frag.range_set_id))
+    set_id = S.id if S is not None else None
+    cas = S.cas_revision if S is not None else None
+    if expected_revision != current:
+        raise StudioAPIError.revision_conflict(
+            "fragment",
+            fid,
+            expected_revision,
+            current,
+            "片段版本已变化，请刷新片段详情后重试。",
+        )
+    if expected_range_set_revision != cas:
+        raise StudioAPIError.revision_conflict(
+            "range_set",
+            set_id,
+            expected_range_set_revision,
+            cas,
+            "范围集合版本已变化，请刷新片段列表后重试。",
+        )
+
+    # 读事务快照（执行字段 + baseline；写阶段不再回读这些字段）
+    src_id = frag.source_revision_id
+    rng_start = rv.range_start
+    rng_end = rv.range_end
+    sp = pv_payload.get("split_point")
+    left_name_s = pv_payload.get("left_name")
+    right_name_s = pv_payload.get("right_name")
+    base = json.loads(preview.baseline) if preview.baseline else {}
+    session.commit()  # 结束读事务；写阶段另起事务
+
+    # 7) 写事务：首条语句即写语句（no-op 自赋值抢 DB 级写锁，同 F7/F8）→ 获锁后
+    # 重读 → baseline 比对（00 §5.2 写事务内为权威，失配项全部收集）
+    now = time.time()
+    decision_id = make_ulid()
+    left_id = make_ulid()
+    right_id = make_ulid()
+    left_rev_id = make_ulid()
+    right_rev_id = make_ulid()
+    body = {
+        "left": {
+            "object_ref": {"kind": "fragment", "id": left_id, "revision": 1},
+            "range": {"start": rng_start, "end": sp},
+        },
+        "right": {
+            "object_ref": {"kind": "fragment", "id": right_id, "revision": 1},
+            "range": {"start": sp, "end": rng_end},
+        },
+        "original": {
+            "object_ref": {"kind": "fragment", "id": fid, "revision": current},
+            "state": "retired",
+        },
+    }
+    if not session.in_transaction():
+        session.begin()
+    try:
+        # no-op 自赋值抢 DB 级写锁（SQLite 单写者：获锁后阻塞全部并发写）
+        session.execute(
+            update(Fragment)
+            .where(Fragment.id == fid)
+            .values(updated_at=Fragment.updated_at)
+        )
+        # 获锁后重读（WAL：写事务可见此前全部已提交数据）
+        frag_now = session.get(Fragment, fid)
+        rv_now = session.get(FragmentRevision, frag_now.current_revision_id)
+        S_now = session.scalar(
+            select(RangeSet).where(RangeSet.id == frag_now.range_set_id)
+        )
+        cur_rev = rv_now.revision
+        cur_cas = S_now.cas_revision if S_now is not None else None
+        conflicts: list[dict] = []
+        if base["fragment"]["revision"] != cur_rev:
+            conflicts.append(
+                {
+                    "object": {"kind": "fragment", "id": fid},
+                    "expected": base["fragment"]["revision"],
+                    "actual": cur_rev,
+                }
+            )
+        if (
+            base["range_set"]["id"] != (S_now.id if S_now is not None else None)
+            or base["range_set"]["cas"] != cur_cas
+        ):
+            conflicts.append(
+                {
+                    "object": {"kind": "range_set", "id": base["range_set"]["id"]},
+                    "expected": base["range_set"]["cas"],
+                    "actual": cur_cas,
+                }
+            )
+        if conflicts:
+            # baseline 已变：预览 → superseded（惰性终态，独立提交）后 409
+            session.execute(
+                update(ChangePreview)
+                .where(ChangePreview.id == preview_id)
+                .values(state="superseded", resolved_at=now)
+            )
+            session.commit()
+            err = StudioAPIError.preview_stale(
+                preview_id,
+                "预览基准已变化（片段版本或范围集合版本），请重新预览。",
+            )
+            err.details["conflicts"] = conflicts
+            raise err
+
+        # 8) 执行（单事务，无半次保存）；写序冻结：UPDATE 原片段 retired →
+        # 左 revision（flush）→ 左 fragment → 右 revision（flush）→ 右 fragment
+        # → range_set cas+1 → ReviewDecision（flush）→ preview applied →
+        # CommandRecord。新 revision 行先落（deferred FK 环同事务先后皆可，
+        # 显式 flush 更稳）。
+        session.execute(
+            update(Fragment)
+            .where(Fragment.id == fid)
+            .values(state="retired", retired_at=now, updated_at=now)
+        )
+        session.add(
+            FragmentRevision(
+                id=left_rev_id,
+                fragment_id=left_id,
+                revision=1,
+                source_revision_id=src_id,
+                range_start=rng_start,
+                range_end=sp,
+                reason="split",
+                predecessor_fragment_ids=json.dumps([fid], ensure_ascii=False),
+                created_at=now,
+            )
+        )
+        session.flush()  # 先落左 revision 行（fragment 指向它之前须已存在）
+        session.add(
+            Fragment(
+                id=left_id,
+                project_id=frag_now.project_id,
+                source_revision_id=src_id,
+                range_set_id=frag_now.range_set_id,
+                name=left_name_s,
+                summary=None,
+                state="candidate",
+                current_revision_id=left_rev_id,
+                created_at=now,
+                updated_at=now,
+                retired_at=None,
+            )
+        )
+        session.add(
+            FragmentRevision(
+                id=right_rev_id,
+                fragment_id=right_id,
+                revision=1,
+                source_revision_id=src_id,
+                range_start=sp,
+                range_end=rng_end,
+                reason="split",
+                predecessor_fragment_ids=json.dumps([fid], ensure_ascii=False),
+                created_at=now,
+            )
+        )
+        session.flush()  # 先落右 revision 行
+        session.add(
+            Fragment(
+                id=right_id,
+                project_id=frag_now.project_id,
+                source_revision_id=src_id,
+                range_set_id=frag_now.range_set_id,
+                name=right_name_s,
+                summary=None,
+                state="candidate",
+                current_revision_id=right_rev_id,
+                created_at=now,
+                updated_at=now,
+                retired_at=None,
+            )
+        )
+        # range_set：CAS 唯一写点之一——cas+1（附录 02 §3：F1/F8/F9/F10 的 apply 唯一写 cas）
+        session.execute(
+            update(RangeSet)
+            .where(RangeSet.id == frag_now.range_set_id)
+            .values(cas_revision=cur_cas + 1)
+        )
+        session.add(
+            ReviewDecision(
+                id=decision_id,
+                project_id=pid,
+                owner_id=user.id,
+                preview_id=preview_id,
+                target_ref=json.dumps(
+                    {"kind": "fragment", "id": fid, "revision": cur_rev},
                     ensure_ascii=False,
                 ),
                 decision="applied",

@@ -1960,11 +1960,37 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、tests/studio/test_fragment_changes.py",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/sources/{fragment_service,fragments_api}.py + tests/studio/test_fragment_changes.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor(948a6ca1)",
+          "date": "2026-10-06",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-06",
+        "contract_version": "2.8",
+        "tested_baseline": "25c5623 + 3 文件（本卡提交）",
+        "scope": "fragment_split_command_f9",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 312/312（10 新 T12–T21 + 302 既有零回归，含 F7 44 条零回归硬门槛）；代码审查：preview 八步冻结短路（404→mismatch→非 active/已 retired→幂等（裁定 1 位置）→命名派生校验→split_point 五判定，preview.payload 存 trimmed/派生有效值；impact 复用 reviews/impact.compute_impact；preview 单事务 + CommandRecord 幂等写、expires_at=now+_PREVIEW_TTL）；apply=幂等先于状态检查→非 pending 409（惰性 expired 独立提交）→CAS 先报（fragment→range_set）→写事务首语句 no-op 抢锁→WAL 重读→baseline 失配全收集+superseded(独立提交)→409；执行写序 UPDATE 原 retired→INSERT 左 revision(flush)→左 fragment→右 revision(flush)→右 fragment→range_set cas+1→ReviewDecision(先 INSERT)→preview applied→CommandRecord 单事务。",
+          "F9 冻结行为逐条：401×2；404 不泄漏(kind=fragment/preview)；mismatch 422；非 active 422 + 已 retired 422；split_point 五判定（端点 empty/越界 out_of_bounds/劈代理对 proxy_split/半段全空白 blank，message 含 canonical 长度+当前 range+split_point）；命名派生 trim+非空+≤120（required/max_length）；preview 200 恰 4 字段+baseline 精确+impact 三键；apply 200 冻结形状 {left,right,original}（两新 ID 各 revision=1、reason=split、predecessor=[原 fid]、state=candidate；原 retired 不新建 revision；cas+1；digest 独立重算相等）；CAS 冲突无半次（superseded 且片段/cas/revision/决定全部零变化）；R11 旧引用逐字段不迁移（SourceRelation 仍指原 fid+rev1、job payload 不变）；preview/apply 重放零副作用（无重复创建）。"
+        ],
+        "contract_question_ruling": [
+          "确认1（F9 命名缺省派生 \"<原 name>（左）\"/\"<原 name>（右）\"）：F9 行将 left_name/right_name 标为可选但未冻结缺省行为；fragment.name NOT NULL(120) 约束下缺省须有确定来源——执行器采用派生默认，派生/给定一律 strip 后校验非空与 ≤120（422 validation_failed rule=required/max_length）；派生/trim 后有效值随 preview.payload 持久化，作为幂等重放比对基准（F8 确认 2 同型）。附录行为不变，不升契约版本。",
+          "确认2（F9 apply 幂等：original.revision==expected_revision + left/right 行存在）：拆分退役原片段但不推进其 revision（200 体 original.object_ref.revision==current），SOURCE-06 确认 3 的 expected+1 推进型判定不适用；执行器回到 F7 非推进型判定（original.object_ref.id==fid 且 revision==expected_revision），并加首次结果 left/right 片段行 DB 存在校验——拆分 200 体的实体身份是两个新 ID，行存在即\"与首次一致\"的完备证据，足以区分同 fid 的跨命令复用。F10 同型命令沿用此变体。"
+        ],
+        "evidence": [
+          "backend/studio/sources/fragment_service.py",
+          "backend/studio/sources/fragments_api.py",
+          "tests/studio/test_fragment_changes.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-08",

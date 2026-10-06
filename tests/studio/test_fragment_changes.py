@@ -2,8 +2,9 @@
 /api/studio/projects/{pid}/fragments/{fid}/boundary 与
 /api/studio/projects/{pid}/fragments/{fid}/boundary/apply 行为验证。
 
-本文件覆盖 F8–F10（边界/拆分/合并）preview/apply 命令族；本卡（SOURCE-06）
-实现并验收 F8 边界，F9/F10 在后续子卡填充（复用同一 fixture/helper 模式）。
+本文件覆盖 F8–F10（边界/拆分/合并）preview/apply 命令族；SOURCE-06 实现并
+验收 F8 边界，SOURCE-07 实现并验收 F9 拆分，F10 合并在后续子卡填充（复用同一
+fixture/helper 模式）。
 
 fixture/helper 从 tests/studio/test_fragments.py 复制模式（db fixture、
 _register/_auth/_cmd/_create_project/_import/_import_active/_create_fragment/
@@ -821,3 +822,587 @@ def test_t11_replay_zero_side_effects(db, client):
     assert len(_fragment_revisions(fid)) == revs_before  # 零副作用
     assert _count("studio_review_decisions") == dec_before  # 零副作用
     assert _count("studio_change_previews") == 1  # 预览仍恰 1 行
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# F9 片段拆分 helper（复用本文件 fixture/helper 模式；不写 STUDIO_* env）
+# ────────────────────────────────────────────────────────────────────────────
+def _split_preview(
+    client,
+    token,
+    pid,
+    fid,
+    split_point,
+    left_name=None,
+    right_name=None,
+    target=None,
+    command_id=None,
+):
+    return client.post(
+        f"/api/studio/projects/{pid}/fragments/{fid}/split",
+        json={
+            "target_fragment_id": target if target is not None else fid,
+            "split_point": split_point,
+            "left_name": left_name,
+            "right_name": right_name,
+            "command_id": command_id or _cmd(),
+        },
+        headers=_auth(token),
+    )
+
+
+def _split_apply(
+    client,
+    token,
+    pid,
+    fid,
+    preview_id,
+    command_id=None,
+    expected_revision=1,
+    expected_range_set_revision=None,
+):
+    return client.post(
+        f"/api/studio/projects/{pid}/fragments/{fid}/split/apply",
+        json={
+            "preview_id": preview_id,
+            "command_id": command_id or _cmd(),
+            "expected_revision": expected_revision,
+            "expected_range_set_revision": expected_range_set_revision,
+        },
+        headers=_auth(token),
+    )
+
+
+def _decision_rows() -> list:
+    with Session() as s:
+        return s.execute(select(ReviewDecision)).scalars().all()
+
+
+# F9 空白半段用例正文（7 字符：3 空格 + 'a' + 3 空格）
+TEXT_D = "   a   "
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T12 无 token → 401（preview/apply 各一）
+# ────────────────────────────────────────────────────────────────────────────
+def test_t12_no_token_401(db, client):
+    ghost = "03" * 13
+    pid = "01" * 13
+    r1 = client.post(
+        f"/api/studio/projects/{pid}/fragments/{ghost}/split",
+        json={
+            "target_fragment_id": ghost,
+            "split_point": 4,
+            "command_id": _cmd(),
+        },
+    )
+    assert r1.status_code == 401
+    assert r1.json()["error"]["code"] == "unauthenticated"
+    r2 = client.post(
+        f"/api/studio/projects/{pid}/fragments/{ghost}/split/apply",
+        json={
+            "preview_id": ghost,
+            "command_id": _cmd(),
+            "expected_revision": 1,
+            "expected_range_set_revision": 1,
+        },
+    )
+    assert r2.status_code == 401
+    assert r2.json()["error"]["code"] == "unauthenticated"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T13 preview fid 不存在（26 字符字面量）/跨项目 → 404 kind=fragment（不泄漏）；
+#     apply preview 不存在 → 404 kind=preview
+# ────────────────────────────────────────────────────────────────────────────
+def test_t13_unknown_and_cross_project_404(db, client):
+    ta = _register(client, "f9_t13_alice")
+    tc = _register(client, "f9_t13_carol")
+    pa = _create_project(client, ta, "T13A")
+    pc = _create_project(client, tc, "T13C")
+    rev_a = _import_active(client, ta, pa, TEXT_A)
+    rev_c = _import_active(client, tc, pc, TEXT_A)
+    rc = _create_fragment(client, tc, pc, rev_c["id"], 0, 5, "T13C")
+    assert rc.status_code == 201, rc.text
+    fid_c = rc.json()["object_ref"]["id"]
+    ra = _create_fragment(client, ta, pa, rev_a["id"], 0, 5, "T13A")
+    assert ra.status_code == 201, ra.text
+    fid_a = ra.json()["object_ref"]["id"]
+
+    ghost = "03" * 13  # 26 字符
+    # preview fid 不存在 → 404 kind=fragment
+    r = _split_preview(client, ta, pa, ghost, 2)
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["code"] == "not_found"
+    assert r.json()["error"]["details"] == {"kind": "fragment", "id": ghost}
+    # preview 跨项目 fid → 404 kind=fragment（不泄漏存在性）
+    r = _split_preview(client, ta, pa, fid_c, 2)
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["details"] == {"kind": "fragment", "id": fid_c}
+    # apply preview 不存在 → 404 kind=preview
+    r = _split_apply(
+        client, ta, pa, fid_a, ghost,
+        expected_revision=1, expected_range_set_revision=1,
+    )
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["code"] == "not_found"
+    assert r.json()["error"]["details"] == {"kind": "preview", "id": ghost}
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T14 target ≠ 路径 → 422 mismatch（preview 与 apply 各一）
+# ────────────────────────────────────────────────────────────────────────────
+def test_t14_target_mismatch_422(db, client):
+    token = _register(client, "f9_t14_bob")
+    pid = _create_project(client, token, "T14Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rcx = _create_fragment(client, token, pid, rev["id"], 0, 5, "T14x")
+    assert rcx.status_code == 201, rcx.text
+    fid_x = rcx.json()["object_ref"]["id"]
+    rcy = _create_fragment(client, token, pid, rev["id"], 5, 10, "T14y", expected=2)
+    assert rcy.status_code == 201, rcy.text
+    fid_y = rcy.json()["object_ref"]["id"]
+    cas = _range_sets(pid, rev["id"])[0].cas_revision
+
+    # preview：target ≠ 路径 → 422 mismatch
+    r = _split_preview(client, token, pid, fid_x, 2, target="04" * 13)
+    assert r.status_code == 422, r.text
+    v = r.json()["error"]["details"]["violations"][0]
+    assert (v["field"], v["rule"]) == ("target_fragment_id", "mismatch")
+    assert v["message"] == "target_fragment_id 必须与路径片段一致。"
+
+    # apply：preview 的 target（X）≠ 路径 fid（Y）→ 422 mismatch
+    rp = _split_preview(client, token, pid, fid_x, 2)
+    assert rp.status_code == 200, rp.text
+    r = _split_apply(
+        client, token, pid, fid_y, rp.json()["preview_id"],
+        expected_revision=1, expected_range_set_revision=cas,
+    )
+    assert r.status_code == 422, r.text
+    v = r.json()["error"]["details"]["violations"][0]
+    assert (v["field"], v["rule"]) == ("target_fragment_id", "mismatch")
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T15 非 active 版本片段 preview（直改 active 构造，同 F8 T4 模式）→
+#     422 source_revision_inactive；已 retired（直改 state+retired_at）→
+#     422 already_retired
+# ────────────────────────────────────────────────────────────────────────────
+def test_t15_inactive_and_retired_422(db, client):
+    # (a) 非 active 版本
+    token_a = _register(client, "f9_t15_alice")
+    pid_a = _create_project(client, token_a, "T15a")
+    v1 = _import_active(client, token_a, pid_a, TEXT_A)
+    time.sleep(0.002)
+    r2 = _import(client, token_a, pid_a, "second version content")
+    assert r2.status_code == 201, r2.text
+    v2 = r2.json()
+    rc = _create_fragment(client, token_a, pid_a, v1["id"], 0, 10, "T15a")
+    assert rc.status_code == 201, rc.text
+    fid_a = rc.json()["object_ref"]["id"]
+    # 直改 active 指针 → v2（S4/S5 未放行，测试库专用构造）
+    with Session() as s:
+        s.execute(
+            update(StudioProject)
+            .where(StudioProject.id == pid_a)
+            .values(active_source_revision_id=v2["id"])
+        )
+        s.commit()
+    r = _split_preview(client, token_a, pid_a, fid_a, 4)
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "precondition_failed"
+    assert err["details"]["reason"] == "source_revision_inactive"
+    assert err["details"]["blocked_by"] == {"kind": "source", "id": v2["id"], "revision": None}
+
+    # (b) 已 retired（直改 state + retired_at）
+    token_b = _register(client, "f9_t15_bob")
+    pid_b = _create_project(client, token_b, "T15b")
+    rev_b = _import_active(client, token_b, pid_b, TEXT_A)
+    rc = _create_fragment(client, token_b, pid_b, rev_b["id"], 0, 10, "T15b")
+    assert rc.status_code == 201, rc.text
+    fid_b = rc.json()["object_ref"]["id"]
+    now = time.time()
+    with Session() as s:
+        s.execute(
+            update(Fragment)
+            .where(Fragment.id == fid_b)
+            .values(state="retired", retired_at=now)
+        )
+        s.commit()
+    r = _split_preview(client, token_b, pid_b, fid_b, 4)
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "precondition_failed"
+    assert err["details"]["reason"] == "already_retired"
+    assert err["details"]["blocked_by"] == {"kind": "fragment", "id": fid_b, "revision": 1}
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T16 split_point 非法（冻结五判定）：片段 {0,10} @ TEXT_A（20 字符无空白）：
+#     =0/=10 → empty；=11/=-1 → out_of_bounds；TEXT_B {0,6} @3 → proxy_split；
+#     "   a   " {0,7} @3 → 左半全空白 → blank（断言 rule 与 message 含长度/区间）
+# ────────────────────────────────────────────────────────────────────────────
+def test_t16_invalid_split_point_422(db, client):
+    # (a)–(d) TEXT_A（len 20 无空白），片段 {0,10}
+    token_a = _register(client, "f9_t16_alice")
+    pid_a = _create_project(client, token_a, "T16a")
+    rev_a = _import_active(client, token_a, pid_a, TEXT_A)
+    f_a = _create_fragment(client, token_a, pid_a, rev_a["id"], 0, 10, "T16a")
+    assert f_a.status_code == 201, f_a.text
+    fid_a = f_a.json()["object_ref"]["id"]
+
+    r = _split_preview(client, token_a, pid_a, fid_a, 0)
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "range_invalid"
+    assert r.json()["error"]["details"]["rule"] == "empty"
+    msg = r.json()["error"]["message"]
+    assert "20" in msg and "[0, 10)" in msg and "split_point=0" in msg
+
+    r = _split_preview(client, token_a, pid_a, fid_a, 10)
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "range_invalid"
+    assert r.json()["error"]["details"]["rule"] == "empty"
+    msg = r.json()["error"]["message"]
+    assert "20" in msg and "[0, 10)" in msg and "split_point=10" in msg
+
+    r = _split_preview(client, token_a, pid_a, fid_a, 11)
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "range_invalid"
+    assert r.json()["error"]["details"]["rule"] == "out_of_bounds"
+    msg = r.json()["error"]["message"]
+    assert "20" in msg and "[0, 10)" in msg and "split_point=11" in msg
+
+    r = _split_preview(client, token_a, pid_a, fid_a, -1)
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "range_invalid"
+    assert r.json()["error"]["details"]["rule"] == "out_of_bounds"
+    msg = r.json()["error"]["message"]
+    assert "20" in msg and "[0, 10)" in msg and "split_point=-1" in msg
+
+    # (e) TEXT_B "aa🚀aa"（UTF-16 长 6；2/3 为 🚀 代理对内侧），片段 {0,6} @3
+    token_b = _register(client, "f9_t16_bob")
+    pid_b = _create_project(client, token_b, "T16b")
+    rev_b = _import_active(client, token_b, pid_b, TEXT_B)
+    f_b = _create_fragment(client, token_b, pid_b, rev_b["id"], 0, 6, "T16b")
+    assert f_b.status_code == 201, f_b.text
+    fid_b = f_b.json()["object_ref"]["id"]
+    r = _split_preview(client, token_b, pid_b, fid_b, 3)
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "range_invalid"
+    assert r.json()["error"]["details"]["rule"] == "proxy_split"
+    msg = r.json()["error"]["message"]
+    assert "6" in msg and "[0, 6)" in msg and "split_point=3" in msg
+
+    # (f) TEXT_D "   a   "（7 字符），片段 {0,7} @3 → 左半 "   " 全空白 → blank
+    token_c = _register(client, "f9_t16_carol")
+    pid_c = _create_project(client, token_c, "T16c")
+    rev_c = _import_active(client, token_c, pid_c, TEXT_D)
+    f_c = _create_fragment(client, token_c, pid_c, rev_c["id"], 0, 7, "T16c")
+    assert f_c.status_code == 201, f_c.text
+    fid_c = f_c.json()["object_ref"]["id"]
+    r = _split_preview(client, token_c, pid_c, fid_c, 3)
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "range_invalid"
+    assert r.json()["error"]["details"]["rule"] == "blank"
+    msg = r.json()["error"]["message"]
+    assert "7" in msg and "[0, 7)" in msg and "split_point=3" in msg
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T17 有效拆分（{0,10} @ TEXT_A，split_point=4，无 name）：preview 200 恰 4
+#     字段（kind=fragment_split、baseline 精确、impact 三键）；apply 200
+#     冻结形状 + DB 全量断言（原片段退役且 revision 行数不变、两新片段各 1
+#     revision、cas+1、决定恰 1 行 digest 独立重算、preview applied）
+# ────────────────────────────────────────────────────────────────────────────
+def test_t17_valid_split_full(db, client):
+    token = _register(client, "f9_t17_dave")
+    pid = _create_project(client, token, "T17Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, rev["id"], 0, 10, "T17")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    sets = _range_sets(pid, rev["id"])
+    assert len(sets) == 1
+    set_id = sets[0].id
+    cas0 = sets[0].cas_revision
+
+    # preview：200 恰 4 字段
+    rp = _split_preview(client, token, pid, fid, 4)
+    assert rp.status_code == 200, rp.text
+    body = rp.json()
+    assert set(body.keys()) == {"preview_id", "kind", "baseline", "impact"}
+    assert body["kind"] == "fragment_split"
+    assert body["baseline"] == {
+        "fragment": {"kind": "fragment", "id": fid, "revision": 1},
+        "range_set": {"id": set_id, "cas": cas0},
+    }
+    assert body["impact"] == {"affected": [], "needs_review": [], "preservable": []}
+    preview_id = body["preview_id"]
+
+    # apply：200 冻结形状
+    ra = _split_apply(
+        client, token, pid, fid, preview_id,
+        expected_revision=1, expected_range_set_revision=cas0,
+    )
+    assert ra.status_code == 200, ra.text
+    ab = ra.json()
+    assert set(ab.keys()) == {"left", "right", "original"}
+    left, right, orig = ab["left"], ab["right"], ab["original"]
+    assert left["object_ref"] == {"kind": "fragment", "id": left["object_ref"]["id"], "revision": 1}
+    assert left["range"] == {"start": 0, "end": 4}
+    assert right["object_ref"]["revision"] == 1
+    assert right["range"] == {"start": 4, "end": 10}
+    assert orig == {"object_ref": {"kind": "fragment", "id": fid, "revision": 1}, "state": "retired"}
+    left_id, right_id = left["object_ref"]["id"], right["object_ref"]["id"]
+    assert left_id != right_id and left_id != fid and right_id != fid
+
+    # DB：原片段 retired（retired_at 非空）且原 revision 行数不变
+    with Session() as s:
+        frag_now = s.get(Fragment, fid)
+    assert frag_now.state == "retired"
+    assert frag_now.retired_at is not None
+    assert len(_fragment_revisions(fid)) == 1
+
+    # 两新片段：state=candidate、各恰 1 revision 行（reason=split、
+    # predecessor=[原 fid]、range 精确）、source_revision_id/range_set_id 同原
+    by_id = {f.id: f for f in _fragments(pid)}
+    assert len(by_id) == 3
+    lf, rf = by_id[left_id], by_id[right_id]
+    assert lf.state == "candidate" and rf.state == "candidate"
+    assert lf.summary is None and rf.summary is None
+    for nf, (s_, e_) in ((lf, (0, 4)), (rf, (4, 10))):
+        assert nf.project_id == pid
+        assert nf.source_revision_id == rev["id"]
+        assert nf.range_set_id == set_id
+        assert nf.retired_at is None
+        revs = _fragment_revisions(nf.id)
+        assert len(revs) == 1
+        nr = revs[0]
+        assert nr.revision == 1
+        assert nr.reason == "split"
+        assert nr.range_start == s_ and nr.range_end == e_
+        assert nr.source_revision_id == rev["id"]
+        assert json.loads(nr.predecessor_fragment_ids) == [fid]
+        assert nf.current_revision_id == nr.id
+
+    # cas == 原 + 1
+    assert _range_sets(pid, rev["id"])[0].cas_revision == cas0 + 1
+
+    # ReviewDecision 恰 1 行（target_ref 原片段引用、digest 独立重算相等）
+    decisions = _decision_rows()
+    assert len(decisions) == 1
+    d = decisions[0]
+    assert d.decision == "applied"
+    assert d.preview_id == preview_id
+    assert json.loads(d.target_ref) == {"kind": "fragment", "id": fid, "revision": 1}
+    assert d.baseline_digest == hashlib.sha256(
+        json.dumps(
+            {
+                "fragment": {"kind": "fragment", "id": fid, "revision": 1},
+                "range_set": {"id": set_id, "cas": cas0},
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    # preview applied
+    assert _preview_row(preview_id)["state"] == "applied"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T18 命名：preview left_name="  L1  "、right_name=None → apply 后左 name=="L1"、
+#     右 name=="<原 name>（右）"；派生超长（原 name=118 字符、两 name 缺省）
+#     → preview 422 validation_failed max_length
+# ────────────────────────────────────────────────────────────────────────────
+def test_t18_naming_derive_and_max_length(db, client):
+    # (a) 给定名 trim + 缺省派生
+    token_a = _register(client, "f9_t18_alice")
+    pid_a = _create_project(client, token_a, "T18a")
+    rev_a = _import_active(client, token_a, pid_a, TEXT_A)
+    rc = _create_fragment(client, token_a, pid_a, rev_a["id"], 0, 10, "Orig")
+    assert rc.status_code == 201, rc.text
+    fid_a = rc.json()["object_ref"]["id"]
+    cas_a = _range_sets(pid_a, rev_a["id"])[0].cas_revision
+    rp = _split_preview(client, token_a, pid_a, fid_a, 4, left_name="  L1  ", right_name=None)
+    assert rp.status_code == 200, rp.text
+    ra = _split_apply(
+        client, token_a, pid_a, fid_a, rp.json()["preview_id"],
+        expected_revision=1, expected_range_set_revision=cas_a,
+    )
+    assert ra.status_code == 200, ra.text
+    with Session() as s:
+        lf = s.get(Fragment, ra.json()["left"]["object_ref"]["id"])
+        rf = s.get(Fragment, ra.json()["right"]["object_ref"]["id"])
+    assert lf.name == "L1"
+    assert rf.name == "Orig（右）"
+
+    # (b) 派生超长：原 name=118 字符 → 派生 121 字符 > 120
+    token_b = _register(client, "f9_t18_bob")
+    pid_b = _create_project(client, token_b, "T18b")
+    rev_b = _import_active(client, token_b, pid_b, TEXT_A)
+    rc = _create_fragment(client, token_b, pid_b, rev_b["id"], 0, 10, "x" * 118)
+    assert rc.status_code == 201, rc.text
+    fid_b = rc.json()["object_ref"]["id"]
+    r = _split_preview(client, token_b, pid_b, fid_b, 4)
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "validation_failed"
+    v = err["details"]["violations"][0]
+    assert (v["field"], v["rule"]) == ("left_name", "max_length")
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T19 CAS 冲突无半次：preview 后 F1 建新片段（cas+1）→ apply → 409
+#     preview_stale（conflicts 恰 1 条 range_set）+ 预览 superseded；DB 零变化
+# ────────────────────────────────────────────────────────────────────────────
+def test_t19_cas_conflict_no_half_save(db, client):
+    token = _register(client, "f9_t19_erin")
+    pid = _create_project(client, token, "T19Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, rev["id"], 0, 10, "T19")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    cas0 = _range_sets(pid, rev["id"])[0].cas_revision
+
+    rp = _split_preview(client, token, pid, fid, 4)
+    assert rp.status_code == 200, rp.text
+    preview_id = rp.json()["preview_id"]
+
+    # 另一 F1 建新片段 → cas +1
+    rc2 = _create_fragment(client, token, pid, rev["id"], 10, 20, "T19b", expected=cas0)
+    assert rc2.status_code == 201, rc2.text
+    cas1 = _range_sets(pid, rev["id"])[0].cas_revision
+    assert cas1 == cas0 + 1
+
+    # apply：expected_revision=1（未变）、expected_range_set_revision=cas1
+    #（刷新后的 cas；CAS 预检 step 6 通过，失配在 baseline step 7）
+    ra = _split_apply(
+        client, token, pid, fid, preview_id,
+        expected_revision=1, expected_range_set_revision=cas1,
+    )
+    assert ra.status_code == 409, ra.text
+    err = ra.json()["error"]
+    assert err["code"] == "preview_stale"
+    assert err["details"]["preview_id"] == preview_id
+    conflicts = err["details"]["conflicts"]
+    assert len(conflicts) == 1
+    assert conflicts[0] == {
+        "object": {"kind": "range_set", "id": _range_sets(pid, rev["id"])[0].id},
+        "expected": cas0,
+        "actual": cas1,
+    }
+    # 预览置 superseded
+    assert _preview_row(preview_id)["state"] == "superseded"
+
+    # DB 零变化：原片段仍 candidate、无左/右新片段、cas 不再 +1、无决定
+    with Session() as s:
+        frag_now = s.get(Fragment, fid)
+    assert frag_now.state == "candidate"
+    assert frag_now.retired_at is None
+    assert len(_fragments(pid)) == 2  # 原片段 + T19b，无拆分产物
+    assert _range_sets(pid, rev["id"])[0].cas_revision == cas1
+    assert _decision_rows() == []
+    assert len(_fragment_revisions(fid)) == 1  # 原 revision 行数不变
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T20 旧引用不迁移（R11）+ 下游待复核：种子 SourceRelation(rev1) + pending Job
+#     → preview impact：affected 恰 1（source_relation rev1）、needs_review 恰 1
+#     （job）、preservable 空；apply 后 SourceRelation 逐字段不变（仍指原 fid——
+#     原片段已 retired，引用不迁移）、job payload 不变
+# ────────────────────────────────────────────────────────────────────────────
+def test_t20_old_refs_not_migrated(db, client):
+    token = _register(client, "f9_t20_fay")
+    uid = _user_id("f9_t20_fay")
+    pid = _create_project(client, token, "T20Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, rev["id"], 0, 10, "T20")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    cas0 = _range_sets(pid, rev["id"])[0].cas_revision
+    seeds = _seed_impact(pid, uid, fid)
+
+    # preview：impact.affected 恰 1（source_relation revision=1）、needs_review 恰 1（job）
+    rp = _split_preview(client, token, pid, fid, 4)
+    assert rp.status_code == 200, rp.text
+    impact = rp.json()["impact"]
+    assert impact["affected"] == [
+        {"object_ref": {"kind": "source_relation", "id": seeds["relation_id"], "revision": 1}}
+    ]
+    assert impact["needs_review"] == [
+        {
+            "object_ref": {"kind": "job", "id": seeds["job_id"], "revision": None},
+            "reason": "frozen_input_contains_fragment",
+        }
+    ]
+    assert impact["preservable"] == []
+
+    # apply 前快照
+    rel_before = _source_relation_row(seeds["relation_id"])
+    job_before = _job_row(seeds["job_id"])
+    assert rel_before is not None and job_before is not None
+
+    ra = _split_apply(
+        client, token, pid, fid, rp.json()["preview_id"],
+        expected_revision=1, expected_range_set_revision=cas0,
+    )
+    assert ra.status_code == 200, ra.text
+
+    # apply 后：SourceRelation 逐字段不变（仍指原 fid——原片段已 retired，
+    # 引用不迁移）、job payload 不变
+    rel_after = _source_relation_row(seeds["relation_id"])
+    job_after = _job_row(seeds["job_id"])
+    assert rel_after == rel_before
+    assert job_after == job_before
+    assert rel_after[2] == fid  # source_fragment_id 列不变
+    assert rel_after[3] == 1  # source_fragment_revision 仍 1
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T21 重放：preview 同 command_id+同 body → 200 原 body、预览恰 1 行；
+#     apply 同 command_id → 200 原 body、左/右片段各恰 1 行（无重复创建）、
+#     决定恰 1 行（零副作用）
+# ────────────────────────────────────────────────────────────────────────────
+def test_t21_replay_zero_side_effects(db, client):
+    token = _register(client, "f9_t21_gus")
+    pid = _create_project(client, token, "T21Proj")
+    rev = _import_active(client, token, pid, TEXT_A)
+    rc = _create_fragment(client, token, pid, rev["id"], 0, 10, "T21")
+    assert rc.status_code == 201, rc.text
+    fid = rc.json()["object_ref"]["id"]
+    cas0 = _range_sets(pid, rev["id"])[0].cas_revision
+
+    # (a) preview 幂等：同 command_id + 同 body → 200 原 body，预览恰 1 行
+    c1 = _cmd()
+    r1 = _split_preview(client, token, pid, fid, 4, command_id=c1)
+    assert r1.status_code == 200, r1.text
+    r2 = _split_preview(client, token, pid, fid, 4, command_id=c1)
+    assert r2.status_code == 200, r2.text  # 重放（非新建）
+    assert r2.json() == r1.json()
+    assert r2.json()["preview_id"] == r1.json()["preview_id"]
+    assert _count("studio_change_previews") == 1  # 零副作用：不产生第二行
+
+    # (b) apply 幂等：新 command_id 正常 apply → 再同 command_id → 200 原 body，
+    #     左/右片段各恰 1 行（无重复创建）、决定恰 1 行
+    c2 = _cmd()
+    a1 = _split_apply(
+        client, token, pid, fid, r1.json()["preview_id"],
+        command_id=c2, expected_revision=1, expected_range_set_revision=cas0,
+    )
+    assert a1.status_code == 200, a1.text
+    a2 = _split_apply(
+        client, token, pid, fid, r1.json()["preview_id"],
+        command_id=c2, expected_revision=1, expected_range_set_revision=cas0,
+    )
+    assert a2.status_code == 200, a2.text  # 重放
+    assert a2.json() == a1.json()
+
+    left_id = a1.json()["left"]["object_ref"]["id"]
+    right_id = a1.json()["right"]["object_ref"]["id"]
+    assert len(_fragments(pid)) == 3  # 原 + 左 + 右，无重复创建
+    assert len(_fragment_revisions(left_id)) == 1
+    assert len(_fragment_revisions(right_id)) == 1
+    assert len(_fragment_revisions(fid)) == 1  # 原片段不新建 revision
+    assert len(_decision_rows()) == 1  # 零副作用
+    assert _count("studio_change_previews") == 1
