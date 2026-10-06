@@ -56,6 +56,13 @@
 - 验收：两个并发请求最多一个成功，另一409给冲突目标；重发同command无重复；刷新能见候选，未自动确认/生成。
 - 产品规则：R03, R04, R11，见[产品规范](../../product/product-spec.md)。
 
+### SOURCE-03-a · 片段列表与详情读取
+
+- 依赖：SOURCE-03。白名单：backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、tests/studio/test_fragments.py。
+- 唯一目标：F2 片段列表 + F3 片段详情（附录 02 §2）——计划缺口补登：F2/F3 行原无所属卡，SOURCE-12 前端视图依赖之（2026-10-06 主模型补录）。
+- 验证：列表只含 active 版本片段、有效状态与游标分页准确；详情对非 active 片段派生 pending_review 且 revision_is_active 真实；读取失败/空列表/不存在三者分开；未登录/跨属主拒绝。
+- 产品规则：R03, R04, R11，见[产品规范](../../product/product-spec.md)。
+
 ## SOURCE-04 · 明确确认片段
 
 - 依赖：SOURCE-03、DB-07。白名单：backend/studio/sources/fragment_service.py、backend/studio/sources/fragments_api.py、tests/studio/test_fragments.py。

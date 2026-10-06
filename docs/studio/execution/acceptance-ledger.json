@@ -1706,6 +1706,29 @@
       }
     },
     {
+      "id": "SOURCE-03-a",
+      "parent_id": "SOURCE-03",
+      "title": "片段列表与详情读取",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "SOURCE-03"
+      ],
+      "children": [],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "planned",
+      "dispatchable": false,
+      "behavior": "F2 列表只含 active 版本片段（有效状态）+ F3 详情读时派生 state/revision_is_active。",
+      "allowlist_scope": "backend/studio/sources/{fragment_service,fragments_api}.py + tests/studio/test_fragments.py（追加）",
+      "attempts": [],
+      "acceptance": null
+    },
+    {
       "id": "SOURCE-04",
       "parent_id": null,
       "title": "明确确认片段",
