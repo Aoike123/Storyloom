@@ -1,6 +1,6 @@
 # 附录 01 · 项目与不可变来源（DB-01）
 
-版本：2.1 · ROOT-02 冻结 · 2026-10-04。覆盖：`StudioProject`、`StoryRevision` 与 `/projects`、`/sources`、`/source-changes` 命令族。共享约定（ObjectRef/CAS/幂等/错误/预览）见[附录 00](00-object-ref-and-protocol.md)。
+版本：2.2 · ROOT-02 冻结 · 2026-10-04（v2.9：S4 成功形状笔误修正——"201 ChangePreview（附录 07）"与 00 §5.1 冻结的 preview 返回 `{preview_id, kind, baseline, impact}` 及 F7–F10 四个已验收实现互斥，以协议附录为准修正为 200 四字段）。覆盖：`StudioProject`、`StoryRevision` 与 `/projects`、`/sources`、`/source-changes` 命令族。共享约定（ObjectRef/CAS/幂等/错误/预览）见[附录 00](00-object-ref-and-protocol.md)。
 
 实施位置：`backend/studio/projects/models.py`、`backend/studio/sources/models.py`（表）、`backend/studio/projects/{service,api}.py`、`backend/studio/sources/{service,api}.py`（命令）；测试 `tests/studio/test_projects.py`、`tests/studio/test_source_models.py`。
 
@@ -52,7 +52,7 @@
 | S1 | POST `/projects/{pid}/sources` | `{content, command_id}` | 201 新 StoryRevision DTO（§1 全字段 + `is_active`）。无活跃版本→自动激活；已有活跃版本→新版本**不激活**，响应附 `activation_hint`（指向 S4/S5）。同一文本重复导入（canonical_hash 相同）仍建版本（历史依据），响应 `duplicate_content: true` | 422 content 空；409 command 重放（200 原结果） |
 | S2 | GET `/projects/{pid}/sources?cursor=` | — | 200 版本列表（倒序）：id、previous_revision_id、raw_hash、canonical_hash、offset_policy、char_length、created_at、is_active、fragment_count（该版本未退役片段数，计算值） | 404 |
 | S3 | GET `/projects/{pid}/sources/{revisionId}` | — | 200 完整不可变内容：raw_content、canonical_content 及各 hash/长度/策略/previous/is_active | 404 跨项目引用 |
-| S4 | POST `/projects/{pid}/source-changes/preview` | `{kind:"source_activate", target_revision_id, command_id}` | 201 ChangePreview（附录 07）：baseline=`{active_revision_id, target_revision_id, target_revision 的 hash}`；impact=§3 规则 | 422 target 不存在/非本项目/已是 active；409 preview 重放 |
+| S4 | POST `/projects/{pid}/source-changes/preview` | `{kind:"source_activate", target_revision_id, command_id}` | 200（00 §5.1）：`{preview_id, kind, baseline, impact}`；baseline=`{active_revision_id, target_revision_id, target_revision 的 canonical_hash}`；impact=§2 激活语义 | 422 target 不存在/非本项目/已是 active；重放 200 原结果 |
 | S5 | POST `/projects/{pid}/source-changes/apply` | `{preview_id, command_id, expected_active_revision_id}` | 200 新项目 DTO；激活切换 + ReviewDecision | 409 `revision_conflict`（active 已变）/`preview_stale` |
 | S6 | POST `/projects/{pid}/previews/{previewId}/reject` | `{command_id}` | 200 预览置 rejected（附录 07 公共命令） | 409 已终态 |
 

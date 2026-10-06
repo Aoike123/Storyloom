@@ -1,6 +1,6 @@
 # 附录 07 · 变更预览与审核决定（DB-07）
 
-版本：2.1 · ROOT-02 冻结 · 2026-10-04。覆盖：`ChangePreview`、`ReviewDecision` 与预览公共命令。预览-应用机制的定义见[附录 00 §5](00-object-ref-and-protocol.md)，本附录落实其表结构与命令。
+版本：2.2 · ROOT-02 冻结 · 2026-10-04（v2.9：RV1 成功形状笔误修正——"201 预览 DTO {object_ref, kind, payload, baseline, impact, state, expires_at}"与 00 §5.1 冻结形状及 F7–F10 四个已验收实现互斥，以协议附录为准修正为 200 四字段）。覆盖：`ChangePreview`、`ReviewDecision` 与预览公共命令。预览-应用机制的定义见[附录 00 §5](00-object-ref-and-protocol.md)，本附录落实其表结构与命令。
 
 实施位置：表 `backend/studio/reviews/models.py`；策略 `backend/studio/reviews/impact.py`（各领域的 impact 计算函数）；命令 `backend/studio/reviews/{service,api}.py`；测试 `tests/studio/test_review_models.py`、`test_change_previews.py`。
 
@@ -45,7 +45,7 @@
 
 | # | 方法 路径 | 请求 | 成功 | 失败 |
 | --- | --- | --- | --- | --- |
-| RV1 | POST `/{kind 域前缀}/preview`（各附录已定义，如 `/fragments/{fid}/retire`） | 各附录的 preview 请求 | 201 预览 DTO：`{object_ref, kind, payload, baseline, impact, state, expires_at}`；同 `command_id` 重放返回原预览 | 各附录列出的校验错误 |
+| RV1 | POST `/{kind 域前缀}/preview`（各附录已定义，如 `/fragments/{fid}/retire`） | 各附录的 preview 请求 | 200 `{preview_id, kind, baseline, impact}`（00 §5.1）；同 `command_id` 重放返回原预览结果 | 各附录列出的校验错误 |
 | RV2 | GET `/previews/{previewId}` | — | 200（惰性过期判定生效） | 404 |
 | RV3 | POST `/previews/{previewId}/reject` | `command_id` | 200：state=rejected，写 ReviewDecision(decision=rejected)；**无任何业务副作用** | 409 `precondition_failed`（已终态） |
 | RV4 | GET `/previews?state=&kind=&cursor=` | — | 200 列表（倒序） | 404 |
