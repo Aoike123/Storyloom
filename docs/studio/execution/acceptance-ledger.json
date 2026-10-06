@@ -2111,11 +2111,39 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "backend/studio/sources/changes.py、backend/studio/sources/changes_api.py、tests/studio/test_source_changes.py",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "backend/studio/sources/{changes,changes_api}.py + tests/studio/test_source_changes.py",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor(948a6ca1)",
+          "date": "2026-10-06",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-06",
+        "contract_version": "2.9",
+        "tested_baseline": "40aec5d + 3 文件（本卡提交）",
+        "scope": "source_activate_apply_s5",
+        "checks": [
+          "主模型独立复验：pytest tests/studio/ → 340/340（8 新 T11–T18 + 332 既有零回归，含 F7 44 条零回归硬门槛）；白名单外零改动（恰 3 文件）；代码审查：八步冻结短路（404 项目/preview→kind mismatch 422→幂等（裁定 1，项目 DTO 三条件比对）先于状态检查→非 pending 409（惰性 expired 独立提交）→CAS 先报 object={project,pid}→no-op 抢锁+WAL 重读→baseline 失配 superseded(独立提交)+409 conflicts 恰 1→单事务：project 切指针+updated=now→ReviewDecision(flush，target_ref=source_revision/target/null，digest 独立重算)→preview applied+回填→CommandRecord=最终 DTO）。",
+          "S5 冻结行为逐条：401；404 不泄漏(kind=preview)；mismatch 422（F 系 preview id 误用）；200 新项目 DTO（P3 恰 7 字段、active==target、updated_at 变）；激活仅切指针——两版本行/片段/范围集合/任务/媒体逐字段不变（不删除、不移范围、不重生成）；片段绑旧版本持久 state 恒 candidate 不落库改写；非 active 写命令 422（旧版本建片段拒绝）+ 新版本可写 201（新任务用新来源）；回切旧版本后派生标记自动消失、旧版本重新可写；重放 200 原体零副作用（决定恰 1、updated_at 不再变）+ 异参复用 422 reused；CAS 旧 expected 409 revision_conflict（preview 仍 pending 可再用）/当前 expected 但 baseline 失配 409 preview_stale+superseded，两路无半次；过期惰性 expired+409 且可重算（新 preview→apply 200）；已终态 409 不改写。",
+          "已知留待后续卡：F2/F3 片段读端点（附录 02 §2）尚未放行——T13 以派生输入（绑定关系+持久 state 逐字段不变）+可观察写行为（旧版 422/新版 201/回切恢复）完整验证 pending_review 派生结果，F3 交付后可直接补读端断言。"
+        ],
+        "contract_question_ruling": [
+          "确认1（S5 CAS 对象形状）：S5 行仅冻结\"409 revision_conflict（active 已变）\"未冻结 ObjectRef——冻结为 {kind:project, id:pid}（CAS 字段 active_source_revision_id 在 project 行上；00 §4 kind 清单含 project）；baseline 失配冲突同形（{object:{project,pid}, expected, actual}）。",
+          "确认2（S5 幂等判定）：激活是终态切换（不推进 revision）——重放=result_payload 项目 DTO id==pid 且 active_source_revision_id==target 且 expected==baseline.active_revision_id；preview 的 kind/target 已在前置步校验，足以区分跨命令复用（SOURCE-06 确认 3 泛化链的终态切换型变体）。",
+          "确认3（ReviewDecision.target_ref={kind:source_revision, id:target, revision:null}）：本命令产物即\"激活 target\"事实，target 为不可变对象 revision=null；F 系的单原片引用不适用。附录形状不变，不升契约版本。"
+        ],
+        "evidence": [
+          "backend/studio/sources/changes.py",
+          "backend/studio/sources/changes_api.py",
+          "tests/studio/test_source_changes.py"
+        ]
+      }
     },
     {
       "id": "SOURCE-11",

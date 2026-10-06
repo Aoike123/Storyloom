@@ -1,8 +1,9 @@
-"""S4 正文变更影响预览（附录 01 §2 S4 + 00 §5；kind=source_activate）——
-POST /api/studio/projects/{pid}/source-changes/preview 行为验证。
+"""S4/S5 正文变更（附录 01 §2 + 00 §5；kind=source_activate）——
+POST /api/studio/projects/{pid}/source-changes/preview 与 .../apply 行为验证。
 
-SOURCE-09 实现并验收 S4 preview（S5 apply 属 SOURCE-10，不在本文件范围）；
-正文更新只支持整篇重导入 + 激活预览切换，不提供局部文本 diff 编辑命令
+SOURCE-09 实现并验收 S4 preview（T1–T10）；SOURCE-10 实现 S5 apply（T11–T18：
+显式应用新正文，仅切换 active_source_revision_id + ReviewDecision）；正文
+更新只支持整篇重导入 + 激活预览切换，不提供局部文本 diff 编辑命令
 （decisions.md 2026-10-04），impact 一律按整篇语义计算。
 
 fixture/helper 复用 tests/studio 既有模式（db fixture、_register/_auth/_cmd/
@@ -122,6 +123,19 @@ def _preview(client, token, pid, target, kind="source_activate", command_id=None
     )
 
 
+def _apply(client, token, pid, preview_id, expected, command_id=None):
+    """S5 apply 请求 helper：POST /projects/{pid}/source-changes/apply。"""
+    return client.post(
+        f"/api/studio/projects/{pid}/source-changes/apply",
+        json={
+            "preview_id": preview_id,
+            "command_id": command_id or _cmd(),
+            "expected_active_revision_id": expected,
+        },
+        headers=_auth(token),
+    )
+
+
 def _count(table) -> int:
     """按表名计数（表名为冻结常量，无注入面）。"""
     with Session() as s:
@@ -153,6 +167,25 @@ def _preview_row(preview_id) -> dict:
             "baseline": p.baseline,
             "impact": p.impact,
         }
+
+
+def _project_row(pid) -> dict:
+    """项目行（active 指针 + created/updated 数值）。"""
+    with Session() as s:
+        p = s.get(StudioProject, pid)
+        return {
+            "active_source_revision_id": p.active_source_revision_id,
+            "created": p.created,
+            "updated": p.updated,
+        }
+
+
+def _decision_rows() -> list:
+    """ReviewDecision 全表行（target_ref 解析为 dict；按 id 排序）。"""
+    rows = _table_rows("studio_review_decisions")
+    for r in rows:
+        r["target_ref"] = json.loads(r["target_ref"])
+    return rows
 
 
 def _user_id(username) -> str:
@@ -603,3 +636,437 @@ def test_t10_preview_row_db_exact(db, client):
     }
     assert json.loads(pv["baseline"]) == body["baseline"]
     assert json.loads(pv["impact"]) == body["impact"]
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T11 无 token → 401
+# ────────────────────────────────────────────────────────────────────────────
+def test_t11_no_token_401(db, client):
+    pid = "01" * 13
+    r = client.post(
+        f"/api/studio/projects/{pid}/source-changes/apply",
+        json={
+            "preview_id": "02" * 13,
+            "command_id": _cmd(),
+            "expected_active_revision_id": "03" * 13,
+        },
+    )
+    assert r.status_code == 401
+    assert r.json()["error"]["code"] == "unauthenticated"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T12 preview 不存在（26 字符字面量）/跨项目 → 404 kind=preview 不泄漏；
+#     kind mismatch（F 系 fragment preview 的 id）→ 422 mismatch
+# ────────────────────────────────────────────────────────────────────────────
+def test_t12_preview_404_and_kind_mismatch(db, client):
+    ta = _register(client, "s5_t12_alice")
+    tb = _register(client, "s5_t12_bob")
+    pa = _create_project(client, ta, "T12A")
+    rev_a1 = _import_active(client, ta, pa, TEXT)
+    time.sleep(0.002)
+    _import(client, ta, pa, TEXT2)
+    pb = _create_project(client, tb, "T12B")
+    _import_active(client, tb, pb, TEXT)
+    time.sleep(0.002)
+    rev_b2 = _import(client, tb, pb, TEXT2).json()
+    pv_b = _preview(client, tb, pb, rev_b2["id"])
+    assert pv_b.status_code == 200, pv_b.text
+    pv_b_id = pv_b.json()["preview_id"]
+
+    # F 系 fragment_retire preview（kind mismatch 素材）
+    r = _create_fragment(client, ta, pa, rev_a1["id"], 0, 10, "F0", expected=None)
+    assert r.status_code == 201, r.text
+    fid = r.json()["object_ref"]["id"]
+    rp = client.post(
+        f"/api/studio/projects/{pa}/fragments/{fid}/retire",
+        json={"target_fragment_id": fid, "command_id": _cmd()},
+        headers=_auth(ta),
+    )
+    assert rp.status_code == 200, rp.text
+    frag_pv_id = rp.json()["preview_id"]
+
+    previews_before = _count("studio_change_previews")
+    cmds_before = _count("studio_command_records")
+
+    # (a) preview 不存在（26 字符字面量）→ 404 kind=preview
+    ghost = "04" * 13
+    r1 = _apply(client, ta, pa, ghost, rev_a1["id"])
+    assert r1.status_code == 404, r1.text
+    e1 = r1.json()["error"]
+    assert e1["code"] == "not_found"
+    assert e1["details"] == {"kind": "preview", "id": ghost}
+
+    # (b) 跨项目（他项目真实 preview id）→ 同形状，不泄漏存在性
+    r2 = _apply(client, ta, pa, pv_b_id, rev_a1["id"])
+    assert r2.status_code == 404, r2.text
+    e2 = r2.json()["error"]
+    assert e2["code"] == "not_found"
+    assert e2["details"] == {"kind": "preview", "id": pv_b_id}
+    assert e2["message"] == e1["message"]
+
+    # (c) kind mismatch：fragment_retire preview 的 id 来 apply → 422 mismatch
+    r3 = _apply(client, ta, pa, frag_pv_id, rev_a1["id"])
+    assert r3.status_code == 422, r3.text
+    err = r3.json()["error"]
+    assert err["code"] == "validation_failed"
+    v = err["details"]["violations"][0]
+    assert v["field"] == "preview_id"
+    assert v["rule"] == "mismatch"
+    assert v["message"] == "preview_id 对应的预览不是正文激活预览。"
+
+    # 三路全零写：无新增 preview/command/decision，active 不变
+    assert _count("studio_change_previews") == previews_before
+    assert _count("studio_command_records") == cmds_before
+    assert _count("studio_review_decisions") == 0
+    assert _project_row(pa)["active_source_revision_id"] == rev_a1["id"]
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T13 有效 apply 全程：rev1（3 片段）+ rev2 → S4 → S5(expected=rev1) → 200
+#     新项目 DTO（active==rev2、updated_at 变化）；DB：ReviewDecision 恰 1
+#     （digest 独立重算相等、target_ref 精确）、preview applied+decision_id
+#     回填；旧依据全留（版本行/片段绑定逐字段不变）；rev1 写拒绝 422、rev2
+#     写 201；再 S4+S5 激活回 rev1 → 派生标记自动消失（重新可写 201）
+# ────────────────────────────────────────────────────────────────────────────
+def test_t13_valid_apply_full_flow(db, client):
+    token = _register(client, "s5_t13_alice")
+    pid = _create_project(client, token, "T13Proj")
+    rev1, rev2, fids1, fids2 = _scenario_two_revisions(client, token, pid)
+
+    # apply 前快照：版本/片段/范围集合全行 + 项目行
+    tables = (
+        "studio_source_revisions",
+        "studio_fragments",
+        "studio_fragment_revisions",
+        "studio_range_sets",
+    )
+    before = {t: _table_rows(t) for t in tables}
+    proj_before = _project_row(pid)
+    assert proj_before["active_source_revision_id"] == rev1["id"]
+
+    # S4 preview → S5 apply(expected=rev1)
+    rp = _preview(client, token, pid, rev2["id"])
+    assert rp.status_code == 200, rp.text
+    pv = rp.json()
+    ra = _apply(client, token, pid, pv["preview_id"], rev1["id"])
+    assert ra.status_code == 200, ra.text
+    body = ra.json()
+    # 200 新项目 DTO（附录 01 P3 全字段形状；active==rev2、updated_at 变化）
+    assert set(body.keys()) == {
+        "id",
+        "name",
+        "description",
+        "visibility",
+        "active_source_revision_id",
+        "created_at",
+        "updated_at",
+    }
+    assert body["id"] == pid
+    assert body["active_source_revision_id"] == rev2["id"]
+    assert body["created_at"] == proj_before["created"]
+    assert body["updated_at"] != proj_before["updated"]
+    proj_after = _project_row(pid)
+    assert proj_after["active_source_revision_id"] == rev2["id"]
+    assert proj_after["updated"] == body["updated_at"]
+
+    # DB：ReviewDecision 恰 1（digest 独立重算相等、target_ref 精确）、
+    # preview applied + decision_id 回填
+    decisions = _decision_rows()
+    assert len(decisions) == 1
+    d = decisions[0]
+    assert d["project_id"] == pid
+    assert d["owner_id"] == _user_id("s5_t13_alice")
+    assert d["preview_id"] == pv["preview_id"]
+    assert d["decision"] == "applied"
+    assert d["target_ref"] == {
+        "kind": "source_revision",
+        "id": rev2["id"],
+        "revision": None,
+    }
+    digest = hashlib.sha256(
+        json.dumps(pv["baseline"], sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    assert d["baseline_digest"] == digest
+    prow = _preview_row(pv["preview_id"])
+    assert prow["state"] == "applied"
+    assert prow["decision_id"] == d["id"]
+    assert prow["resolved_at"] is not None
+
+    # 旧依据全留：rev1/rev2 两版本行与片段/版本/范围集合行逐字段不变；
+    # 片段仍绑 rev1、持久 state 仍 candidate
+    for t, rows in before.items():
+        assert _table_rows(t) == rows, t
+    frag_rows = _table_rows("studio_fragments")
+    for fid in fids1:
+        row = next(r for r in frag_rows if r["id"] == fid)
+        assert row["source_revision_id"] == rev1["id"]
+        assert row["state"] == "candidate"
+    # 附录 02 §1 读时派生（F3 读端点属后续卡，不在本卡范围）：绑定版本(rev1)
+    # ≠ 项目 active(rev2) 且持久 state=candidate → DTO state 派生
+    # pending_review、revision_is_active=false；其派生输入（绑定关系与持久
+    # 状态）如上逐字段不变，故派生结果确定
+
+    # 非 active 一切写命令拒绝（附录 02 §3）：对 rev1 建片段 → 422
+    r_old = _create_fragment(
+        client, token, pid, rev1["id"], 40, 50, "OLD", expected=None
+    )
+    assert r_old.status_code == 422, r_old.text
+    err = r_old.json()["error"]
+    assert err["code"] == "precondition_failed"
+    assert err["details"]["reason"] == "source_revision_inactive"
+    # 新任务用新来源：对 rev2 建 → 201（G0 占 {0,10}，cas 现为 2）
+    r_new = _create_fragment(
+        client, token, pid, rev2["id"], 10, 20, "NEW", expected=2
+    )
+    assert r_new.status_code == 201, r_new.text
+    assert r_new.json()["state"] == "candidate"
+
+    # 再 S4+S5 激活回 rev1 → "重新激活旧版本自动消失"（附录 02 §1）：
+    # 派生标记消失、rev1 重新可写（无需任何回写命令；cas 仍为 4）
+    rp2 = _preview(client, token, pid, rev1["id"])
+    assert rp2.status_code == 200, rp2.text
+    ra2 = _apply(client, token, pid, rp2.json()["preview_id"], rev2["id"])
+    assert ra2.status_code == 200, ra2.text
+    assert ra2.json()["active_source_revision_id"] == rev1["id"]
+    r_back = _create_fragment(
+        client, token, pid, rev1["id"], 40, 50, "BACK", expected=4
+    )
+    assert r_back.status_code == 201, r_back.text
+    assert r_back.json()["state"] == "candidate"
+    # 原 rev1 片段持久行仍逐字段不变（state 从未落库改写）
+    for fid in fids1:
+        row = next(r for r in _table_rows("studio_fragments") if r["id"] == fid)
+        assert row["source_revision_id"] == rev1["id"]
+        assert row["state"] == "candidate"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T14 幂等重放：apply 同 command_id → 200 原体、决定恰 1、active 不二次切换
+#     （updated_at 不再变）；同 command_id 不同 expected → 422 reused
+# ────────────────────────────────────────────────────────────────────────────
+def test_t14_replay_and_reused(db, client):
+    token = _register(client, "s5_t14_bob")
+    pid = _create_project(client, token, "T14Proj")
+    rev1 = _import_active(client, token, pid, TEXT)
+    time.sleep(0.002)
+    rev2 = _import(client, token, pid, TEXT2).json()
+
+    pv = _preview(client, token, pid, rev2["id"]).json()
+    c1 = _cmd()
+    r1 = _apply(client, token, pid, pv["preview_id"], rev1["id"], command_id=c1)
+    assert r1.status_code == 200, r1.text
+    body1 = r1.json()
+    assert body1["active_source_revision_id"] == rev2["id"]
+
+    # 同 command_id 重放 → 200 原体；决定恰 1；active 不二次切换
+    r2 = _apply(client, token, pid, pv["preview_id"], rev1["id"], command_id=c1)
+    assert r2.status_code == 200, r2.text
+    assert r2.json() == body1
+    assert len(_decision_rows()) == 1
+    proj = _project_row(pid)
+    assert proj["active_source_revision_id"] == rev2["id"]
+    assert proj["updated"] == body1["updated_at"]  # updated_at 不再变
+
+    # 同 command_id 不同 expected → 422 validation_failed(rule=reused)
+    r3 = _apply(client, token, pid, pv["preview_id"], rev2["id"], command_id=c1)
+    assert r3.status_code == 422, r3.text
+    err = r3.json()["error"]
+    assert err["code"] == "validation_failed"
+    v = err["details"]["violations"][0]
+    assert v["field"] == "command_id"
+    assert v["rule"] == "reused"
+    assert v["message"] == "command_id 已被其他命令使用，请生成新的。"
+    assert len(_decision_rows()) == 1
+    assert _project_row(pid)["updated"] == body1["updated_at"]
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T15 CAS/baseline 两层失败：preview 后先 apply 另一个到 rev3 的 preview 使
+#     active 变 → (a) 原 apply 仍带旧 expected=rev1 → 409 revision_conflict
+#     (object={project,pid})；(b) 带 expected=rev3（当前）→ 409 preview_stale
+#     conflicts 恰 1（project 对象）+ preview superseded；两路均无半次
+# ────────────────────────────────────────────────────────────────────────────
+def test_t15_cas_then_baseline_stale(db, client):
+    token = _register(client, "s5_t15_carol")
+    pid = _create_project(client, token, "T15Proj")
+    rev1 = _import_active(client, token, pid, TEXT)
+    time.sleep(0.002)
+    rev2 = _import(client, token, pid, TEXT2).json()
+    time.sleep(0.002)
+    rev3 = _import(client, token, pid, TEXT3).json()
+
+    pv_a = _preview(client, token, pid, rev2["id"]).json()  # baseline.active=rev1
+    pv_b = _preview(client, token, pid, rev3["id"]).json()  # baseline.active=rev1
+
+    # 先 apply 另一个到 rev3 的 preview 使 active 变
+    rb = _apply(client, token, pid, pv_b["preview_id"], rev1["id"])
+    assert rb.status_code == 200, rb.text
+    assert rb.json()["active_source_revision_id"] == rev3["id"]
+    assert len(_decision_rows()) == 1
+    cmds_after_b = _count("studio_command_records")
+
+    # (a) 原 apply 仍带旧 expected=rev1 → 409 revision_conflict（CAS 先报）
+    ra = _apply(client, token, pid, pv_a["preview_id"], rev1["id"])
+    assert ra.status_code == 409, ra.text
+    err = ra.json()["error"]
+    assert err["code"] == "revision_conflict"
+    assert err["details"]["object"] == {"kind": "project", "id": pid}
+    assert err["details"]["expected"] == rev1["id"]
+    assert err["details"]["actual"] == rev3["id"]
+    assert err["message"] == "当前正文版本已变化，请刷新后重试。"
+    # 无半次：preview_a 仍 pending、active 不再变、无新决定/命令
+    assert _preview_row(pv_a["preview_id"])["state"] == "pending"
+    assert _project_row(pid)["active_source_revision_id"] == rev3["id"]
+    assert len(_decision_rows()) == 1
+    assert _count("studio_command_records") == cmds_after_b
+
+    # (b) 带 expected=rev3（当前）→ CAS 过、写事务内 baseline 失配 → 409
+    # preview_stale（conflicts 恰 1，project 对象）+ preview superseded
+    rb2 = _apply(client, token, pid, pv_a["preview_id"], rev3["id"])
+    assert rb2.status_code == 409, rb2.text
+    err2 = rb2.json()["error"]
+    assert err2["code"] == "preview_stale"
+    assert err2["details"]["preview_id"] == pv_a["preview_id"]
+    assert err2["details"]["conflicts"] == [
+        {
+            "object": {"kind": "project", "id": pid},
+            "expected": rev1["id"],
+            "actual": rev3["id"],
+        }
+    ]
+    assert err2["message"] == "预览基准已变化（当前正文版本），请重新预览。"
+    prow = _preview_row(pv_a["preview_id"])
+    assert prow["state"] == "superseded"
+    assert prow["resolved_at"] is not None
+    assert prow["decision_id"] is None
+    # 无半次：active 不再变、无新决定
+    assert _project_row(pid)["active_source_revision_id"] == rev3["id"]
+    assert len(_decision_rows()) == 1
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T16 过期/终态：直改 expires_at 过期 → apply 409 preview_stale 且惰性置
+#     expired；已 applied preview 换新 command_id 再 apply → 409
+#     (actual=applied) 不改写；过期可重算：新 command_id 重新 S4 → 新
+#     preview_id apply 200
+# ────────────────────────────────────────────────────────────────────────────
+def test_t16_expired_and_terminal_states(db, client):
+    token = _register(client, "s5_t16_dana")
+    # ── 场景 1：过期 → 惰性置 expired + 409；过期可重算（新 preview → 200）
+    pid = _create_project(client, token, "T16A")
+    rev1 = _import_active(client, token, pid, TEXT)
+    time.sleep(0.002)
+    rev2 = _import(client, token, pid, TEXT2).json()
+    pv1 = _preview(client, token, pid, rev2["id"]).json()
+    # 直改 expires_at 过期（测试库专用构造）
+    with Session() as s:
+        s.execute(
+            update(ChangePreview)
+            .where(ChangePreview.id == pv1["preview_id"])
+            .values(expires_at=time.time() - 1)
+        )
+        s.commit()
+    r1 = _apply(client, token, pid, pv1["preview_id"], rev1["id"])
+    assert r1.status_code == 409, r1.text
+    err = r1.json()["error"]
+    assert err["code"] == "preview_stale"
+    assert err["details"]["preview_id"] == pv1["preview_id"]
+    assert err["details"]["conflicts"] == [
+        {
+            "object": {"kind": "preview", "id": pv1["preview_id"]},
+            "expected": "pending",
+            "actual": "expired",
+        }
+    ]
+    # 惰性置 expired（独立提交生效）；active 不变、无决定
+    prow = _preview_row(pv1["preview_id"])
+    assert prow["state"] == "expired"
+    assert prow["resolved_at"] is not None
+    assert _project_row(pid)["active_source_revision_id"] == rev1["id"]
+    assert len(_decision_rows()) == 0
+
+    # 过期可重算：以新 command_id 重新 S4 preview → 新 preview_id apply 200
+    pv2 = _preview(client, token, pid, rev2["id"]).json()
+    assert pv2["preview_id"] != pv1["preview_id"]
+    r2 = _apply(client, token, pid, pv2["preview_id"], rev1["id"])
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["active_source_revision_id"] == rev2["id"]
+    assert len(_decision_rows()) == 1
+
+    # ── 场景 2：已 applied preview 换新 command_id 再 apply → 409
+    # （actual=applied），终态行不改写
+    pid2 = _create_project(client, token, "T16B")
+    r1b = _import_active(client, token, pid2, TEXT)
+    time.sleep(0.002)
+    r2b = _import(client, token, pid2, TEXT2).json()
+    pvb = _preview(client, token, pid2, r2b["id"]).json()
+    ok = _apply(client, token, pid2, pvb["preview_id"], r1b["id"])
+    assert ok.status_code == 200, ok.text
+    row_before = _preview_row(pvb["preview_id"])
+    assert row_before["state"] == "applied"
+    r3 = _apply(
+        client, token, pid2, pvb["preview_id"], r1b["id"], command_id=_cmd()
+    )
+    assert r3.status_code == 409, r3.text
+    err3 = r3.json()["error"]
+    assert err3["code"] == "preview_stale"
+    assert err3["details"]["preview_id"] == pvb["preview_id"]
+    assert err3["details"]["conflicts"] == [
+        {
+            "object": {"kind": "preview", "id": pvb["preview_id"]},
+            "expected": "pending",
+            "actual": "applied",
+        }
+    ]
+    # 终态不可逆：行不改写（state/decision_id/resolved_at 全同）
+    assert _preview_row(pvb["preview_id"]) == row_before
+    assert _project_row(pid2)["active_source_revision_id"] == r2b["id"]
+    assert len([d for d in _decision_rows() if d["project_id"] == pid2]) == 1
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T17 旧任务/媒体保持实际依据（卡片验收）：种子 pending job+media（照 T8
+#     模式）→ apply 后 job/media 行逐字段不变（不自动重生成、不迁移）
+# ────────────────────────────────────────────────────────────────────────────
+def test_t17_jobs_media_keep_actual_basis(db, client):
+    token = _register(client, "s5_t17_earl")
+    uid = _user_id("s5_t17_earl")
+    pid = _create_project(client, token, "T17Proj")
+    rev1, rev2, fids1, _ = _scenario_two_revisions(
+        client, token, pid, rev2_ranges=None
+    )
+    _seed_jobs_media(pid, uid, fids1[0])
+    jobs_before = _table_rows("studio_jobs")
+    media_before = _table_rows("studio_media_artifacts")
+    assert len(jobs_before) == 2
+    assert len(media_before) == 1
+
+    pv = _preview(client, token, pid, rev2["id"]).json()
+    r = _apply(client, token, pid, pv["preview_id"], rev1["id"])
+    assert r.status_code == 200, r.text
+    assert r.json()["active_source_revision_id"] == rev2["id"]
+
+    # 逐字段不变：apply 只切换 active 指针，不重生成、不迁移任何任务/媒体
+    assert _table_rows("studio_jobs") == jobs_before
+    assert _table_rows("studio_media_artifacts") == media_before
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T18 目标版本不可变：apply 后 rev1/rev2 行（raw/canonical/hash/previous/
+#     created_at 等全列）逐字段不变
+# ────────────────────────────────────────────────────────────────────────────
+def test_t18_target_revision_immutable(db, client):
+    token = _register(client, "s5_t18_fred")
+    pid = _create_project(client, token, "T18Proj")
+    rev1, rev2, _, _ = _scenario_two_revisions(client, token, pid)
+    revs_before = _table_rows("studio_source_revisions")
+    assert len(revs_before) == 2
+
+    pv = _preview(client, token, pid, rev2["id"]).json()
+    r = _apply(client, token, pid, pv["preview_id"], rev1["id"])
+    assert r.status_code == 200, r.text
+    assert r.json()["active_source_revision_id"] == rev2["id"]
+
+    # 版本行逐字段不变（apply 只 UPDATE projects.active 指针，无版本写路径）
+    assert _table_rows("studio_source_revisions") == revs_before

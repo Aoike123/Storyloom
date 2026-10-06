@@ -1,9 +1,9 @@
 """Storyloom Studio — 正文变更域 HTTP 路由（/api/studio/projects/{pid}/source-changes*，附录 01 §2）。
 
 SOURCE-09 填充 S4 preview（POST /projects/{pid}/source-changes/preview，
-kind=source_activate）；S5 apply 属 SOURCE-10（后续卡，不在本文件本次
-范围）。路由层只做请求体校验与 DTO 组装；业务逻辑在 changes.py。
-鉴权：core.auth.require_user（严格 Bearer/sl_auth，无匿名回退）。
+kind=source_activate）；SOURCE-10 填充 S5 apply（POST /projects/{pid}/
+source-changes/apply）。路由层只做请求体校验与 DTO 组装；业务逻辑在
+changes.py。鉴权：core.auth.require_user（严格 Bearer/sl_auth，无匿名回退）。
 """
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -51,6 +51,36 @@ def preview_source_activate_route(
         body.kind,
         body.target_revision_id,
         body.command_id,
+    )
+    result.pop("_replay", False)
+    return JSONResponse(content=result, status_code=200)
+
+
+class ActivateApplyBody(BaseModel):
+    """S5 请求体（附录 01 §2）：preview_id + command_id（新 UUID）+ expected CAS。"""
+
+    preview_id: str
+    command_id: str
+    expected_active_revision_id: str
+
+
+@router.post("/projects/{pid}/source-changes/apply")
+def apply_source_activate_route(
+    pid: str,
+    body: ActivateApplyBody,
+    db=Depends(_session),
+    user=Depends(require_user),
+):
+    """S5 应用正文版本激活：200 新项目 DTO（附录 01 P3 全字段形状，
+    active_source_revision_id==target；激活切换 + ReviewDecision）；
+    幂等重放命中 → 200（原 result_payload，零写零 commit）。"""
+    result = changes.apply_source_activate(
+        db,
+        user,
+        pid,
+        body.preview_id,
+        body.command_id,
+        body.expected_active_revision_id,
     )
     result.pop("_replay", False)
     return JSONResponse(content=result, status_code=200)
