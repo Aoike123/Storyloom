@@ -17,7 +17,6 @@ import pytest
 from sqlalchemy import select, text, update
 
 from backend.core.db import Base, Session, engine
-from backend.studio.projects.models import StudioProject
 from backend.studio.reviews.models import ReviewDecision
 from backend.studio.sources.fragment_models import Fragment, FragmentRevision, RangeSet
 
@@ -142,6 +141,31 @@ def _import_active(client, token, pid, content) -> dict:
     return r.json()
 
 
+def _activate(client, token, pid, target_revision_id, expected_active_revision_id) -> dict:
+    """S4 preview → S5 apply 真实激活 target 版本（两步均断言 200），返回新项目 DTO。"""
+    rp = client.post(
+        f"/api/studio/projects/{pid}/source-changes/preview",
+        json={
+            "kind": "source_activate",
+            "target_revision_id": target_revision_id,
+            "command_id": _cmd(),
+        },
+        headers=_auth(token),
+    )
+    assert rp.status_code == 200, rp.text
+    ra = client.post(
+        f"/api/studio/projects/{pid}/source-changes/apply",
+        json={
+            "preview_id": rp.json()["preview_id"],
+            "command_id": _cmd(),
+            "expected_active_revision_id": expected_active_revision_id,
+        },
+        headers=_auth(token),
+    )
+    assert ra.status_code == 200, ra.text
+    return ra.json()
+
+
 # T1 无 token → 401
 def test_t1_no_token_401(db, client):
     r = client.post(
@@ -195,15 +219,9 @@ def test_t4_inactive_source_revision_422(db, client):
     assert r2.status_code == 201, r2.text
     v2 = r2.json()
     assert v2["is_active"] is False
-    # S4/S5 激活命令未放行（sources 路由仅有 POST/GET）：测试内直接把项目
-    # active 指针指向 v2，构造"v1 非 active"状态
-    with Session() as s:
-        s.execute(
-            update(StudioProject)
-            .where(StudioProject.id == pid)
-            .values(active_source_revision_id=v2["id"])
-        )
-        s.commit()
+    # 真实激活：S4 preview → S5 apply 把项目 active 从 v1 切到 v2，
+    # 构造"v1 非 active"状态
+    _activate(client, token, pid, v2["id"], expected_active_revision_id=v1["id"])
     r = _create_fragment(client, token, pid, v1["id"], 0, 5, "x")
     assert r.status_code == 422, r.text
     err = r.json()["error"]
@@ -530,7 +548,7 @@ def test_t21_cross_project_fid_404(db, client):
     assert err["details"] == {"kind": "fragment", "id": fid}
 
 
-# T22 非 active 版本上的候选片段（直改 active，T4 同款构造）
+# T22 非 active 版本上的候选片段（真实激活切走 active，T4 同款构造）
 # → 422 precondition_failed：reason=="source_revision_inactive"、blocked_by.id==active
 def test_t22_inactive_source_revision_422(db, client):
     token = _register(client, "f6_t22_dave")
@@ -545,14 +563,9 @@ def test_t22_inactive_source_revision_422(db, client):
     rc = _create_fragment(client, token, pid, v1["id"], 0, 5, "F1")
     assert rc.status_code == 201, rc.text
     fid = rc.json()["object_ref"]["id"]
-    # 测试内直接把项目 active 指针指向 v2，构造"片段绑定版本非 active"状态
-    with Session() as s:
-        s.execute(
-            update(StudioProject)
-            .where(StudioProject.id == pid)
-            .values(active_source_revision_id=v2["id"])
-        )
-        s.commit()
+    # 真实激活：S4 preview → S5 apply 把项目 active 从 v1 切到 v2，
+    # 构造"片段绑定版本非 active"状态
+    _activate(client, token, pid, v2["id"], expected_active_revision_id=v1["id"])
     r = _confirm(client, token, pid, fid, 1)
     assert r.status_code == 422, r.text
     err = r.json()["error"]
@@ -744,14 +757,8 @@ def test_t29_inactive_source_422(db, client):
     rc = _create_fragment(client, token, pid, v1["id"], 0, 5, "F29")
     assert rc.status_code == 201, rc.text
     fid = rc.json()["object_ref"]["id"]
-    # 直改 active 指针 → v2（S4/S5 未放行，测试库专用构造）
-    with Session() as s:
-        s.execute(
-            update(StudioProject)
-            .where(StudioProject.id == pid)
-            .values(active_source_revision_id=v2["id"])
-        )
-        s.commit()
+    # 真实激活：S4 preview → S5 apply 把项目 active 从 v1 切到 v2
+    _activate(client, token, pid, v2["id"], expected_active_revision_id=v1["id"])
     r = _rename(client, token, pid, fid, "n", 1)
     assert r.status_code == 422, r.text
     err = r.json()["error"]
@@ -877,7 +884,7 @@ def test_t33_replay_200_no_side_effect(db, client):
 # ───────────────────── F7 片段退役 preview/apply（T34–T43，附录 02 §2 v2.8 + 00 §5） ─────────────────────
 # 跨域表（source_relations/script_*/jobs/media_artifacts/scenes/shots/edit_instances/releases）
 # 经下列模块导入注册进 Base.metadata，丢弃库 create_all 建表；种子行直接 INSERT
-# 构造（与 T4/T22/T29 直改 active 同款已接受模式）。不写 STUDIO_* env。
+# 构造（SOURCE-05 起 active 切换已改走 S4/S5 真实激活）。不写 STUDIO_* env。
 
 import backend.studio.relations.models  # noqa: F401,E402
 import backend.studio.scripts.models  # noqa: F401,E402
@@ -1146,7 +1153,7 @@ def test_t36_target_mismatch_422(db, client):
     assert v["message"] == "target_fragment_id 必须与路径片段一致。"
 
 
-# T37 非 active 版本上的片段 preview（直改 active，T4 同款构造）
+# T37 非 active 版本上的片段 preview（真实激活切走 active，T4 同款构造）
 # → 422 precondition_failed reason=source_revision_inactive
 def test_t37_inactive_source_422(db, client):
     token = _register(client, "f7_t37_carol")
@@ -1159,14 +1166,8 @@ def test_t37_inactive_source_422(db, client):
     rc = _create_fragment(client, token, pid, v1["id"], 0, 5, "F37")
     assert rc.status_code == 201, rc.text
     fid = rc.json()["object_ref"]["id"]
-    # 直改 active 指针 → v2（S4/S5 未放行，测试库专用构造）
-    with Session() as s:
-        s.execute(
-            update(StudioProject)
-            .where(StudioProject.id == pid)
-            .values(active_source_revision_id=v2["id"])
-        )
-        s.commit()
+    # 真实激活：S4 preview → S5 apply 把项目 active 从 v1 切到 v2
+    _activate(client, token, pid, v2["id"], expected_active_revision_id=v1["id"])
     r = _retire_preview(client, token, pid, fid)
     assert r.status_code == 422, r.text
     err = r.json()["error"]

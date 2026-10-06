@@ -198,7 +198,10 @@ def _user_id(username) -> str:
 
 
 def _set_active(pid, revision_id):
-    """直改 active 指针（S5 未放行，测试库专用构造——同 test_fragment_changes T4 模式）。"""
+    """直改 active 指针（测试库专用构造）。S4/S5 已放行但保留直改：真实激活会留
+    ChangePreview/ReviewDecision 行，而本文件多个测试对两表做精确行数断言；
+    本 fixture 只是快速到达"两版本各带片段、active 回 rev1"的前置，不承担
+    激活行为验证（激活行为由 T1–T18 经真实命令覆盖）。"""
     with Session() as s:
         s.execute(
             update(StudioProject)
@@ -222,8 +225,8 @@ def _seed_rev1_three_fragments(client, token, pid, rev1_id) -> list:
 
 
 def _scenario_two_revisions(client, token, pid, rev1_text=TEXT, rev2_text=TEXT2, rev2_ranges=((0, 10),)):
-    """rev1（active）3 片段 → 导入 rev2（非 active）→ 直改 active 到 rev2 建其片段
-    → 直改回 rev1。返回 (rev1, rev2, rev1_fids, rev2_fids)。"""
+    """rev1（active）3 片段 → 导入 rev2（非 active）→ 切 active 到 rev2 建其片段
+    → 切回 rev1（_set_active 直改，理由见该 helper 注释）。返回 (rev1, rev2, rev1_fids, rev2_fids)。"""
     rev1 = _import_active(client, token, pid, rev1_text)
     fids1 = _seed_rev1_three_fragments(client, token, pid, rev1["id"])
     time.sleep(0.002)  # 保证 ULID 严格递增

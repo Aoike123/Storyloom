@@ -7,9 +7,10 @@
 （复用同一 fixture/helper 模式）。
 
 fixture/helper 从 tests/studio/test_fragments.py 复制模式（db fixture、
-_register/_auth/_cmd/_create_project/_import/_import_active/_create_fragment/
-_range_sets/_fragment_revisions/_preview_row、跨域模型经 tests/studio/conftest.py
-统一注册、_seed 按 SOURCE-05-b 裁定 6 复用模式）；本文件不写 STUDIO_* env
+_register/_auth/_cmd/_create_project/_import/_import_active/_activate（S4/S5
+真实激活）/_create_fragment/_range_sets/_fragment_revisions/_preview_row、
+跨域模型经 tests/studio/conftest.py 统一注册、_seed 按 SOURCE-05-b 裁定 6
+复用模式）；本文件不写 STUDIO_* env
 （session 级由 conftest 统一设定，engine 是进程单例）。
 """
 import hashlib
@@ -21,7 +22,6 @@ import pytest
 from sqlalchemy import select, text, update
 
 from backend.core.db import Base, Session, engine, make_ulid
-from backend.studio.projects.models import StudioProject
 from backend.studio.reviews.models import ChangePreview, ReviewDecision
 from backend.studio.sources.fragment_models import Fragment, FragmentRevision, RangeSet
 
@@ -88,6 +88,31 @@ def _import_active(client, token, pid, content, command_id=None) -> dict:
     r = _import(client, token, pid, content, command_id)
     assert r.status_code == 201, r.text
     return r.json()
+
+
+def _activate(client, token, pid, target_revision_id, expected_active_revision_id) -> dict:
+    """S4 preview → S5 apply 真实激活 target 版本（两步均断言 200），返回新项目 DTO。"""
+    rp = client.post(
+        f"/api/studio/projects/{pid}/source-changes/preview",
+        json={
+            "kind": "source_activate",
+            "target_revision_id": target_revision_id,
+            "command_id": _cmd(),
+        },
+        headers=_auth(token),
+    )
+    assert rp.status_code == 200, rp.text
+    ra = client.post(
+        f"/api/studio/projects/{pid}/source-changes/apply",
+        json={
+            "preview_id": rp.json()["preview_id"],
+            "command_id": _cmd(),
+            "expected_active_revision_id": expected_active_revision_id,
+        },
+        headers=_auth(token),
+    )
+    assert ra.status_code == 200, ra.text
+    return ra.json()
 
 
 def _create_fragment(client, token, pid, source_revision_id, start, end, name, expected=None, command_id=None):
@@ -404,7 +429,7 @@ def test_t3_target_mismatch_422(db, client):
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# T4 非 active 版本片段 preview（直改 active 构造，同 test_fragments T37 模式）
+# T4 非 active 版本片段 preview（真实激活构造，同 test_fragments T37 模式）
 #    → 422 source_revision_inactive
 # ────────────────────────────────────────────────────────────────────────────
 def test_t4_inactive_source_422(db, client):
@@ -418,14 +443,8 @@ def test_t4_inactive_source_422(db, client):
     rc = _create_fragment(client, token, pid, v1["id"], 0, 5, "F4")
     assert rc.status_code == 201, rc.text
     fid = rc.json()["object_ref"]["id"]
-    # 直改 active 指针 → v2（S4/S5 未放行，测试库专用构造）
-    with Session() as s:
-        s.execute(
-            update(StudioProject)
-            .where(StudioProject.id == pid)
-            .values(active_source_revision_id=v2["id"])
-        )
-        s.commit()
+    # 真实激活：S4 preview → S5 apply 把项目 active 从 v1 切到 v2
+    _activate(client, token, pid, v2["id"], expected_active_revision_id=v1["id"])
     r = _boundary_preview(client, token, pid, fid, new_range={"start": 0, "end": 5})
     assert r.status_code == 422, r.text
     err = r.json()["error"]
@@ -984,7 +1003,7 @@ def test_t14_target_mismatch_422(db, client):
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# T15 非 active 版本片段 preview（直改 active 构造，同 F8 T4 模式）→
+# T15 非 active 版本片段 preview（真实激活构造，同 F8 T4 模式）→
 #     422 source_revision_inactive；已 retired（直改 state+retired_at）→
 #     422 already_retired
 # ────────────────────────────────────────────────────────────────────────────
@@ -1000,14 +1019,8 @@ def test_t15_inactive_and_retired_422(db, client):
     rc = _create_fragment(client, token_a, pid_a, v1["id"], 0, 10, "T15a")
     assert rc.status_code == 201, rc.text
     fid_a = rc.json()["object_ref"]["id"]
-    # 直改 active 指针 → v2（S4/S5 未放行，测试库专用构造）
-    with Session() as s:
-        s.execute(
-            update(StudioProject)
-            .where(StudioProject.id == pid_a)
-            .values(active_source_revision_id=v2["id"])
-        )
-        s.commit()
+    # 真实激活：S4 preview → S5 apply 把项目 active 从 v1 切到 v2
+    _activate(client, token_a, pid_a, v2["id"], expected_active_revision_id=v1["id"])
     r = _split_preview(client, token_a, pid_a, fid_a, 4)
     assert r.status_code == 422, r.text
     err = r.json()["error"]
@@ -1580,12 +1593,12 @@ def test_t24_shape_422(db, client):
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# T25 非 active（直改 active 构造，同 T4/T15 模式）→ 422
+# T25 非 active（真实激活构造，同 T4/T15 模式）→ 422
 #     source_revision_inactive；a 已 retired（先走 F7 退役）→ 422
 #     already_retired（a→b 序首个失败即报）
 # ────────────────────────────────────────────────────────────────────────────
 def test_t25_inactive_and_retired_422(db, client):
-    # (a) 非 active 版本（两片均绑 v1，直改 active → v2，a→b 序首个失败即报）
+    # (a) 非 active 版本（两片均绑 v1，真实激活切 active → v2，a→b 序首个失败即报）
     token_a = _register(client, "f10_t25_alice")
     pid_a = _create_project(client, token_a, "T25a")
     v1 = _import_active(client, token_a, pid_a, TEXT_A)
@@ -1599,14 +1612,8 @@ def test_t25_inactive_and_retired_422(db, client):
     fb = _create_fragment(client, token_a, pid_a, v1["id"], 10, 20, "T25a2", expected=2)
     assert fb.status_code == 201, fb.text
     fid_a2 = fb.json()["object_ref"]["id"]
-    # 直改 active 指针 → v2（S4/S5 未放行，测试库专用构造）
-    with Session() as s:
-        s.execute(
-            update(StudioProject)
-            .where(StudioProject.id == pid_a)
-            .values(active_source_revision_id=v2["id"])
-        )
-        s.commit()
+    # 真实激活：S4 preview → S5 apply 把项目 active 从 v1 切到 v2
+    _activate(client, token_a, pid_a, v2["id"], expected_active_revision_id=v1["id"])
     r = _merge_preview(client, token_a, pid_a, [fid_a1, fid_a2])
     assert r.status_code == 422, r.text
     err = r.json()["error"]
