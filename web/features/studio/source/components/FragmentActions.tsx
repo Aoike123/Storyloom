@@ -1,6 +1,6 @@
 "use client";
 
-// SOURCE-14 · 片段确认 + 改名动作（契约 v2.9，附录 02 §2 F6/F4）。
+// SOURCE-14 · 片段确认 + 改名 + 退役动作（契约 v2.9，附录 02 §2 F6/F4/F7）。
 //
 // 冻结决策（本文件头注记）：
 // - 自取片段数据（与 FragmentList/SourceReader 同一模式）：
@@ -14,7 +14,10 @@
 //   动作区：state === "candidate" 显示「确认」按钮（F6 前置：只有 candidate
 //   可确认；"选择不确认"）；state === "candidate" 或 state === "confirmed"
 //   显示「改名」按钮（retired 不显示——退役片段不再参与生产，无需改名；
-//   F2 列表只列 active 版本绑定片段，pending_review 不会出现在列表中）。
+//   F2 列表只列 active 版本绑定片段，pending_review 不会出现在列表中）；
+//   state === "candidate" 或 state === "confirmed" 显示「退役」按钮
+//   （retired 不显示——F7 前置已 retired → 422；F2 列表只列 active 版本
+//   绑定片段）。
 // - 确认动作（SOURCE-14-a 冻结，本卡不变）：仅显式点击（无自动确认、
 //   无 useEffect 自动提交、无默认勾选）；每次点击生成一次 commandId
 //   （crypto.randomUUID）；expected_revision = 该行 fragment.object_ref.revision
@@ -30,14 +33,31 @@
 //   按钮 disabled（防双击）；成功（res.ok）→ 清除该行错误 + 内部重取
 //   （列表名称更新为服务端 trimmed 值，表单收起）；失败（!res.ok）→ 该行
 //   行内错误（保留输入与表单，不退出、不丢错误）。
-// - 行内错误区（仅该片段确认/改名失败时显示，两者统一）：validation_failed →
-//   显示 details.violations 每条 message（如「片段名不能为空。」/
-//   「片段名最长 120 个字符。」）；revision_conflict →
-//   「片段版本已变化，请刷新后重试。」；precondition_failed →
-//   「片段状态已变化，请刷新后重试。」；其他显示 error.message。
+// - 退役动作（F7，本卡）：两步显式操作（先预览影响、再确认退役），
+//   点击「退役」→ 该行动作区切换为行内退役表单（阶段 1：「预览影响」+
+//   「取消」）；「取消」→ 回到按钮态（零 API 调用）；「预览影响」：每次
+//   点击生成一次 commandId → previewRetireFragment(client, pid, fid,
+//   { targetFragmentId: fid, commandId })；成功（res.ok）→ 该行进入阶段 2
+//   （展示 impact 摘要 +「确认退役」+「取消」）；失败（!res.ok）→ 行内错误
+//   （保留表单，不退出）。「确认退役」：每次点击生成一次 commandId →
+//   applyRetireFragment(client, pid, fid, { previewId: res.data.preview_id,
+//   commandId, expectedRevision: object_ref.revision,
+//   expectedRangeSetRevision: res.data.baseline.range_set.cas ?? 0 })；
+//   expected_range_set_revision 取 preview 返回的 baseline.range_set.cas
+//   （冻结基准，preview 时快照）；成功（res.ok）→ 清除该行错误 + 内部重取
+//   （列表状态标签更新为已退役，该行不再显示确认/改名/退役按钮）；
+//   失败（!res.ok）→ 行内错误（保留表单与 impact 摘要，不退出）。
+// - 行内错误区（确认/改名/退役统一）：preview_stale →
+//   「预览已过期，请重新预览。」；revision_conflict → 确认/改名
+//   「片段版本已变化，请刷新后重试。」、退役「版本已变化，请刷新后重试。」；
+//   precondition_failed → 「片段状态已变化，请刷新后重试。」；
+//   validation_failed → 显示 details.violations 每条 message（如「片段名
+//   不能为空。」/「片段名最长 120 个字符。」）；其他显示 error.message。
 // - 每行的改名表单展开态与输入值用行级 state（renaming:
-//   Record<string, { open, value }>），与 14-a 的 errors/submitting 并列；
-//   新取数成功（新快照）时一并清除（防陈旧表单/错误）。
+//   Record<string, { open, value }>）；每行的退役表单用行级 state
+//   （retiring: Record<string, { open, stage: "preview" | "confirm",
+//   preview? }>），与 14-a/b 的 errors/submitting 并列；新取数成功
+//   （新快照）时一并清除（防陈旧表单/错误/预览）。
 // - 组件不直接 fetch（走 client）；不 import 旧组件；无硬编码占位文本；
 //   不导航（不跳转页面）。
 
@@ -45,11 +65,17 @@ import { useEffect, useState } from "react";
 
 import defaultClient from "@/shared/api/client";
 import {
+  applyRetireFragment,
   confirmFragment,
   fetchAllFragments,
+  previewRetireFragment,
   renameFragment,
 } from "../api";
-import type { FragmentDto, StudioClient } from "../api";
+import type {
+  FragmentDto,
+  RetirePreviewDto,
+  StudioClient,
+} from "../api";
 import type { StudioApiResponse } from "@/shared/api/types";
 import { fragmentStateLabel } from "./FragmentList";
 
@@ -64,11 +90,26 @@ type ListState =
   | { kind: "error"; message: string }
   | { kind: "ready"; items: FragmentDto[] };
 
-/** 行内错误（确认与改名共用同一错误区）。 */
-type RowError = StudioApiResponse<FragmentDto> & { ok: false };
+/** 行内错误（确认/改名/退役共用同一错误区；仅用错误字段，data 形状随动作）。 */
+type RowError =
+  | (StudioApiResponse<FragmentDto> & { ok: false })
+  | (StudioApiResponse<RetirePreviewDto> & { ok: false });
+
+/** 产生该行错误的动作（决定 revision_conflict 文案）。 */
+type RowErrorSource = "confirm" | "rename" | "retire";
+
+/** 每行行内错误（错误体 + 产生动作）。 */
+type RowErrorEntry = { error: RowError; source: RowErrorSource };
 
 /** 每行改名表单状态（展开态 + 输入值）。 */
 type RenamingForm = { open: boolean; value: string };
+
+/** 每行退役表单状态（展开态 + 阶段 + 预览结果）。 */
+type RetiringForm = {
+  open: boolean;
+  stage: "preview" | "confirm";
+  preview?: RetirePreviewDto;
+};
 
 /** 每次点击生成一次 commandId（显式点击，无自动提交）。 */
 function makeCommandId(): string {
@@ -84,9 +125,10 @@ export default function FragmentActions({
   const [state, setState] = useState<ListState>({ kind: "loading" });
   const [retryTick, setRetryTick] = useState(0);
   const [refreshTick, setRefreshTick] = useState(0);
-  const [errors, setErrors] = useState<Record<string, RowError>>({});
+  const [errors, setErrors] = useState<Record<string, RowErrorEntry>>({});
   const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
   const [renaming, setRenaming] = useState<Record<string, RenamingForm>>({});
+  const [retiring, setRetiring] = useState<Record<string, RetiringForm>>({});
 
   useEffect(() => {
     let alive = true;
@@ -99,9 +141,11 @@ export default function FragmentActions({
         return;
       }
       setState({ kind: "ready", items: res.data });
-      // 新取数成功 = 新快照：行内确认/改名错误与改名表单属于旧快照，一并清除
+      // 新取数成功 = 新快照：行内确认/改名/退役错误、改名与退役表单
+      // 属于旧快照，一并清除（防陈旧表单/错误/预览）
       setErrors({});
       setRenaming({});
+      setRetiring({});
     })();
     return () => {
       alive = false;
@@ -128,7 +172,10 @@ export default function FragmentActions({
         setRefreshTick((t) => t + 1);
       } else {
         // 失败：保留行与按钮（不隐藏、不退出）
-        setErrors((prev) => ({ ...prev, [fid]: res as RowError }));
+        setErrors((prev) => ({
+          ...prev,
+          [fid]: { error: res as RowError, source: "confirm" },
+        }));
       }
     } finally {
       setSubmitting((prev) => ({ ...prev, [fid]: false }));
@@ -160,18 +207,21 @@ export default function FragmentActions({
       setErrors((prev) => ({
         ...prev,
         [fid]: {
-          ok: false,
-          code: "validation_failed",
-          message: "片段名不能为空。",
-          details: {
-            violations: [
-              {
-                field: "name",
-                rule: "required",
-                message: "片段名不能为空。",
-              },
-            ],
+          error: {
+            ok: false,
+            code: "validation_failed",
+            message: "片段名不能为空。",
+            details: {
+              violations: [
+                {
+                  field: "name",
+                  rule: "required",
+                  message: "片段名不能为空。",
+                },
+              ],
+            },
           },
+          source: "rename",
         },
       }));
       return;
@@ -196,7 +246,92 @@ export default function FragmentActions({
         setRefreshTick((t) => t + 1);
       } else {
         // 失败：保留输入与表单（不退出、不丢错误）
-        setErrors((prev) => ({ ...prev, [fid]: res as RowError }));
+        setErrors((prev) => ({
+          ...prev,
+          [fid]: { error: res as RowError, source: "rename" },
+        }));
+      }
+    } finally {
+      setSubmitting((prev) => ({ ...prev, [fid]: false }));
+    }
+  }
+
+  /** 点击「退役」：该行动作区切换为行内退役表单（阶段 1：预览影响）。 */
+  function handleRetireOpen(fragment: FragmentDto): void {
+    const fid = fragment.object_ref.id;
+    setRetiring((prev) => ({
+      ...prev,
+      [fid]: { open: true, stage: "preview" },
+    }));
+  }
+
+  /** 点击「取消」：回到按钮态（零 API 调用）。 */
+  function handleRetireCancel(fid: string): void {
+    setRetiring((prev) => ({
+      ...prev,
+      [fid]: { open: false, stage: "preview" },
+    }));
+  }
+
+  /** 点击「预览影响」：每次点击生成一次 commandId → previewRetireFragment。 */
+  async function handleRetirePreview(fragment: FragmentDto): Promise<void> {
+    const fid = fragment.object_ref.id;
+    setSubmitting((prev) => ({ ...prev, [fid]: true }));
+    try {
+      // 每次点击生成一次 commandId（显式点击，无自动退役）
+      const commandId = makeCommandId();
+      const res = await previewRetireFragment(clientObj, projectId, fid, {
+        targetFragmentId: fid,
+        commandId,
+      });
+      if (res.ok) {
+        // 成功：进入阶段 2（展示 impact 摘要 +「确认退役」+「取消」）
+        setRetiring((prev) => ({
+          ...prev,
+          [fid]: { open: true, stage: "confirm", preview: res.data },
+        }));
+      } else {
+        // 失败：保留表单（不退出、不丢错误）
+        setErrors((prev) => ({
+          ...prev,
+          [fid]: { error: res as RowError, source: "retire" },
+        }));
+      }
+    } finally {
+      setSubmitting((prev) => ({ ...prev, [fid]: false }));
+    }
+  }
+
+  /** 点击「确认退役」：每次点击生成一次 commandId → applyRetireFragment。 */
+  async function handleRetireApply(fragment: FragmentDto): Promise<void> {
+    const fid = fragment.object_ref.id;
+    const preview = retiring[fid]?.preview;
+    if (preview === undefined) return;
+    setSubmitting((prev) => ({ ...prev, [fid]: true }));
+    try {
+      // 每次点击生成一次 commandId（显式点击，无自动退役）
+      const commandId = makeCommandId();
+      const res = await applyRetireFragment(clientObj, projectId, fid, {
+        previewId: preview.preview_id,
+        commandId,
+        expectedRevision: fragment.object_ref.revision,
+        expectedRangeSetRevision: preview.baseline.range_set.cas ?? 0,
+      });
+      if (res.ok) {
+        // 成功：清除该行错误，内部重取（状态标签更新为已退役，
+        // 新快照清除 retiring → 该行不再显示确认/改名/退役按钮）
+        setErrors((prev) => {
+          const next = { ...prev };
+          delete next[fid];
+          return next;
+        });
+        setRefreshTick((t) => t + 1);
+      } else {
+        // 失败：保留表单与 impact 摘要（不退出、不丢错误）
+        setErrors((prev) => ({
+          ...prev,
+          [fid]: { error: res as RowError, source: "retire" },
+        }));
       }
     } finally {
       setSubmitting((prev) => ({ ...prev, [fid]: false }));
@@ -204,10 +339,13 @@ export default function FragmentActions({
   }
 
   /**
-   * 行内错误文案（确认与改名共用）：validation_failed → violations 每条
-   * message；revision_conflict / precondition_failed → 固定文案；其他 message。
+   * 行内错误文案（确认/改名/退役统一）：validation_failed → violations
+   * 每条 message；preview_stale → 「预览已过期，请重新预览。」；
+   * revision_conflict → 确认/改名「片段版本已变化，请刷新后重试。」、
+   * 退役「版本已变化，请刷新后重试。」；precondition_failed →
+   * 「片段状态已变化，请刷新后重试。」；其他 message。
    */
-  function rowErrorText(error: RowError): string {
+  function rowErrorText(error: RowError, source?: RowErrorSource): string {
     if (error.code === "validation_failed") {
       const details = error.details as Record<string, unknown> | undefined;
       const violations = (details?.violations ?? []) as Array<{
@@ -219,8 +357,13 @@ export default function FragmentActions({
       if (messages.length > 0) return messages.join(" ");
       return error.message;
     }
+    if (error.code === "preview_stale") {
+      return "预览已过期，请重新预览。";
+    }
     if (error.code === "revision_conflict") {
-      return "片段版本已变化，请刷新后重试。";
+      return source === "retire"
+        ? "版本已变化，请刷新后重试。"
+        : "片段版本已变化，请刷新后重试。";
     }
     if (error.code === "precondition_failed") {
       return "片段状态已变化，请刷新后重试。";
@@ -256,15 +399,22 @@ export default function FragmentActions({
       <ul className="fragment-actions__items">
         {state.items.map((fragment) => {
           const fid = fragment.object_ref.id;
-          const error = errors[fid];
+          const errorEntry = errors[fid];
+          const error = errorEntry?.error;
           const isSubmitting = submitting[fid] === true;
           const isCandidate = fragment.state === "candidate";
           // 改名仅 candidate/confirmed（retired 不显示；pending_review
           // 不会出现在 F2 列表中）
           const canRename =
             fragment.state === "candidate" || fragment.state === "confirmed";
+          // 退役仅 candidate/confirmed（retired 不显示——F7 前置已 retired → 422；
+          // F2 列表只列 active 版本绑定片段）
+          const canRetire =
+            fragment.state === "candidate" || fragment.state === "confirmed";
           const renameForm = renaming[fid];
           const isRenaming = renameForm?.open === true;
+          const retireForm = retiring[fid];
+          const isRetiring = retireForm?.open === true;
           return (
             <li
               key={fid}
@@ -304,6 +454,44 @@ export default function FragmentActions({
                     取消
                   </button>
                 </div>
+              ) : isRetiring ? (
+                <div className="fragment-actions__retire-form">
+                  {retireForm?.stage === "confirm" &&
+                    retireForm?.preview !== undefined && (
+                      <p className="fragment-actions__retire-impact">
+                        影响：{retireForm.preview.impact.affected.length} 项 /
+                        待复核：{retireForm.preview.impact.needs_review.length}{" "}
+                        项 / 可保留：
+                        {retireForm.preview.impact.preservable.length} 项
+                      </p>
+                    )}
+                  {retireForm?.stage === "preview" ? (
+                    <button
+                      type="button"
+                      className="fragment-actions__retire-preview"
+                      disabled={isSubmitting}
+                      onClick={() => void handleRetirePreview(fragment)}
+                    >
+                      预览影响
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="fragment-actions__retire-apply"
+                      disabled={isSubmitting}
+                      onClick={() => void handleRetireApply(fragment)}
+                    >
+                      确认退役
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="fragment-actions__retire-cancel"
+                    onClick={() => handleRetireCancel(fid)}
+                  >
+                    取消
+                  </button>
+                </div>
               ) : (
                 <>
                   {isCandidate && (
@@ -325,11 +513,20 @@ export default function FragmentActions({
                       改名
                     </button>
                   )}
+                  {canRetire && (
+                    <button
+                      type="button"
+                      className="fragment-actions__retire"
+                      onClick={() => handleRetireOpen(fragment)}
+                    >
+                      退役
+                    </button>
+                  )}
                 </>
               )}
               {error !== undefined && (
                 <div className="fragment-actions__row-error" role="alert">
-                  <p>{rowErrorText(error)}</p>
+                  <p>{rowErrorText(error, errorEntry?.source)}</p>
                 </div>
               )}
             </li>
@@ -446,6 +643,68 @@ export default function FragmentActions({
           opacity: 0.45;
         }
         .fragment-actions__rename-cancel {
+          flex-shrink: 0;
+          padding: 0.2rem 0.7rem;
+          border: 1px solid #adb5bd;
+          border-radius: 4px;
+          background: #fff;
+          cursor: pointer;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__retire {
+          flex-shrink: 0;
+          padding: 0.2rem 0.7rem;
+          border: 1px solid #e8590c;
+          border-radius: 4px;
+          background: #fff;
+          color: #e8590c;
+          cursor: pointer;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__retire-form {
+          flex-basis: 100%;
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 0.5rem;
+          margin-top: 0.25rem;
+        }
+        .fragment-actions__retire-impact {
+          flex-basis: 100%;
+          margin: 0;
+          font-size: 0.85rem;
+          color: #495057;
+          line-height: 1.5;
+        }
+        .fragment-actions__retire-preview {
+          flex-shrink: 0;
+          padding: 0.2rem 0.7rem;
+          border: 1px solid #1971c2;
+          border-radius: 4px;
+          background: #fff;
+          color: #1971c2;
+          cursor: pointer;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__retire-preview:disabled {
+          cursor: not-allowed;
+          opacity: 0.45;
+        }
+        .fragment-actions__retire-apply {
+          flex-shrink: 0;
+          padding: 0.2rem 0.7rem;
+          border: 1px solid #e8590c;
+          border-radius: 4px;
+          background: #e8590c;
+          color: #fff;
+          cursor: pointer;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__retire-apply:disabled {
+          cursor: not-allowed;
+          opacity: 0.45;
+        }
+        .fragment-actions__retire-cancel {
           flex-shrink: 0;
           padding: 0.2rem 0.7rem;
           border: 1px solid #adb5bd;

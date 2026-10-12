@@ -444,3 +444,107 @@ export function renameFragment(
     { commandId: params.commandId },
   );
 }
+
+// ---------------------------------------------------------------------------
+// SOURCE-14 · 片段退役（契约 v2.9，附录 02 §2 F7）
+// ---------------------------------------------------------------------------
+
+/** F7 退役预览参数。 */
+export interface RetirePreviewParams {
+  targetFragmentId: string;
+  commandId: string;
+}
+
+/**
+ * F7 退役预览响应（附录 00 §5.1：恰 4 字段，preview 是一次幂等写，
+ * 记录 state=pending 不外露）。
+ */
+export interface RetirePreviewDto {
+  preview_id: string;
+  kind: string;
+  baseline: {
+    fragment: { kind: string; id: string; revision: number };
+    range_set: { id: string | null; cas: number | null };
+  };
+  impact: {
+    affected: Array<{
+      object_ref: { kind: string; id: string; revision: number | null };
+    }>;
+    needs_review: Array<{
+      object_ref: { kind: string; id: string; revision: number | null };
+    }>;
+    preservable: Array<{
+      object_ref: { kind: string; id: string; revision: number | null };
+    }>;
+  };
+}
+
+/**
+ * F7 预览退役片段（附录 02 §2 F7；preview 是一次幂等写，记录
+ * state=pending 不外露；幂等重放命中 → 200 原 result_payload，零写零 commit）。
+ *
+ * - POST /api/studio/projects/{pid}/fragments/{fid}/retire，body =
+ *   { target_fragment_id, command_id }（target_fragment_id 传路径 fid 值；
+ *   command_id 由 client.post 合并进 body）；
+ * - 成功（200，含幂等重放）返回 res（恰 4 字段 {preview_id, kind,
+ *   baseline, impact}）；
+ * - 一切错误原样透传（不重试、不改写）：422 precondition_failed
+ *   （details.reason：source_revision_inactive | already_retired）、
+ *   422 validation_failed（details.violations：rule=mismatch | rule=reused）、
+ *   404 not_found、network。
+ */
+export function previewRetireFragment(
+  client: StudioClient,
+  pid: string,
+  fid: string,
+  params: RetirePreviewParams,
+): Promise<StudioApiResponse<RetirePreviewDto>> {
+  const path = `/api/studio/projects/${encodeURIComponent(pid)}/fragments/${encodeURIComponent(fid)}/retire`;
+  return client.post<RetirePreviewDto>(
+    path,
+    { target_fragment_id: params.targetFragmentId },
+    { commandId: params.commandId },
+  );
+}
+
+/** F7 退役应用参数。 */
+export interface RetireApplyParams {
+  previewId: string;
+  commandId: string;
+  expectedRevision: number;
+  expectedRangeSetRevision: number;
+}
+
+/**
+ * F7 应用退役片段（附录 02 §2 F7；退役只置状态，不删除任何产物——
+ * R11 失效≠删除；退役不动 range_set cas；幂等重放命中 → 200 原
+ * result_payload，零写零 commit）。
+ *
+ * - POST /api/studio/projects/{pid}/fragments/{fid}/retire/apply，body =
+ *   { preview_id, command_id, expected_revision, expected_range_set_revision }
+ *   （command_id 由 client.post 合并进 body）；
+ * - 成功（200，含幂等重放）返回 res（FragmentDto 复用既有接口：
+ *   state='retired'、retired_at）；
+ * - 一切错误原样透传（不重试、不改写）：409 preview_stale
+ *   （details.preview_id + details.conflicts）、409 revision_conflict
+ *   （details.object.kind：fragment | range_set）、422 validation_failed
+ *   （violations：mismatch | reused）、422 precondition_failed、
+ *   404 not_found、network。
+ */
+export function applyRetireFragment(
+  client: StudioClient,
+  pid: string,
+  fid: string,
+  params: RetireApplyParams,
+): Promise<StudioApiResponse<FragmentDto>> {
+  const path = `/api/studio/projects/${encodeURIComponent(pid)}/fragments/${encodeURIComponent(fid)}/retire/apply`;
+  return client.post<FragmentDto>(
+    path,
+    {
+      preview_id: params.previewId,
+      expected_revision: params.expectedRevision,
+      expected_range_set_revision: params.expectedRangeSetRevision,
+    },
+    { commandId: params.commandId },
+  );
+}

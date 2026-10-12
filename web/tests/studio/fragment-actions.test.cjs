@@ -796,7 +796,11 @@ test("FragmentActions: commandId 生成（crypto.randomUUID 每次点击一次�
     "makeCommandId 须用 crypto.randomUUID()",
   );
   const callCount = (actionsSrc.match(/= makeCommandId\(\)/g) || []).length;
-  assert.equal(callCount, 2, "确认与保存各每次点击生成一次 commandId");
+  assert.equal(
+    callCount,
+    4,
+    "确认/保存/预览影响/确认退役各每次点击生成一次 commandId",
+  );
   const confirmSrc =
     actionsSrc.match(/async function handleConfirm[^{]*\{([\s\S]*?)\n  \}/)
       ?.[1] ?? "";
@@ -887,6 +891,658 @@ test("FragmentActions: 无自动提交（useEffect 内不调 confirmFragment/ren
   assert.ok(
     !effectBlock[0].includes("renameFragment"),
     "useEffect 内不得调用 renameFragment（无自动提交）",
+  );
+  assert.ok(!actionsSrc.includes("fetch("), "组件不直接 fetch，须走 client");
+  assert.ok(!actionsSrc.includes("示例"), "无硬编码样例");
+  assert.ok(!actionsSrc.includes("样例"), "无硬编码样例");
+  assert.ok(!actionsSrc.includes("Lorem"), "无硬编码样例");
+  assert.ok(!actionsSrc.includes("router.push"), "不得导航（router.push）");
+  assert.ok(
+    !actionsSrc.includes("window.location"),
+    "不得导航（window.location）",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// SOURCE-14 · 片段退役 UI（契约 v2.9，附录 02 §2 F7）— 新增
+// ---------------------------------------------------------------------------
+
+const { previewRetireFragment, applyRetireFragment } = apiContext.exports;
+
+// F7 退役预览响应（恰 4 字段 {preview_id, kind, baseline, impact}）
+const RETIRE_PREVIEW_OK = {
+  preview_id: "preview-1",
+  kind: "fragment_retire",
+  baseline: {
+    fragment: { kind: "fragment", id: "frag-1", revision: 2 },
+    range_set: { id: "rs-1", cas: 5 },
+  },
+  impact: {
+    affected: [
+      { object_ref: { kind: "source_relation", id: "sr-1", revision: 2 } },
+    ],
+    needs_review: [
+      { object_ref: { kind: "studio_job", id: "job-1", revision: null } },
+    ],
+    preservable: [
+      { object_ref: { kind: "media_artifact", id: "ma-1", revision: null } },
+    ],
+  },
+};
+
+// F3 形状片段 DTO（退役成功返回：state=retired、retired_at）
+const FRAG_RETIRED = {
+  object_ref: { kind: "fragment", id: "frag-1", revision: 2 },
+  name: "片段甲",
+  summary: null,
+  state: "retired",
+  revision_is_active: true,
+  range: { start: 0, end: 4 },
+  source_revision_id: "rev1",
+  predecessor_ids: [],
+  created_at: 1,
+  updated_at: 3,
+  retired_at: 3,
+};
+
+// ---------------------------------------------------------------------------
+// previewRetireFragment（mock fetch，同 confirmFragment 的
+// makeClient/okJson/errJson 模式）
+// ---------------------------------------------------------------------------
+
+test("previewRetireFragment: 首发 URL/方法/body（target_fragment_id = 路径 fid、command_id === 传入值）", async () => {
+  let captured;
+  const client = makeClient(async (url, opts) => {
+    captured = { url, opts };
+    return okJson(RETIRE_PREVIEW_OK, 200);
+  });
+  const res = await previewRetireFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    commandId: "cmd-1",
+  });
+  assert.equal(
+    captured.url,
+    "http://test.local/api/studio/projects/p1/fragments/f1/retire",
+  );
+  assert.equal(captured.opts.method, "POST");
+  const body = JSON.parse(captured.opts.body);
+  assert.deepEqual(norm(body), { target_fragment_id: "f1", command_id: "cmd-1" });
+  assert.equal(body.command_id, "cmd-1", "command_id === 传入值");
+  assert.equal(res.ok, true);
+});
+
+test("previewRetireFragment: pid/fid 特殊字符经 encodeURIComponent", async () => {
+  let captured;
+  const client = makeClient(async (url, opts) => {
+    captured = { url, opts };
+    return okJson(RETIRE_PREVIEW_OK, 200);
+  });
+  await previewRetireFragment(client, "p/1?a", "f 1", {
+    targetFragmentId: "f 1",
+    commandId: "cmd-1",
+  });
+  assert.equal(
+    captured.url,
+    "http://test.local/api/studio/projects/" +
+      encodeURIComponent("p/1?a") +
+      "/fragments/" +
+      encodeURIComponent("f 1") +
+      "/retire",
+  );
+});
+
+test("previewRetireFragment: 200（恰 4 字段 {preview_id, kind:'fragment_retire', baseline, impact}）→ ok、data.preview_id/data.baseline 可用", async () => {
+  const client = makeClient(async () => okJson(RETIRE_PREVIEW_OK, 200));
+  const res = await previewRetireFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    commandId: "cmd-1",
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.data.preview_id, "preview-1");
+  assert.equal(res.data.kind, "fragment_retire");
+  assert.equal(res.data.baseline.fragment.id, "frag-1");
+  assert.equal(res.data.baseline.fragment.revision, 2);
+  assert.equal(res.data.baseline.range_set.cas, 5);
+  assert.deepEqual(
+    norm(Object.keys(res.data).sort()),
+    ["baseline", "impact", "kind", "preview_id"],
+    "恰 4 字段",
+  );
+});
+
+test("previewRetireFragment: 422 precondition_failed（details.reason === already_retired）→ 不重试（请求恰 1 次）、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "precondition_failed",
+        message: "该片段已退役，不能重复退役。",
+        details: {
+          reason: "already_retired",
+          blocked_by: { kind: "fragment", id: "frag-1", revision: 2 },
+        },
+      },
+    });
+  });
+  const res = await previewRetireFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "precondition_failed");
+  assert.equal(res.details.reason, "already_retired");
+});
+
+test("previewRetireFragment: 422 validation_failed（violations，rule=mismatch）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "validation_failed",
+        message: "请求校验失败。",
+        details: {
+          violations: [
+            {
+              field: "target_fragment_id",
+              rule: "mismatch",
+              message: "target_fragment_id 必须与路径片段一致。",
+            },
+          ],
+        },
+      },
+    });
+  });
+  const res = await previewRetireFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "validation_failed");
+  assert.equal(res.details.violations[0].field, "target_fragment_id");
+  assert.equal(res.details.violations[0].rule, "mismatch");
+});
+
+test("previewRetireFragment: 422 validation_failed（violations，rule=reused）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "validation_failed",
+        message: "请求校验失败。",
+        details: {
+          violations: [
+            {
+              field: "command_id",
+              rule: "reused",
+              message: "command_id 已被其他命令使用，请生成新的。",
+            },
+          ],
+        },
+      },
+    });
+  });
+  const res = await previewRetireFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "validation_failed");
+  assert.equal(res.details.violations[0].field, "command_id");
+  assert.equal(res.details.violations[0].rule, "reused");
+});
+
+test("previewRetireFragment: 404 not_found → 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(404, {
+      error: {
+        code: "not_found",
+        message: "对象不存在或不属于当前项目。",
+        details: { kind: "fragment", id: "f1" },
+      },
+    });
+  });
+  const res = await previewRetireFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 404);
+  assert.equal(res.code, "not_found");
+  assert.deepEqual(norm(res.details), { kind: "fragment", id: "f1" });
+});
+
+test("previewRetireFragment: network → 不重试、code=network", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    throw new TypeError("Failed to fetch");
+  });
+  const res = await previewRetireFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.code, "network");
+});
+
+// ---------------------------------------------------------------------------
+// applyRetireFragment（mock fetch，同 confirmFragment 的
+// makeClient/okJson/errJson 模式）
+// ---------------------------------------------------------------------------
+
+test("applyRetireFragment: 首发 URL/方法/body（preview_id、command_id === 传入值、expected_revision、expected_range_set_revision）", async () => {
+  let captured;
+  const client = makeClient(async (url, opts) => {
+    captured = { url, opts };
+    return okJson(FRAG_RETIRED, 200);
+  });
+  const res = await applyRetireFragment(client, "p1", "f1", {
+    previewId: "preview-1",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(
+    captured.url,
+    "http://test.local/api/studio/projects/p1/fragments/f1/retire/apply",
+  );
+  assert.equal(captured.opts.method, "POST");
+  const body = JSON.parse(captured.opts.body);
+  assert.deepEqual(norm(body), {
+    preview_id: "preview-1",
+    expected_revision: 2,
+    expected_range_set_revision: 5,
+    command_id: "cmd-1",
+  });
+  assert.equal(body.command_id, "cmd-1", "command_id === 传入值");
+  assert.equal(res.ok, true);
+});
+
+test("applyRetireFragment: 200（F3 形状 DTO，state=retired、retired_at）→ ok、data.state 可用", async () => {
+  const client = makeClient(async () => okJson(FRAG_RETIRED, 200));
+  const res = await applyRetireFragment(client, "p1", "f1", {
+    previewId: "preview-1",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.data.state, "retired");
+  assert.equal(res.data.retired_at, 3);
+  assert.equal(res.data.object_ref.id, "frag-1");
+});
+
+test("applyRetireFragment: 409 preview_stale（details.preview_id + details.conflicts）→ 不重试（请求恰 1 次）、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(409, {
+      error: {
+        code: "preview_stale",
+        message: "预览已过期或已被处理，请重新预览。",
+        details: {
+          preview_id: "preview-1",
+          conflicts: [
+            {
+              object: { kind: "preview", id: "preview-1" },
+              expected: "pending",
+              actual: "expired",
+            },
+          ],
+        },
+      },
+    });
+  });
+  const res = await applyRetireFragment(client, "p1", "f1", {
+    previewId: "preview-1",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 409);
+  assert.equal(res.code, "preview_stale");
+  assert.equal(res.details.preview_id, "preview-1");
+  assert.equal(res.details.conflicts.length, 1);
+});
+
+test("applyRetireFragment: 409 revision_conflict（details.object.kind === range_set）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(409, {
+      error: {
+        code: "revision_conflict",
+        message: "版本已变化，请刷新后重试。",
+        details: {
+          object: { kind: "range_set", id: "rs-1" },
+          expected: 5,
+          actual: 6,
+        },
+      },
+    });
+  });
+  const res = await applyRetireFragment(client, "p1", "f1", {
+    previewId: "preview-1",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 409);
+  assert.equal(res.code, "revision_conflict");
+  assert.equal(res.details.object.kind, "range_set");
+});
+
+test("applyRetireFragment: 409 revision_conflict（details.object.kind === fragment）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(409, {
+      error: {
+        code: "revision_conflict",
+        message: "版本已变化，请刷新后重试。",
+        details: {
+          object: { kind: "fragment", id: "frag-1" },
+          expected: 2,
+          actual: 3,
+        },
+      },
+    });
+  });
+  const res = await applyRetireFragment(client, "p1", "f1", {
+    previewId: "preview-1",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 409);
+  assert.equal(res.code, "revision_conflict");
+  assert.equal(res.details.object.kind, "fragment");
+});
+
+test("applyRetireFragment: 422 validation_failed（violations，rule=reused）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "validation_failed",
+        message: "请求校验失败。",
+        details: {
+          violations: [
+            {
+              field: "command_id",
+              rule: "reused",
+              message: "command_id 已被其他命令使用，请生成新的。",
+            },
+          ],
+        },
+      },
+    });
+  });
+  const res = await applyRetireFragment(client, "p1", "f1", {
+    previewId: "preview-1",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "validation_failed");
+  assert.equal(res.details.violations[0].field, "command_id");
+  assert.equal(res.details.violations[0].rule, "reused");
+});
+
+test("applyRetireFragment: 404 not_found（kind=preview）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(404, {
+      error: {
+        code: "not_found",
+        message: "对象不存在或不属于当前项目。",
+        details: { kind: "preview", id: "preview-1" },
+      },
+    });
+  });
+  const res = await applyRetireFragment(client, "p1", "f1", {
+    previewId: "preview-1",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 404);
+  assert.equal(res.code, "not_found");
+  assert.deepEqual(norm(res.details), { kind: "preview", id: "preview-1" });
+});
+
+test("applyRetireFragment: network → 不重试、code=network", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    throw new TypeError("Failed to fetch");
+  });
+  const res = await applyRetireFragment(client, "p1", "f1", {
+    previewId: "preview-1",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.code, "network");
+});
+
+// ---------------------------------------------------------------------------
+// FragmentActions.tsx 退役 UI 字符串断言（selection.test.cjs 模式）
+// ---------------------------------------------------------------------------
+
+test("FragmentActions: 退役按钮仅 candidate/confirmed（retired 不显示退役）", () => {
+  assert.ok(
+    actionsSrc.includes(
+      'fragment.state === "candidate" || fragment.state === "confirmed"',
+    ),
+    "退役判定须为 state === \"candidate\" 或 state === \"confirmed\"",
+  );
+  assert.ok(
+    !actionsSrc.includes('state === "retired"'),
+    "retired 行不得显示退役（也不显示确认）",
+  );
+});
+
+test("FragmentActions: 两步显式（阶段 1「预览影响」→ 阶段 2「确认退役」）+ 确认退役仅 preview 成功后可点击", () => {
+  assert.ok(
+    actionsSrc.includes("fragment-actions__retire-form"),
+    "行内退役表单容器缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("fragment-actions__retire-preview"),
+    "「预览影响」按钮缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("fragment-actions__retire-apply"),
+    "「确认退役」按钮缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("fragment-actions__retire-cancel"),
+    "「取消」按钮缺失",
+  );
+  assert.ok(actionsSrc.includes("预览影响"), "「预览影响」按钮文案缺失");
+  assert.ok(actionsSrc.includes("确认退役"), "「确认退役」按钮文案缺失");
+  assert.ok(actionsSrc.includes("退役"), "「退役」按钮文案缺失");
+  assert.ok(
+    actionsSrc.includes('stage === "confirm"'),
+    "阶段 2（确认退役）判定缺失",
+  );
+  assert.ok(
+    actionsSrc.includes('stage === "preview"'),
+    "阶段 1（预览影响）判定缺失",
+  );
+});
+
+test("FragmentActions: 显式点击接线（onClick + previewRetireFragment/applyRetireFragment）+ makeCommandId() 每次点击一次", () => {
+  const previewSrc =
+    actionsSrc.match(/async function handleRetirePreview[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(previewSrc.length > 0, "handleRetirePreview 缺失");
+  assert.ok(
+    previewSrc.includes("previewRetireFragment"),
+    "预览影响须调用 previewRetireFragment",
+  );
+  assert.ok(
+    previewSrc.includes("makeCommandId()"),
+    "预览影响须每次点击生成一次 commandId",
+  );
+  const applySrc =
+    actionsSrc.match(/async function handleRetireApply[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(applySrc.length > 0, "handleRetireApply 缺失");
+  assert.ok(
+    applySrc.includes("applyRetireFragment"),
+    "确认退役须调用 applyRetireFragment",
+  );
+  assert.ok(
+    applySrc.includes("makeCommandId()"),
+    "确认退役须每次点击生成一次 commandId",
+  );
+  assert.ok(
+    actionsSrc.includes("onClick={() => void handleRetirePreview(fragment)}"),
+    "「预览影响」按钮 onClick 接线缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("onClick={() => void handleRetireApply(fragment)}"),
+    "「确认退役」按钮 onClick 接线缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("onClick={() => handleRetireOpen(fragment)}"),
+    "「退役」按钮 onClick 接线缺失",
+  );
+});
+
+test("FragmentActions: expected_revision 取 object_ref.revision；expected_range_set_revision 取 preview.baseline.range_set.cas", () => {
+  const applySrc =
+    actionsSrc.match(/async function handleRetireApply[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(
+    applySrc.includes("object_ref.revision"),
+    "expected_revision 须取 object_ref.revision（真实服务端值）",
+  );
+  assert.ok(
+    applySrc.includes("baseline.range_set.cas"),
+    "expected_range_set_revision 须取 preview.baseline.range_set.cas（冻结基准）",
+  );
+});
+
+test("FragmentActions: impact 摘要展示（affected/needs_review/preservable 计数）", () => {
+  assert.ok(
+    actionsSrc.includes("impact.affected.length"),
+    "impact 摘要 affected 计数缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("impact.needs_review.length"),
+    "impact 摘要 needs_review 计数缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("impact.preservable.length"),
+    "impact 摘要 preservable 计数缺失",
+  );
+  assert.ok(actionsSrc.includes("影响："), "impact 摘要文案缺失");
+  assert.ok(actionsSrc.includes("待复核："), "待复核文案缺失");
+  assert.ok(actionsSrc.includes("可保留："), "可保留文案缺失");
+});
+
+test("FragmentActions: 取消零 API 调用（onCancel 路径无 previewRetireFragment/applyRetireFragment）", () => {
+  const cancelSrc =
+    actionsSrc.match(/function handleRetireCancel[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(cancelSrc.length > 0, "handleRetireCancel 缺失");
+  assert.ok(
+    cancelSrc.includes("setRetiring"),
+    "取消须以 setRetiring 回到按钮态",
+  );
+  assert.ok(
+    !cancelSrc.includes("previewRetireFragment"),
+    "取消不得调用 previewRetireFragment（零 API 调用）",
+  );
+  assert.ok(
+    !cancelSrc.includes("applyRetireFragment"),
+    "取消不得调用 applyRetireFragment（零 API 调用）",
+  );
+  assert.ok(
+    !cancelSrc.includes("clientObj"),
+    "取消不得使用 client",
+  );
+  assert.ok(
+    actionsSrc.includes("onClick={() => handleRetireCancel(fid)}"),
+    "取消按钮 onClick 接线缺失",
+  );
+});
+
+test("FragmentActions: 失败保留表单（setErrors 保留、不退出）", () => {
+  const previewSrc =
+    actionsSrc.match(/async function handleRetirePreview[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(
+    previewSrc.includes("setErrors"),
+    "预览失败须 setErrors 保留行内错误",
+  );
+  const applySrc =
+    actionsSrc.match(/async function handleRetireApply[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(
+    applySrc.includes("setErrors"),
+    "确认退役失败须 setErrors 保留行内错误",
+  );
+  assert.ok(
+    applySrc.includes("setSubmitting"),
+    "提交态管理缺失",
+  );
+});
+
+test("FragmentActions: preview_stale 分支文案「预览已过期，请重新预览。」", () => {
+  assert.ok(
+    actionsSrc.includes('code === "preview_stale"'),
+    "preview_stale 分支缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("预览已过期，请重新预览。"),
+    "preview_stale 文案缺失",
+  );
+});
+
+test("FragmentActions: 无自动退役（useEffect 内不调 previewRetireFragment/applyRetireFragment）+ 不直接 fetch + 无硬编码样例 + 不导航", () => {
+  const effectBlock = actionsSrc.match(
+    /useEffect\(\(\) => \{[\s\S]*?\}, \[[^\]]+\]\)/,
+  );
+  assert.ok(effectBlock, "useEffect 缺失");
+  assert.ok(
+    !effectBlock[0].includes("previewRetireFragment"),
+    "useEffect 内不得调用 previewRetireFragment（无自动退役）",
+  );
+  assert.ok(
+    !effectBlock[0].includes("applyRetireFragment"),
+    "useEffect 内不得调用 applyRetireFragment（无自动退役）",
   );
   assert.ok(!actionsSrc.includes("fetch("), "组件不直接 fetch，须走 client");
   assert.ok(!actionsSrc.includes("示例"), "无硬编码样例");

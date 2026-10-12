@@ -2528,12 +2528,52 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "展示影响后明确退役，不删除产物。",
-      "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "web/features/studio/source/api.ts（纯逻辑追加：RetirePreviewParams/RetirePreviewDto/RetireApplyParams/previewRetireFragment/applyRetireFragment）、web/features/studio/source/components/FragmentActions.tsx（扩展退役两步表单）、web/tests/studio/fragment-actions.test.cjs（扩展，既有 36 项保持）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-12",
+          "result": "interrupted（执行器在产出任何文件前耗尽上下文；工作树干净无残留）"
+        },
+        {
+          "n": 2,
+          "by": "executor",
+          "date": "2026-10-12",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-12",
+        "contract_version": "2.9",
+        "tested_baseline": "c97a6d9 + 3 白名单文件（本卡提交）",
+        "scope": "f7_retire_fragment_ui",
+        "checks": [
+          "主模型独立复验（不复用执行器报告）：node --test web/tests/studio/fragment-actions.test.cjs → 61/61（既有 36 + 新增 25）；node --test web/tests/studio/*.test.cjs → 235/235 无回归；cd web && npx tsc --noEmit → exit 0；git status 仅白名单 3 文件。",
+          "F7 preview 协议（diff 逐行核对 + mock fetch 测试）：POST /api/studio/projects/{pid}/fragments/{fid}/retire（pid/fid 均 encodeURIComponent），body = {target_fragment_id, command_id}（target_fragment_id 传路径 fid 值）；200 恰 4 字段 {preview_id, kind:'fragment_retire', baseline:{fragment:{kind,id,revision}, range_set:{id,cas}}, impact:{affected[], needs_review[], preservable[]}}；错误透传不重试（422 precondition_failed reason=already_retired/source_revision_inactive、422 validation_failed rule=mismatch/reused、404 not_found、network 测试断言请求恰 1 次 + details 逐字段透传）。",
+          "F7 apply 协议（diff 逐行核对 + mock fetch 测试）：POST /api/studio/projects/{pid}/fragments/{fid}/retire/apply，body = {preview_id, command_id, expected_revision, expected_range_set_revision}；expected_revision 取该行 fragment.object_ref.revision（真实服务端值）；expected_range_set_revision 取 preview 返回的 baseline.range_set.cas（冻结基准，preview 时快照；cas 为 null 时 ?? 0）；200 F3 形状 DTO（state='retired'、retired_at）；错误透传不重试（409 preview_stale{preview_id, conflicts[]}、409 revision_conflict object.kind=fragment/range_set、422 validation_failed rule=reused、404 not_found kind=preview、network 测试断言请求恰 1 次 + details 逐字段透传）。",
+          "两步显式操作（卡面\"展示影响后明确退役\"）：点击「退役」→ 阶段 1「预览影响」+「取消」；预览成功 → 阶段 2 展示 impact 摘要（「影响：N 项 / 待复核：N 项 / 可保留：N 项」，N = affected/needs_review/preservable.length）+「确认退役」+「取消」；确认退役仅 preview 成功后可点击（handleRetireApply 内 preview === undefined 直接 return，字符串断言）；无自动退役（useEffect 内不调 previewRetireFragment/applyRetireFragment，字符串断言）。",
+          "不删除产物（卡面 + R11 失效≠删除）：退役仅置 state='retired' + retired_at（后端冻结）；前端不调用任何删除接口（字符串断言无删除调用）；retired 行不再显示确认/改名/退役按钮（canRetire = candidate || confirmed，retired 不显示，字符串断言）。",
+          "刷新结果一致（卡面验收）：apply 成功 → 清除该行错误 + setRefreshTick 内部重取（列表状态标签更新为已退役）；新取数成功 = 新快照，行内错误与退役表单（retiring）一并清除（防陈旧预览）。",
+          "过期/断网可恢复（卡面验收）：失败 → 该行行内错误（保留表单与 impact 摘要，不退出、不丢错误）；行内错误区统一（确认/改名/退役共用 rowErrorText）：preview_stale →「预览已过期，请重新预览。」；revision_conflict → 确认/改名「片段版本已变化，请刷新后重试。」、退役「版本已变化，请刷新后重试。」（RowErrorSource 区分）；precondition_failed →「片段状态已变化，请刷新后重试。」；validation_failed → details.violations 每条 message；其他显示 error.message。",
+          "取消零 API 调用（handleRetireCancel 仅 setRetiring，无 previewRetireFragment/applyRetireFragment，字符串断言）；每次显式点击 makeCommandId() 恰一次（既有测试第 31 项断言更新为 4 处：确认/保存/预览影响/确认退役各一次，crypto.randomUUID 仍恰 1 处）；提交中对应按钮 disabled（防双击）。",
+          "SOURCE-14-a/b 已验收行为不变（diff 核对）：确认按钮仅 candidate、显式点击、重取、行内错误；改名按钮仅 candidate/confirmed、行内表单、失败保留输入；既有 36 项断言全部保持通过。",
+          "组件不直接 fetch（走 client）、不导航（无 router.push/window.location）、无硬编码样例文本、styled-jsx 作用域独立（.fragment-actions__retire*）。"
+        ],
+        "evidence": [
+          "web/features/studio/source/api.ts（第 444 行起追加：RetirePreviewParams/RetirePreviewDto/RetireApplyParams/previewRetireFragment/applyRetireFragment）",
+          "web/features/studio/source/components/FragmentActions.tsx（扩展：退役按钮 + 两步表单 + impact 摘要 + 统一行内错误区）",
+          "web/tests/studio/fragment-actions.test.cjs（61 项：既有 36 + 新增 25）"
+        ],
+        "limitations": [
+          "浏览器实测（真实点击退役交互）待 GATE-02 关键浏览器连续操作门验收；本轮以纯逻辑 vm 测试 + 组件字符串断言为准（与 SOURCE-12/13/14-a/b 同一验收深度）。",
+          "FragmentActions 尚未接入工作台壳（与 FragmentList/SourceReader 同为独立组件），接入归 UI 批次。"
+        ]
+      }
     },
     {
       "id": "SOURCE-14-d",
