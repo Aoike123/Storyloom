@@ -16,7 +16,7 @@
 //   样式仅为防御保留）。
 // - 无自动样例：一切正文文本来自服务端 canonical_content。
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import defaultClient from "@/shared/api/client";
 import {
@@ -24,8 +24,11 @@ import {
   fetchAllFragments,
   getProject,
   getSourceRevision,
+  selectionToRange,
 } from "../api";
-import type { FragmentDto, StudioClient } from "../api";
+import type { FragmentDto, NodeAnchor, StudioClient } from "../api";
+import { validateRange } from "../ranges";
+import SelectionToolbar from "./SelectionToolbar";
 
 export interface SourceReaderProps {
   projectId: string;
@@ -38,7 +41,51 @@ type ReaderState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
   | { kind: "empty" }
-  | { kind: "ready"; canonical: string; fragments: FragmentDto[] };
+  | {
+      kind: "ready";
+      canonical: string;
+      fragments: FragmentDto[];
+      sourceRevisionId: string;
+    };
+
+/**
+ * 把原生 DOM 选区锚点（Node + offset）换算为 NodeAnchor（相对正文容器
+ * .source-reader__text 的 children 顺序）。
+ * - anchor === container（容器级锚点）：offset 为子元素索引；
+ *   offset ∈ [0, children.length] → { nodeIndex: offset, offset: 0 }
+ *   （offset === children.length 即文本末尾）；否则 null；
+ * - anchor 是 Text 且 container.contains(anchor)：parent 必须是 container 的
+ *   直接子元素；nodeIndex = container.children 中 parent 的索引；
+ *   offset ∈ [0, anchor.data.length] → { nodeIndex, offset }；否则 null；
+ * - 其余 → null。
+ */
+function domAnchorToNodeAnchor(
+  container: HTMLElement,
+  anchor: Node,
+  offset: number,
+): NodeAnchor | null {
+  if (anchor === container) {
+    if (
+      Number.isInteger(offset) &&
+      offset >= 0 &&
+      offset <= container.children.length
+    ) {
+      return { nodeIndex: offset, offset: 0 };
+    }
+    return null;
+  }
+  if (anchor.nodeType === 3 && container.contains(anchor)) {
+    const parent = anchor.parentElement;
+    if (parent === null || parent.parentElement !== container) return null;
+    const nodeIndex = Array.from(container.children).indexOf(parent);
+    const text = anchor as Text;
+    if (Number.isInteger(offset) && offset >= 0 && offset <= text.data.length) {
+      return { nodeIndex, offset };
+    }
+    return null;
+  }
+  return null;
+}
 
 export default function SourceReader({
   projectId,
@@ -49,10 +96,20 @@ export default function SourceReader({
   const clientObj = client ?? defaultClient;
   const [state, setState] = useState<ReaderState>({ kind: "loading" });
   const [retryTick, setRetryTick] = useState(0);
+  const [pending, setPending] = useState<{
+    start: number;
+    end: number;
+    text: string;
+    commandId: string;
+  } | null>(null);
+  const textRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let alive = true;
     setState({ kind: "loading" });
+    // 重取即清 pending（防陈旧工具条）；pending 不在依赖数组，不会引起重取循环
+    setPending(null);
     void (async () => {
       const projectRes = await getProject(clientObj, projectId);
       if (!alive) return;
@@ -83,6 +140,7 @@ export default function SourceReader({
         kind: "ready",
         canonical: revisionRes.data.canonical_content,
         fragments: fragmentsRes.data,
+        sourceRevisionId: revisionId,
       });
     })();
     return () => {
@@ -91,6 +149,89 @@ export default function SourceReader({
   }, [clientObj, projectId, refreshKey, retryTick]);
 
   const retry = useCallback(() => setRetryTick((t) => t + 1), []);
+
+  // 原生 DOM 选区 → pending 态（仅 ready 时监听 selectionchange）。
+  // 依赖 state：state 变化（重取）时重注册，handler 闭包取最新 canonical/fragments。
+  // 该 effect 不做任何重取（重取只由 refreshKey/retryTick/created 触发），
+  // 不会引起重取循环。
+  useEffect(() => {
+    if (state.kind !== "ready") return;
+    const handler = () => {
+      const sel = document.getSelection();
+      // 工具条内焦点（如点击输入框）→ 保持 pending，不清除
+      const activeInToolbar =
+        document.activeElement != null &&
+        toolbarRef.current != null &&
+        toolbarRef.current.contains(document.activeElement);
+      if (!sel || sel.rangeCount === 0) {
+        if (activeInToolbar) return;
+        setPending(null);
+        return;
+      }
+      const range = sel.getRangeAt(0);
+      if (range.collapsed) {
+        if (activeInToolbar) return;
+        setPending(null);
+        return;
+      }
+      const container = textRef.current;
+      if (!container) {
+        setPending(null);
+        return;
+      }
+      // 选区两端必须落在正文容器内（容器级或被容器包含）
+      if (
+        range.startContainer !== container &&
+        !container.contains(range.startContainer)
+      ) {
+        setPending(null);
+        return;
+      }
+      if (
+        range.endContainer !== container &&
+        !container.contains(range.endContainer)
+      ) {
+        setPending(null);
+        return;
+      }
+      const startA = domAnchorToNodeAnchor(
+        container,
+        range.startContainer,
+        range.startOffset,
+      );
+      const endA = domAnchorToNodeAnchor(
+        container,
+        range.endContainer,
+        range.endOffset,
+      );
+      if (startA === null || endA === null) {
+        setPending(null);
+        return;
+      }
+      const segments = computeSegments(state.canonical, state.fragments);
+      const texts = segments.map((s) => state.canonical.slice(s.start, s.end));
+      const rng = selectionToRange(texts, startA, endA);
+      if (rng === null) {
+        setPending(null);
+        return;
+      }
+      // 空白/越界选区不出现工具条（不提交）
+      if (validateRange(state.canonical, rng.start, rng.end) !== "ok") {
+        setPending(null);
+        return;
+      }
+      setPending({
+        start: rng.start,
+        end: rng.end,
+        text: state.canonical.slice(rng.start, rng.end),
+        commandId: crypto.randomUUID(),
+      });
+    };
+    document.addEventListener("selectionchange", handler);
+    return () => {
+      document.removeEventListener("selectionchange", handler);
+    };
+  }, [state]);
 
   let body: React.ReactNode;
   if (state.kind === "loading") {
@@ -117,28 +258,47 @@ export default function SourceReader({
   } else {
     const segments = computeSegments(state.canonical, state.fragments);
     body = (
-      <div className="source-reader__text">
-        {segments.map((seg) => {
-          const text = state.canonical.slice(seg.start, seg.end);
-          if (seg.fragmentId === null) {
-            return <span key={`plain-${seg.start}-${seg.end}`}>{text}</span>;
-          }
-          const fragmentId = seg.fragmentId;
-          return (
-            <mark
-              key={fragmentId}
-              id={`studio-fragment-${fragmentId}`}
-              data-fragment-id={fragmentId}
-              className={`source-reader__fragment source-reader__fragment--${seg.state ?? "unknown"}`}
-              onClick={
-                onFragmentClick ? () => onFragmentClick(fragmentId) : undefined
-              }
-            >
-              {text}
-            </mark>
-          );
-        })}
-      </div>
+      <>
+        <div className="source-reader__text" ref={textRef}>
+          {segments.map((seg) => {
+            const text = state.canonical.slice(seg.start, seg.end);
+            if (seg.fragmentId === null) {
+              return <span key={`plain-${seg.start}-${seg.end}`}>{text}</span>;
+            }
+            const fragmentId = seg.fragmentId;
+            return (
+              <mark
+                key={fragmentId}
+                id={`studio-fragment-${fragmentId}`}
+                data-fragment-id={fragmentId}
+                className={`source-reader__fragment source-reader__fragment--${seg.state ?? "unknown"}`}
+                onClick={
+                  onFragmentClick ? () => onFragmentClick(fragmentId) : undefined
+                }
+              >
+                {text}
+              </mark>
+            );
+          })}
+        </div>
+        {pending !== null && (
+          <div ref={toolbarRef}>
+            <SelectionToolbar
+              projectId={projectId}
+              sourceRevisionId={state.sourceRevisionId}
+              range={{ start: pending.start, end: pending.end }}
+              selectedText={pending.text}
+              commandId={pending.commandId}
+              onCancel={() => setPending(null)}
+              onCreated={(fid) => {
+                setPending(null);
+                setRetryTick((t) => t + 1);
+              }}
+              client={clientObj}
+            />
+          </div>
+        )}
+      </>
     );
   }
 

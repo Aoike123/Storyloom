@@ -238,3 +238,135 @@ export function computeSegments(
   }
   return segments;
 }
+
+// ---------------------------------------------------------------------------
+// SOURCE-13 · 原生选区建立候选（契约 v2.9，附录 02 §2 F1）
+// ---------------------------------------------------------------------------
+
+/**
+ * DOM 选区锚点（相对 .source-reader__text 容器 children 顺序）。
+ * - nodeIndex = 选区锚点所在文本节点所属子元素（容器 children 顺序）的索引；
+ * - offset = 该文本节点内的 UTF-16 偏移。
+ * - nodeIndex 合法域 [0, texts.length]：nodeIndex === texts.length 表示
+ *   “最后一个子元素之后”（offset 必须为 0）。
+ */
+export interface NodeAnchor {
+  nodeIndex: number;
+  offset: number;
+}
+
+/**
+ * 把 DOM 锚点换算为全局 UTF-16 偏移。
+ * - texts = 各段文本（按渲染顺序），拼接即完整 canonical；
+ * - nodeIndex 非整数或不在 [0, texts.length] → null；
+ * - offset 非整数或不在 [0, texts[nodeIndex].length]
+ *   （nodeIndex === texts.length 时 offset 必须 0）→ null；
+ * - 合法 → 前缀和（texts[0..nodeIndex-1] 的 length 之和）+ offset。
+ */
+export function anchorToIndex(texts: string[], anchor: NodeAnchor): number | null {
+  const { nodeIndex, offset } = anchor;
+  if (!Number.isInteger(nodeIndex) || nodeIndex < 0 || nodeIndex > texts.length) {
+    return null;
+  }
+  if (nodeIndex === texts.length) {
+    if (!Number.isInteger(offset) || offset !== 0) return null;
+    let total = 0;
+    for (const t of texts) total += t.length;
+    return total;
+  }
+  if (!Number.isInteger(offset) || offset < 0 || offset > texts[nodeIndex].length) {
+    return null;
+  }
+  let prefix = 0;
+  for (let i = 0; i < nodeIndex; i++) prefix += texts[i].length;
+  return prefix + offset;
+}
+
+/**
+ * 把 DOM 选区（start/end 锚点）换算为半开区间 [start, end)。
+ * - 两端各自 anchorToIndex；任一端 null → null；
+ * - start > end（反向选区）→ 交换；start === end（collapsed）→ null；
+ * - 否则返回 {start, end}。
+ */
+export function selectionToRange(
+  texts: string[],
+  start: NodeAnchor,
+  end: NodeAnchor,
+): { start: number; end: number } | null {
+  const startIdx = anchorToIndex(texts, start);
+  const endIdx = anchorToIndex(texts, end);
+  if (startIdx === null || endIdx === null) return null;
+  if (startIdx > endIdx) return { start: endIdx, end: startIdx };
+  if (startIdx === endIdx) return null;
+  return { start: startIdx, end: endIdx };
+}
+
+/** F1 候选片段创建成功体（201；幂等重放 200 同形）。 */
+export interface FragmentCreateDto {
+  object_ref: { kind: string; id: string; revision: number };
+  name: string;
+  summary: string | null;
+  state: string;
+  range: { start: number; end: number };
+  created_at: number;
+}
+
+/** F1 候选片段创建参数。 */
+export interface CreateFragmentCandidateParams {
+  sourceRevisionId: string;
+  start: number;
+  end: number;
+  name: string;
+  commandId: string;
+}
+
+/**
+ * F1 原子保存候选片段（附录 02 §2 F1）。
+ *
+ * - 首发：POST /api/studio/projects/{pid}/fragments，body 显式带
+ *   expected_range_set_revision: null；
+ * - 首发返回 ok=false 且 code === "revision_conflict" 且
+ *   details.object.kind === "range_set" 且 details.actual 为 number →
+ *   用相同 commandId 与相同其余 body 重试恰一次，body 的
+ *   expected_range_set_revision 改为 details.actual；
+ * - 重试结果（成功或失败）直接返回，不得第三次请求；
+ * - 其余一切错误（range_overlap/validation_failed/range_invalid/not_found/
+ *   network/…）原样透传，不重试、不改写、不静默裁切范围；
+ * - 成功（201 或幂等重放 200）返回 res；FragmentCreateDto.object_ref.id
+ *   是片段 ID 的唯一来源。
+ */
+export async function createFragmentCandidate(
+  client: StudioClient,
+  pid: string,
+  params: CreateFragmentCandidateParams,
+): Promise<StudioApiResponse<FragmentCreateDto>> {
+  const path = `/api/studio/projects/${encodeURIComponent(pid)}/fragments`;
+  const baseBody = {
+    source_revision_id: params.sourceRevisionId,
+    range: { start: params.start, end: params.end },
+    name: params.name,
+    expected_range_set_revision: null,
+  };
+  const first = await client.post<FragmentCreateDto>(path, baseBody, {
+    commandId: params.commandId,
+  });
+  if (!first.ok) {
+    const details = first.details as Record<string, unknown> | undefined;
+    const object = details?.object as { kind?: string } | undefined;
+    const actual = details?.actual;
+    if (
+      first.code === "revision_conflict" &&
+      object?.kind === "range_set" &&
+      typeof actual === "number"
+    ) {
+      const retryBody = {
+        ...baseBody,
+        expected_range_set_revision: actual,
+      };
+      return client.post<FragmentCreateDto>(path, retryBody, {
+        commandId: params.commandId,
+      });
+    }
+  }
+  return first;
+}

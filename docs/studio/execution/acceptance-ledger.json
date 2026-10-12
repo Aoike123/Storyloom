@@ -2343,11 +2343,45 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "allowlist_scope": "web/features/studio/source/components/SourceReader.tsx、web/features/studio/source/components/SelectionToolbar.tsx、web/tests/studio/selection.test.cjs",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "web/features/studio/source/api.ts（纯逻辑追加：NodeAnchor/anchorToIndex/selectionToRange/FragmentCreateDto/createFragmentCandidate）、web/features/studio/source/components/SelectionToolbar.tsx、web/features/studio/source/components/SourceReader.tsx、web/tests/studio/selection.test.cjs（主模型裁定：卡面白名单未含 api.ts，按 SOURCE-12-fix-1 冻结模式——纯逻辑入 api.ts、组件只做字符串断言——补入，共 3 实现文件 + 1 验证文件）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-12",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-12",
+        "contract_version": "2.9",
+        "tested_baseline": "92c0f97 + 4 白名单文件（本卡提交）",
+        "scope": "native_dom_selection_to_f1_candidate",
+        "checks": [
+          "主模型独立复验（不复用执行器报告）：node --test web/tests/studio/selection.test.cjs → 30/30；node --test web/tests/studio/*.test.cjs → 174/174（既有 144 无回归）；cd web && npx tsc --noEmit → exit 0；git status 仅白名单 4 文件。",
+          "DOM 选区映射（diff 逐行核对）：domAnchorToNodeAnchor 容器级锚点（offset∈[0,children.length]→{nodeIndex:offset,offset:0}）与文本节点锚点（parent 须为容器直接子元素、offset∈[0,data.length]）；纯函数 anchorToIndex（nodeIndex∈[0,texts.length]、前缀和+offset、非法→null）与 selectionToRange（反向交换、collapsed→null、任一端非法→null）入 api.ts，vm 测试覆盖单段/跨段前缀和/末尾/非法入参。",
+          "emoji/换行切片一致（卡面验收）：selectionToRange 测试——canonical \"前言😀后续\"（UTF-16 长 6）三段 [0,2)/[2,4)/[4,6) 选中 emoji 段 → {start:2,end:4}、slice===\"😀\"、无落单代理半字；相邻双 emoji 边界不劈对；跨 '\\n' 选区 slice 含 '\\n'。",
+          "F1 提交协议（diff 逐行核对 + mock fetch 测试）：首发 POST /api/studio/projects/{pid}/fragments body {source_revision_id, range, name, expected_range_set_revision:null, command_id}；仅当 409 revision_conflict 且 details.object.kind===\"range_set\" 且 details.actual 为 number → 同 command_id 重试恰一次（expected=actual）；重试结果直接返回（不得第三次）；range_overlap/validation_failed/range_invalid/not_found/network 原样透传不重试。测试断言两次请求 body 逐字段（command_id 不变、其余字段不变）、重试也 409 → 恰 2 次请求。",
+          "pending/取消/新建三态分开（diff 逐行核对）：selectionchange 监听（仅 ready 态、卸载清理）；validateRange!=='ok'（空白/越界）不出现工具条；pending 携带 commandId（crypto.randomUUID，每次新选区一次）；SelectionToolbar 保存（submitting 时 disabled、空名本地拦截不发请求）、取消按钮与 Esc（window keydown，卸载清理）只触发 onCancel（零 API 调用、无删除接口）；保存失败 setError(res) 保留 name 与 pending。",
+          "重叠不静默裁切（卡面验收）：range_overlap → 工具条列出 details.conflicts 每个冲突（name+范围），文案明示不自动裁切；不清 pending、保留输入。",
+          "新区域立即可见且不自动切剧本（卡面验收）：onCreated(res.data.object_ref.id) → setPending(null) + setRetryTick 重取（新候选高亮立即出现）；无 router.push/window.location、无自动确认、无自动切剧本（字符串断言）。",
+          "工具条内焦点保持 pending（负向 8）：activeElement 在 toolbarRef 内时不清除（点击输入框选区消失不丢 pending）；点击正文其他位置清除。选区在正文容器外（负向 9）：startContainer/endContainer 须 === container 或 container.contains，否则清 pending。",
+          "加载 effect 内 setPending(null)（重取即清陈旧工具条）；pending 不在依赖数组，无重取循环（selectionchange effect 不触发重取）。"
+        ],
+        "evidence": [
+          "web/features/studio/source/api.ts（第 238 行起纯追加：NodeAnchor/anchorToIndex/selectionToRange/FragmentCreateDto/CreateFragmentCandidateParams/createFragmentCandidate）",
+          "web/features/studio/source/components/SelectionToolbar.tsx（新建）",
+          "web/features/studio/source/components/SourceReader.tsx（改造：textRef/toolbarRef/pending/domAnchorToNodeAnchor/selectionchange/validateRange 门/SelectionToolbar 渲染）",
+          "web/tests/studio/selection.test.cjs（30 项：纯逻辑 + 两组件字符串断言）"
+        ],
+        "limitations": [
+          "浏览器实测（真实 DOM 选区交互）待 GATE-02 关键浏览器连续操作门验收；本轮以纯逻辑 vm 测试 + 组件字符串断言为准（与 SOURCE-12 同一验收深度）。",
+          "SourceReader/FragmentList 尚未接入 StudioApp 壳（空态），接入归 UI 批次；本卡组件独立可用。"
+        ]
+      }
     },
     {
       "id": "SOURCE-14-a",
