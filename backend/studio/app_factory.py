@@ -18,14 +18,29 @@ from ..core.db import init_db
 from .contracts.errors import install_error_handlers
 from .router import router
 
+# 领域模型注册（import 即注册到 Base.metadata）。lifespan 的 init_db() 按
+# Base.metadata 建表：未被运行期导入的模型模块既不会建表，也会让引用它的
+# 领域在全新数据根上以 NoReferencedTableError 直接启动失败。此清单必须与
+# tests/studio/conftest.py 的模型注册表保持同一集合，并有回归测试守护。
+from .assets import models as _assets_models  # noqa: F401
+from .conversations import models as _conversations_models  # noqa: F401
+from .edits import models as _edits_models  # noqa: F401
+from .jobs import models as _jobs_models  # noqa: F401
+from .media import models as _media_models  # noqa: F401
+from .publishing import models as _publishing_models  # noqa: F401
+from .relations import models as _relations_models  # noqa: F401
+from .reviews import models as _reviews_models  # noqa: F401
+from .scripts import models as _scripts_models  # noqa: F401
+from .storyboard import models as _storyboard_models  # noqa: F401
+
 # ROOT-01 冻结的前端 dev 端口（账本 implementation 块）。
 ALLOWED_ORIGIN = "http://127.0.0.1:3021"
 
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    # 服务器启动时幂等建表：上方 import 已注册 users 等模型；后续域卡在
-    # 顶部 import 各自的 router/service（import 即注册模型）后自动覆盖。
+    # 服务器启动时幂等建表。上方领域模型注册加各域 router/service 的导入
+    # （import 即注册）共同决定 Base.metadata 的完整性。
     init_db()
     yield
 

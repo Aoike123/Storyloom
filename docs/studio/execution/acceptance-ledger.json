@@ -6,30 +6,46 @@
   "updated": "2026-10-13",
   "authority": "root_acceptance_only",
   "implementation": {
-    "root": "/home/aoike/Project/Agent_Orchestration/workflow/Storyloom",
+    "root": "/mnt/Code/agent-orchestration/workflow/Storyloom",
     "branch": "studio-rebuild",
-    "base_commit": "bcb3eb4",
+    "base_commit": "d09c43c",
     "backend_port": 3011,
     "frontend_port": 3021,
-    "data_root": "/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/data/studio",
+    "data_root": "/mnt/Code/agent-orchestration/workflow/Storyloom/data/studio",
     "runtime": {
-      "python": "/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/.venv/bin/python (3.12.14)",
+      "python": "/mnt/Code/agent-orchestration/workflow/Storyloom/.venv/bin/python (3.12.3)",
       "node": "v24.21.0",
-      "package_manager": "pnpm 11.7.0"
+      "package_manager": "pnpm 11.28.5（HOME 缺 ~/.local/share/pnpm/store，pnpm run 会 ENOENT；改用 web/node_modules/.bin 直调，见 startup.note）"
     },
     "startup": {
-      "backend": ".venv/bin/python -m uvicorn backend.studio.app_factory:app --host 127.0.0.1 --port 3011 （ASGI 对象由 BASE-01-b 提供，模块名以 BASE-01 冻结为准）",
-      "frontend": "pnpm --dir web dev --hostname 127.0.0.1 --port 3021 （现有 Next.js 应用，新 /studio 路由由 BASE-01-a 加入）",
+      "note": "以下命令于 2026-10-13 在全新隔离数据根实测（修复 runtime 模型注册缺陷后）：后端 lifespan 建表 32/32、health 200；前端 / 与 /studio 均 200。",
+      "backend": "STUDIO_DATA_DIR=<root>/data/studio .venv/bin/python -m uvicorn backend.studio.app_factory:app --host 127.0.0.1 --port 3011",
+      "frontend": "web/node_modules/.bin/next dev --hostname 127.0.0.1 --port 3021（等价 pnpm --dir web dev；本机 pnpm store 缺失时 pnpm 包脚本不可用）",
       "worker": "新 StudioJob 运行器，不复用旧 backend.worker；具体形态由 ROOT-04 冻结"
     },
-    "freeze_task": "ROOT-01"
+    "freeze_task": "ROOT-01",
+    "paths_note": "root/runtime/data_root/startup 为 2026-10-13 迁移到当前 checkout 后实测更新；base_commit 为当前实施基线（迁移时的源码 HEAD cc6f2f5 加本次启动修复提交 d09c43c）。ROOT-01 的历史受测基线 bcb3eb4 仅用于追溯。",
+    "baseline_fixes": [
+      {
+        "date": "2026-10-13",
+        "scope": "backend/studio/app_factory.py",
+        "trigger": "按 implementation.startup 启动后端：全新数据根上 lifespan init_db() 报 NoReferencedTableError（studio_asset_occurrences.asset_id 找不到 studio_assets）",
+        "cause": "运行期装配入口只经 router 间接导入 projects/sources 及相邻模型；assets/storyboard/relations/reviews/conversations/media/edits/publishing 的 models 模块从未被运行期导入，未注册进 Base.metadata",
+        "why_tests_missed": "tests/studio/conftest.py 在收集期预导入全部模型，同进程断言被掩盖",
+        "fix": "app_factory 显式导入全部领域 models 模块（import 即注册），注释声明须与 conftest 注册表同集",
+        "regression_guard": "tests/studio/test_app_factory.py::test_importing_app_registers_all_domain_models 在干净子进程内只导入装配入口并复现 create_all",
+        "verified": "修复后 2026-10-13 实测：pytest tests/studio 372 passed；.venv/bin/python -m uvicorn backend.studio.app_factory:app 在全新隔离数据根启动，lifespan 建表 32/32、/api/studio/health 返回 200、未认证 /projects 返回 401；前端 web/node_modules/.bin/next dev --port 3021 后 / 与 /studio 均 200；修复前同一启动路径在全新数据根复现 NoReferencedTableError。"
+      }
+    ]
   },
   "observed_baselines": {
     "documentation_worktree": "f7f0c25（/home/aoike/.codex/worktrees/dbd1/Storyloom 的 detached HEAD，工作树干净；其 docs 提交已被 main 的 bcb3eb4 取代，仅作存档）",
     "audit_main": "d43b51f",
     "main_at_document_restructure": "c19639d",
-    "main_at_root01": "bcb3eb4",
-    "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1）；当前 3000、8000 及其他 3030/9090/9100/8200 由非本用户进程占用，不得触碰；3001 当前无人监听；新预览独占 3011/3021"
+    "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1 已随文档精简删除）；不得触碰非本用户占用端口；新 Studio 预览独占 backend=3011 / frontend=3021。2026-10-13 实测 3011/3021 空闲后由主模型临时占用验证并释放。",
+    "current_checkout": "/mnt/Code/agent-orchestration/workflow/Storyloom",
+    "current_head_at_metadata_update": "d09c43c",
+    "root01_tested_base": "bcb3eb4"
   },
   "policy": {
     "acceptance_requires": [

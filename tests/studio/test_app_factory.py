@@ -1,5 +1,7 @@
 """BASE-01-b：新 API 装配入口（隔离 app + /api/studio 路由前缀）验证。"""
 
+import json
+import os
 from pathlib import Path
 
 # 禁止引用旧 backend 模块（绝对名或解析到旧模块的相对导入）。
@@ -80,3 +82,94 @@ def test_asgi_entry():
     import backend.studio.app_factory as m
 
     assert callable(m.app)
+
+
+# 运行期装配入口必须注册的完整表集（各领域 models 模块 import 即注册）。
+# 断言在干净子进程内进行，不依赖本进程的导入顺序。
+_EXPECTED_TABLES = {
+    "users",
+    "studio_projects",
+    "studio_source_revisions",
+    "studio_source_relations",
+    "studio_range_sets",
+    "studio_fragments",
+    "studio_fragment_revisions",
+    "studio_production_scopes",
+    "studio_change_previews",
+    "studio_command_records",
+    "studio_review_decisions",
+    "studio_script_revisions",
+    "studio_script_objects",
+    "studio_script_adoptions",
+    "studio_scenes",
+    "studio_shots",
+    "studio_shot_revisions",
+    "studio_assets",
+    "studio_asset_occurrences",
+    "studio_asset_revisions",
+    "studio_asset_bindings",
+    "studio_conversations",
+    "studio_messages",
+    "studio_proposals",
+    "studio_media_artifacts",
+    "studio_edit_drafts",
+    "studio_edit_instances",
+    "studio_confirmed_edits",
+    "studio_releases",
+    "studio_jobs",
+    "studio_job_attempts",
+    "studio_job_events",
+}
+
+# 干净解释器中只导入运行期装配入口，再复现 uvicorn lifespan 的建表动作。
+# 必须用子进程：本目录 conftest.py 在收集期已导入全部模型模块，同进程断言
+# 会被掩盖（该掩盖正是本缺陷此前未被发现的原因）。
+_REGISTRATION_PROBE = """
+import json
+import sys
+
+sys.path.insert(0, {root!r})
+import backend.studio.app_factory  # noqa: F401  仅经过运行期装配入口导入
+
+from backend.core.db import Base, build_engine
+
+engine = build_engine("sqlite://")
+with engine.connect() as conn:
+    Base.metadata.create_all(conn)
+    created = {{
+        row[0]
+        for row in conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'")
+    }}
+print(json.dumps(sorted(created)))
+"""
+
+
+def test_importing_app_registers_all_domain_models(tmp_path):
+    """回归：app_factory 必须 import 全部领域模型模块。
+
+    uvicorn 的 lifespan 调用 init_db() → Base.metadata.create_all(engine)。
+    若某个领域 models 模块没被运行期导入，其表既不会建立，也会让引用它的
+    领域（如 assets 的 FK → studio_assets / studio_shots）建表报
+    NoReferencedTableError，真实服务器在全新数据根上直接启动失败。
+    """
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[2]
+    env = dict(os.environ, PYTHONPATH=str(root), STUDIO_DATA_DIR=str(tmp_path))
+    probe = _REGISTRATION_PROBE.format(root=str(root))
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=str(root),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, f"装配入口建表失败：{proc.stderr[-2000:]}"
+
+    created = set(json.loads(proc.stdout.strip().splitlines()[-1]))
+    missing = _EXPECTED_TABLES - created
+    assert not missing, f"app_factory 未注册领域模型，缺表: {sorted(missing)}"
+    unexpected = created - _EXPECTED_TABLES
+    assert not unexpected, f"出现未登记的表（新领域须同步本清单与 conftest）: {sorted(unexpected)}"
