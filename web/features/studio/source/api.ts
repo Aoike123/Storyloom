@@ -406,3 +406,41 @@ export function confirmFragment(
     { commandId: params.commandId },
   );
 }
+
+// ---------------------------------------------------------------------------
+// SOURCE-14 · 片段改名（契约 v2.9，附录 02 §2 F4）
+// ---------------------------------------------------------------------------
+
+/** F4 片段改名参数。 */
+export interface RenameFragmentParams {
+  name: string;
+  expectedRevision: number;
+  commandId: string;
+}
+
+/**
+ * F4 片段就地改名（附录 02 §2 F4；ID 不变、改名不产生 revision、
+ * 不动 range_set cas）。
+ *
+ * - POST /api/studio/projects/{pid}/fragments/{fid}/rename，body =
+ *   { name, expected_revision, command_id }（command_id 由 client.post 合并进 body）；
+ * - 成功（200，含幂等重放）返回 res；FragmentDto 复用既有接口
+ *   （F3 形状十一键，name=trimmed，ID 不变）；
+ * - 一切错误原样透传（不重试、不改写）：409 revision_conflict
+ *   （details.object.kind === 'fragment'）、422 validation_failed
+ *   （details.violations：name required/max_length、command_id reused）、
+ *   422 precondition_failed（details.reason）、404 not_found、network。
+ */
+export function renameFragment(
+  client: StudioClient,
+  pid: string,
+  fid: string,
+  params: RenameFragmentParams,
+): Promise<StudioApiResponse<FragmentDto>> {
+  const path = `/api/studio/projects/${encodeURIComponent(pid)}/fragments/${encodeURIComponent(fid)}/rename`;
+  return client.post<FragmentDto>(
+    path,
+    { name: params.name, expected_revision: params.expectedRevision },
+    { commandId: params.commandId },
+  );
+}

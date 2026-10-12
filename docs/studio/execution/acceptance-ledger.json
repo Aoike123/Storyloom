@@ -2466,12 +2466,44 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "接改名命令，失败保留输入。",
-      "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "web/features/studio/source/api.ts（纯逻辑追加：RenameFragmentParams/renameFragment）、web/features/studio/source/components/FragmentActions.tsx（扩展改名动作）、web/tests/studio/fragment-actions.test.cjs（扩展，既有 15 项保持）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-12",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-12",
+        "contract_version": "2.9",
+        "tested_baseline": "9156365 + 3 白名单文件（本卡提交）",
+        "scope": "f4_rename_fragment_ui",
+        "checks": [
+          "主模型独立复验（不复用执行器报告）：node --test web/tests/studio/fragment-actions.test.cjs → 36/36（既有 15 + 新增 21）；node --test web/tests/studio/*.test.cjs → 210/210 无回归；cd web && npx tsc --noEmit → exit 0；git status 仅白名单 3 文件。",
+          "F4 提交协议（diff 逐行核对 + mock fetch 测试）：POST /api/studio/projects/{pid}/fragments/{fid}/rename（pid/fid 均 encodeURIComponent），body = {name, expected_revision, command_id}；expected_revision 取该行 fragment.object_ref.revision（真实服务端值）；一切错误原样透传不重试（409 revision_conflict object.kind=fragment、422 validation_failed name required/max_length、422 validation_failed command_id reused、422 precondition_failed、404 not_found、network 测试断言请求恰 1 次 + details 逐字段透传）。",
+          "改名按钮仅 candidate/confirmed（卡面）：FragmentActions 每行 canRename = state === \"candidate\" || state === \"confirmed\"（retired 不显示——退役片段不再参与生产；F2 列表只列 active 版本绑定片段，pending_review 不会出现在列表）（字符串断言 + 组件 diff 核对）。",
+          "行内改名表单（卡面\"失败保留输入\"）：点击「改名」→ 该行动作区切换为输入框（初始值 = 当前 fragment.name）+「保存」+「取消」；「取消」→ 回到按钮态（零 API 调用，测试断言 onCancel 路径无 renameFragment）；空名本地拦截（name.trim() === \"\" → 本地 validation_failed 提示，不发请求、保留表单）；每次点击 makeCommandId()（内部 crypto.randomUUID()）恰一次；提交中该行「保存」按钮 disabled（防双击）。",
+          "刷新结果一致（卡面验收）：成功 → 清除该行错误 + setRefreshTick 内部重取（列表名称更新为服务端 trimmed 值，新快照清除 renaming → 表单收起）；新取数成功 = 新快照，行内错误与改名表单一并清除（防陈旧）。",
+          "行内错误区统一（确认与改名共用）：validation_failed → details.violations 每条 message（如「片段名不能为空。」/「片段名最长 120 个字符。」）；revision_conflict →「片段版本已变化，请刷新后重试。」；precondition_failed →「片段状态已变化，请刷新后重试。」；其他显示 error.message；失败保留输入与表单（不退出、不丢错误）。",
+          "SOURCE-14-a 已验收确认行为不变（diff 核对）：确认按钮仅 candidate、显式点击、expected_revision=object_ref.revision、提交中 disabled、成功重取、失败行内错误；makeCommandId() 收敛（每次点击一次 commandId，行为与 14-a 冻结一致，测试断言 crypto.randomUUID() 恰 1 处 + makeCommandId() 恰 2 处）。",
+          "组件不直接 fetch（走 client）、不导航（无 router.push/window.location）、无硬编码样例文本、styled-jsx 作用域独立（.fragment-actions__rename*）。"
+        ],
+        "evidence": [
+          "web/features/studio/source/api.ts（第 406 行起追加：RenameFragmentParams/renameFragment）",
+          "web/features/studio/source/components/FragmentActions.tsx（扩展：改名按钮 + 行内表单 + 统一行内错误区）",
+          "web/tests/studio/fragment-actions.test.cjs（36 项：既有 15 + 新增 21）"
+        ],
+        "limitations": [
+          "浏览器实测（真实点击改名交互）待 GATE-02 关键浏览器连续操作门验收；本轮以纯逻辑 vm 测试 + 组件字符串断言为准（与 SOURCE-12/13/14-a 同一验收深度）。",
+          "FragmentActions 尚未接入工作台壳（与 FragmentList/SourceReader 同为独立组件），接入归 UI 批次。"
+        ]
+      }
     },
     {
       "id": "SOURCE-14-c",
