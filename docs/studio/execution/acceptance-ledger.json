@@ -83,12 +83,12 @@
     "legacy_workflow_is_implementation_standard": false,
     "new_workflow_basis": "当前产品R规则及ROOT-02/04重新冻结的命令/任务/提案操作表；旧节点、prompt payload、阶段门槛与旧专用测试不构成验收依据。",
     "dispatch": {
-      "max_parallel_subtasks": 3,
-      "scope": "运行中的实现、只读和返修子任务；不含主模型",
+      "scope": "并行的实现、只读和返修子任务",
       "requires": "全部依赖 accepted、契约冻结、文件白名单无交集、可变资源隔离",
       "integration": "主模型逐项审查、复验、提交和入账；执行器不得提交或改变共享 Git 状态",
       "shared_checkout": "只检查自己的白名单；其他已分配任务的无关改动可存在；HEAD 前移由主模型通知并核对",
-      "rules": "execution/implementation-plan.md §3"
+      "rules": "execution/implementation-plan.md §3",
+      "capacity": "项目不设置固定并行数量上限；遵循用户配置的 Harness 运行容量"
     }
   },
   "counts": {
