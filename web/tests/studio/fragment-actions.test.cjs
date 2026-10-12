@@ -787,7 +787,7 @@ test("FragmentActions: 显式保存接线（onClick + renameFragment）+ 每次�
   );
 });
 
-test("FragmentActions: commandId 生成（crypto.randomUUID 每次点击一次；确认/保存各一次）", () => {
+test("FragmentActions: commandId 生成（crypto.randomUUID 每次点击一次；确认/保存/预览影响/确认退役/预览/确认调整各一次）", () => {
   const helperSrc =
     actionsSrc.match(/function makeCommandId[^{]*\{([\s\S]*?)\n\}/)?.[1] ??
     "";
@@ -798,8 +798,8 @@ test("FragmentActions: commandId 生成（crypto.randomUUID 每次点击一次�
   const callCount = (actionsSrc.match(/= makeCommandId\(\)/g) || []).length;
   assert.equal(
     callCount,
-    4,
-    "确认/保存/预览影响/确认退役各每次点击生成一次 commandId",
+    6,
+    "确认/保存/预览影响/确认退役/预览/确认调整各每次点击生成一次 commandId",
   );
   const confirmSrc =
     actionsSrc.match(/async function handleConfirm[^{]*\{([\s\S]*?)\n  \}/)
@@ -1543,6 +1543,777 @@ test("FragmentActions: 无自动退役（useEffect 内不调 previewRetireFragme
   assert.ok(
     !effectBlock[0].includes("applyRetireFragment"),
     "useEffect 内不得调用 applyRetireFragment（无自动退役）",
+  );
+  assert.ok(!actionsSrc.includes("fetch("), "组件不直接 fetch，须走 client");
+  assert.ok(!actionsSrc.includes("示例"), "无硬编码样例");
+  assert.ok(!actionsSrc.includes("样例"), "无硬编码样例");
+  assert.ok(!actionsSrc.includes("Lorem"), "无硬编码样例");
+  assert.ok(!actionsSrc.includes("router.push"), "不得导航（router.push）");
+  assert.ok(
+    !actionsSrc.includes("window.location"),
+    "不得导航（window.location）",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// SOURCE-14 · 片段边界调整 UI（契约 v2.9，附录 02 §2 F8）— 新增
+// ---------------------------------------------------------------------------
+
+const { previewBoundaryFragment, applyBoundaryFragment } = apiContext.exports;
+
+// F8 边界预览响应（恰 4 字段 {preview_id, kind, baseline, impact}）
+const BOUNDARY_PREVIEW_OK = {
+  preview_id: "preview-2",
+  kind: "fragment_boundary",
+  baseline: {
+    fragment: { kind: "fragment", id: "frag-1", revision: 2 },
+    range_set: { id: "rs-1", cas: 5 },
+  },
+  impact: {
+    affected: [
+      { object_ref: { kind: "source_relation", id: "sr-1", revision: 2 } },
+    ],
+    needs_review: [
+      { object_ref: { kind: "studio_job", id: "job-1", revision: null } },
+    ],
+    preservable: [
+      { object_ref: { kind: "media_artifact", id: "ma-1", revision: null } },
+    ],
+  },
+};
+
+// F3 形状片段 DTO（边界 apply 成功返回：range=新范围、object_ref.revision=原+1）
+const FRAG_BOUNDARY = {
+  object_ref: { kind: "fragment", id: "frag-1", revision: 3 },
+  name: "片段甲",
+  summary: null,
+  state: "confirmed",
+  revision_is_active: true,
+  range: { start: 2, end: 6 },
+  source_revision_id: "rev1",
+  predecessor_ids: [],
+  created_at: 1,
+  updated_at: 2,
+  retired_at: null,
+};
+
+// ---------------------------------------------------------------------------
+// previewBoundaryFragment（mock fetch，同 confirmFragment 的
+// makeClient/okJson/errJson 模式）
+// ---------------------------------------------------------------------------
+
+test("previewBoundaryFragment: 首发 URL/方法/body（target_fragment_id、new_range、command_id === 传入值）", async () => {
+  let captured;
+  const client = makeClient(async (url, opts) => {
+    captured = { url, opts };
+    return okJson(BOUNDARY_PREVIEW_OK, 200);
+  });
+  const res = await previewBoundaryFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    newRange: { start: 0, end: 4 },
+    commandId: "cmd-1",
+  });
+  assert.equal(
+    captured.url,
+    "http://test.local/api/studio/projects/p1/fragments/f1/boundary",
+  );
+  assert.equal(captured.opts.method, "POST");
+  const body = JSON.parse(captured.opts.body);
+  assert.deepEqual(norm(body), {
+    target_fragment_id: "f1",
+    new_range: { start: 0, end: 4 },
+    command_id: "cmd-1",
+  });
+  assert.equal(body.command_id, "cmd-1", "command_id === 传入值");
+  assert.equal(res.ok, true);
+});
+
+test("previewBoundaryFragment: pid/fid 特殊字符经 encodeURIComponent", async () => {
+  let captured;
+  const client = makeClient(async (url, opts) => {
+    captured = { url, opts };
+    return okJson(BOUNDARY_PREVIEW_OK, 200);
+  });
+  await previewBoundaryFragment(client, "p/1?a", "f 1", {
+    targetFragmentId: "f 1",
+    newRange: { start: 0, end: 4 },
+    commandId: "cmd-1",
+  });
+  assert.equal(
+    captured.url,
+    "http://test.local/api/studio/projects/" +
+      encodeURIComponent("p/1?a") +
+      "/fragments/" +
+      encodeURIComponent("f 1") +
+      "/boundary",
+  );
+});
+
+test("previewBoundaryFragment: 200（恰 4 字段 {preview_id, kind:'fragment_boundary', baseline, impact}）→ ok、data.preview_id/data.baseline 可用", async () => {
+  const client = makeClient(async () => okJson(BOUNDARY_PREVIEW_OK, 200));
+  const res = await previewBoundaryFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    newRange: { start: 0, end: 4 },
+    commandId: "cmd-1",
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.data.preview_id, "preview-2");
+  assert.equal(res.data.kind, "fragment_boundary");
+  assert.equal(res.data.baseline.fragment.id, "frag-1");
+  assert.equal(res.data.baseline.fragment.revision, 2);
+  assert.equal(res.data.baseline.range_set.cas, 5);
+  assert.deepEqual(
+    norm(Object.keys(res.data).sort()),
+    ["baseline", "impact", "kind", "preview_id"],
+    "恰 4 字段",
+  );
+});
+
+test("previewBoundaryFragment: 422 range_invalid（details.rule === \"empty\"）→ 不重试（请求恰 1 次）、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "range_invalid",
+        message: "范围为空：end 必须大于 start（正文长度 100 个 UTF-16 单位）。",
+        details: { rule: "empty" },
+      },
+    });
+  });
+  const res = await previewBoundaryFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    newRange: { start: 4, end: 4 },
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "range_invalid");
+  assert.equal(res.details.rule, "empty");
+  assert.ok(
+    res.message.includes("正文长度"),
+    "message 须含 canonical 长度",
+  );
+});
+
+test("previewBoundaryFragment: 422 range_invalid（details.rule === \"out_of_bounds\"）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "range_invalid",
+        message: "范围越界：正文长度 100 个 UTF-16 单位。",
+        details: { rule: "out_of_bounds" },
+      },
+    });
+  });
+  const res = await previewBoundaryFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    newRange: { start: 0, end: 101 },
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "range_invalid");
+  assert.equal(res.details.rule, "out_of_bounds");
+});
+
+test("previewBoundaryFragment: 409 range_overlap（details.conflicts 数组）→ 不重试（请求恰 1 次）、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(409, {
+      error: {
+        code: "range_overlap",
+        message: "该范围与已有片段「片段乙」（frag-2）重叠。",
+        details: {
+          conflicts: [
+            { fragment_id: "frag-2", name: "片段乙", start: 3, end: 8 },
+            { fragment_id: "frag-3", name: "片段丙", start: 9, end: 12 },
+          ],
+        },
+      },
+    });
+  });
+  const res = await previewBoundaryFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    newRange: { start: 2, end: 10 },
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 409);
+  assert.equal(res.code, "range_overlap");
+  assert.equal(res.details.conflicts.length, 2);
+  assert.equal(res.details.conflicts[0].name, "片段乙");
+  assert.equal(res.details.conflicts[0].start, 3);
+  assert.equal(res.details.conflicts[0].end, 8);
+  assert.equal(res.details.conflicts[1].name, "片段丙");
+});
+
+test("previewBoundaryFragment: 422 precondition_failed（details.reason === source_revision_inactive）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "precondition_failed",
+        message: "该正文版本不是项目当前活跃版本，不能基于它修改片段边界。",
+        details: {
+          reason: "source_revision_inactive",
+          blocked_by: { kind: "source", id: "rev-active", revision: null },
+        },
+      },
+    });
+  });
+  const res = await previewBoundaryFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    newRange: { start: 0, end: 4 },
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "precondition_failed");
+  assert.equal(res.details.reason, "source_revision_inactive");
+});
+
+test("previewBoundaryFragment: 422 validation_failed（violations，rule=reused）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "validation_failed",
+        message: "请求校验失败。",
+        details: {
+          violations: [
+            {
+              field: "command_id",
+              rule: "reused",
+              message: "command_id 已被其他命令使用，请生成新的。",
+            },
+          ],
+        },
+      },
+    });
+  });
+  const res = await previewBoundaryFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    newRange: { start: 0, end: 4 },
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "validation_failed");
+  assert.equal(res.details.violations[0].field, "command_id");
+  assert.equal(res.details.violations[0].rule, "reused");
+});
+
+test("previewBoundaryFragment: 404 not_found（kind=fragment）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(404, {
+      error: {
+        code: "not_found",
+        message: "对象不存在或不属于当前项目。",
+        details: { kind: "fragment", id: "f1" },
+      },
+    });
+  });
+  const res = await previewBoundaryFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    newRange: { start: 0, end: 4 },
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 404);
+  assert.equal(res.code, "not_found");
+  assert.deepEqual(norm(res.details), { kind: "fragment", id: "f1" });
+});
+
+test("previewBoundaryFragment: network → 不重试、code=network", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    throw new TypeError("Failed to fetch");
+  });
+  const res = await previewBoundaryFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    newRange: { start: 0, end: 4 },
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.code, "network");
+});
+
+// ---------------------------------------------------------------------------
+// applyBoundaryFragment（mock fetch，同 confirmFragment 的
+// makeClient/okJson/errJson 模式）
+// ---------------------------------------------------------------------------
+
+test("applyBoundaryFragment: 首发 URL/方法/body（preview_id、command_id === 传入值、expected_revision、expected_range_set_revision）", async () => {
+  let captured;
+  const client = makeClient(async (url, opts) => {
+    captured = { url, opts };
+    return okJson(FRAG_BOUNDARY, 200);
+  });
+  const res = await applyBoundaryFragment(client, "p1", "f1", {
+    previewId: "preview-2",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(
+    captured.url,
+    "http://test.local/api/studio/projects/p1/fragments/f1/boundary/apply",
+  );
+  assert.equal(captured.opts.method, "POST");
+  const body = JSON.parse(captured.opts.body);
+  assert.deepEqual(norm(body), {
+    preview_id: "preview-2",
+    expected_revision: 2,
+    expected_range_set_revision: 5,
+    command_id: "cmd-1",
+  });
+  assert.equal(body.command_id, "cmd-1", "command_id === 传入值");
+  assert.equal(res.ok, true);
+});
+
+test("applyBoundaryFragment: 200（F3 形状 DTO，range=新范围、object_ref.revision=原+1）→ ok、data.range/data.object_ref.revision 可用", async () => {
+  const client = makeClient(async () => okJson(FRAG_BOUNDARY, 200));
+  const res = await applyBoundaryFragment(client, "p1", "f1", {
+    previewId: "preview-2",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.data.range.start, 2, "range 为新范围 start");
+  assert.equal(res.data.range.end, 6, "range 为新范围 end");
+  assert.equal(res.data.object_ref.revision, 3, "revision+1");
+  assert.equal(res.data.object_ref.id, "frag-1", "ID 不变");
+});
+
+test("applyBoundaryFragment: 409 preview_stale（details.preview_id + details.conflicts）→ 不重试（请求恰 1 次）、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(409, {
+      error: {
+        code: "preview_stale",
+        message: "预览已过期或已被处理，请重新预览。",
+        details: {
+          preview_id: "preview-2",
+          conflicts: [
+            {
+              object: { kind: "preview", id: "preview-2" },
+              expected: "pending",
+              actual: "expired",
+            },
+          ],
+        },
+      },
+    });
+  });
+  const res = await applyBoundaryFragment(client, "p1", "f1", {
+    previewId: "preview-2",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 409);
+  assert.equal(res.code, "preview_stale");
+  assert.equal(res.details.preview_id, "preview-2");
+  assert.equal(res.details.conflicts.length, 1);
+});
+
+test("applyBoundaryFragment: 409 revision_conflict（details.object.kind === \"range_set\"）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(409, {
+      error: {
+        code: "revision_conflict",
+        message: "版本已变化，请刷新后重试。",
+        details: {
+          object: { kind: "range_set", id: "rs-1" },
+          expected: 5,
+          actual: 6,
+        },
+      },
+    });
+  });
+  const res = await applyBoundaryFragment(client, "p1", "f1", {
+    previewId: "preview-2",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 409);
+  assert.equal(res.code, "revision_conflict");
+  assert.equal(res.details.object.kind, "range_set");
+});
+
+test("applyBoundaryFragment: 409 revision_conflict（details.object.kind === \"fragment\"）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(409, {
+      error: {
+        code: "revision_conflict",
+        message: "版本已变化，请刷新后重试。",
+        details: {
+          object: { kind: "fragment", id: "frag-1" },
+          expected: 2,
+          actual: 3,
+        },
+      },
+    });
+  });
+  const res = await applyBoundaryFragment(client, "p1", "f1", {
+    previewId: "preview-2",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 409);
+  assert.equal(res.code, "revision_conflict");
+  assert.equal(res.details.object.kind, "fragment");
+});
+
+test("applyBoundaryFragment: 422 validation_failed（violations，rule=reused）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "validation_failed",
+        message: "请求校验失败。",
+        details: {
+          violations: [
+            {
+              field: "command_id",
+              rule: "reused",
+              message: "command_id 已被其他命令使用，请生成新的。",
+            },
+          ],
+        },
+      },
+    });
+  });
+  const res = await applyBoundaryFragment(client, "p1", "f1", {
+    previewId: "preview-2",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "validation_failed");
+  assert.equal(res.details.violations[0].field, "command_id");
+  assert.equal(res.details.violations[0].rule, "reused");
+});
+
+test("applyBoundaryFragment: 404 not_found（kind=preview）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(404, {
+      error: {
+        code: "not_found",
+        message: "对象不存在或不属于当前项目。",
+        details: { kind: "preview", id: "preview-2" },
+      },
+    });
+  });
+  const res = await applyBoundaryFragment(client, "p1", "f1", {
+    previewId: "preview-2",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 404);
+  assert.equal(res.code, "not_found");
+  assert.deepEqual(norm(res.details), { kind: "preview", id: "preview-2" });
+});
+
+test("applyBoundaryFragment: network → 不重试、code=network", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    throw new TypeError("Failed to fetch");
+  });
+  const res = await applyBoundaryFragment(client, "p1", "f1", {
+    previewId: "preview-2",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.code, "network");
+});
+
+// ---------------------------------------------------------------------------
+// FragmentActions.tsx 边界 UI 字符串断言（selection.test.cjs 模式）
+// ---------------------------------------------------------------------------
+
+test("FragmentActions: 边界按钮仅 candidate/confirmed（retired 不显示边界）", () => {
+  assert.ok(
+    actionsSrc.includes(
+      'fragment.state === "candidate" || fragment.state === "confirmed"',
+    ),
+    "边界判定须为 state === \"candidate\" 或 state === \"confirmed\"",
+  );
+  assert.ok(
+    actionsSrc.includes('fragment-actions__boundary"'),
+    "「边界」按钮缺失",
+  );
+  assert.ok(actionsSrc.includes("边界"), "「边界」按钮文案缺失");
+  assert.ok(
+    !actionsSrc.includes('state === "retired"'),
+    "retired 行不得显示边界（也不显示确认）",
+  );
+});
+
+test("FragmentActions: 两步显式（阶段 1「预览」→ 阶段 2「确认调整」）+ 确认调整仅 preview 成功后可点击", () => {
+  assert.ok(
+    actionsSrc.includes("fragment-actions__boundary-form"),
+    "行内边界表单容器缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("fragment-actions__boundary-preview"),
+    "「预览」按钮缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("fragment-actions__boundary-apply"),
+    "「确认调整」按钮缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("fragment-actions__boundary-cancel"),
+    "「取消」按钮缺失",
+  );
+  assert.ok(actionsSrc.includes("预览"), "「预览」按钮文案缺失");
+  assert.ok(actionsSrc.includes("确认调整"), "「确认调整」按钮文案缺失");
+  assert.ok(
+    actionsSrc.includes('stage === "confirm"'),
+    "阶段 2（确认调整）判定缺失",
+  );
+  assert.ok(
+    actionsSrc.includes('stage === "preview"'),
+    "阶段 1（预览）判定缺失",
+  );
+});
+
+test("FragmentActions: 两个数字输入框（新 start/新 end，初始值 = fragment.range.start/end）", () => {
+  assert.ok(
+    actionsSrc.includes("fragment-actions__boundary-start"),
+    "新 start 输入框缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("fragment-actions__boundary-end"),
+    "新 end 输入框缺失",
+  );
+  assert.ok(
+    actionsSrc.includes('type="number"'),
+    "数字输入框 type=number 缺失",
+  );
+  const openSrc =
+    actionsSrc.match(/function handleBoundaryOpen[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(openSrc.length > 0, "handleBoundaryOpen 缺失");
+  assert.ok(
+    openSrc.includes("fragment.range.start"),
+    "初始 start 须取 fragment.range.start",
+  );
+  assert.ok(
+    openSrc.includes("fragment.range.end"),
+    "初始 end 须取 fragment.range.end",
+  );
+});
+
+test("FragmentActions: 本地整数校验（Number.isInteger 判定先于 previewBoundaryFragment 调用，非整数不发请求）", () => {
+  const previewSrc =
+    actionsSrc.match(/async function handleBoundaryPreview[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(previewSrc.length > 0, "handleBoundaryPreview 缺失");
+  assert.ok(
+    previewSrc.includes("Number.isInteger"),
+    "Number.isInteger 判定缺失",
+  );
+  const check = previewSrc.indexOf("Number.isInteger");
+  const call = previewSrc.indexOf("previewBoundaryFragment");
+  assert.ok(
+    check !== -1 && call !== -1 && check < call,
+    "整数判定须先于 previewBoundaryFragment（本地拦截，不发请求）",
+  );
+  assert.ok(previewSrc.includes("return;"), "非整数须提前返回（保留表单）");
+  assert.ok(
+    previewSrc.includes("范围端点必须为整数。"),
+    "本地提示文案缺失",
+  );
+});
+
+test("FragmentActions: 显式点击接线（onClick + previewBoundaryFragment/applyBoundaryFragment）+ makeCommandId() 每次点击一次", () => {
+  const previewSrc =
+    actionsSrc.match(/async function handleBoundaryPreview[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(
+    previewSrc.includes("previewBoundaryFragment"),
+    "预览须调用 previewBoundaryFragment",
+  );
+  assert.ok(
+    previewSrc.includes("makeCommandId()"),
+    "预览须每次点击生成一次 commandId",
+  );
+  const applySrc =
+    actionsSrc.match(/async function handleBoundaryApply[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(applySrc.length > 0, "handleBoundaryApply 缺失");
+  assert.ok(
+    applySrc.includes("applyBoundaryFragment"),
+    "确认调整须调用 applyBoundaryFragment",
+  );
+  assert.ok(
+    applySrc.includes("makeCommandId()"),
+    "确认调整须每次点击生成一次 commandId",
+  );
+  assert.ok(
+    actionsSrc.includes("onClick={() => void handleBoundaryPreview(fragment)}"),
+    "「预览」按钮 onClick 接线缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("onClick={() => void handleBoundaryApply(fragment)}"),
+    "「确认调整」按钮 onClick 接线缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("onClick={() => handleBoundaryOpen(fragment)}"),
+    "「边界」按钮 onClick 接线缺失",
+  );
+});
+
+test("FragmentActions: expected_revision 取 object_ref.revision；expected_range_set_revision 取 preview.baseline.range_set.cas", () => {
+  const applySrc =
+    actionsSrc.match(/async function handleBoundaryApply[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(
+    applySrc.includes("object_ref.revision"),
+    "expected_revision 须取 object_ref.revision（真实服务端值）",
+  );
+  assert.ok(
+    applySrc.includes("baseline.range_set.cas"),
+    "expected_range_set_revision 须取 preview.baseline.range_set.cas（冻结基准）",
+  );
+});
+
+test("FragmentActions: 边界 impact 摘要展示（affected/needs_review/preservable 计数）", () => {
+  assert.ok(
+    actionsSrc.includes("fragment-actions__boundary-impact"),
+    "边界 impact 摘要缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("impact.affected.length"),
+    "impact 摘要 affected 计数缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("impact.needs_review.length"),
+    "impact 摘要 needs_review 计数缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("impact.preservable.length"),
+    "impact 摘要 preservable 计数缺失",
+  );
+});
+
+test("FragmentActions: range_overlap 分支列出 conflicts（name + 范围）；range_invalid 分支显示 message", () => {
+  assert.ok(
+    actionsSrc.includes('code === "range_overlap"'),
+    "range_overlap 分支缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("该范围与已有片段重叠（不自动裁切）："),
+    "range_overlap 文案缺失",
+  );
+  assert.ok(
+    actionsSrc.includes('code === "range_invalid"'),
+    "range_invalid 分支缺失",
+  );
+});
+
+test("FragmentActions: 取消零 API 调用（onCancel 路径无 previewBoundaryFragment/applyBoundaryFragment）", () => {
+  const cancelSrc =
+    actionsSrc.match(/function handleBoundaryCancel[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(cancelSrc.length > 0, "handleBoundaryCancel 缺失");
+  assert.ok(
+    cancelSrc.includes("setBoundary"),
+    "取消须以 setBoundary 回到按钮态",
+  );
+  assert.ok(
+    !cancelSrc.includes("previewBoundaryFragment"),
+    "取消不得调用 previewBoundaryFragment（零 API 调用）",
+  );
+  assert.ok(
+    !cancelSrc.includes("applyBoundaryFragment"),
+    "取消不得调用 applyBoundaryFragment（零 API 调用）",
+  );
+  assert.ok(
+    !cancelSrc.includes("clientObj"),
+    "取消不得使用 client",
+  );
+  assert.ok(
+    actionsSrc.includes("onClick={() => handleBoundaryCancel(fid)}"),
+    "取消按钮 onClick 接线缺失",
+  );
+});
+
+test("FragmentActions: 失败保留表单（setErrors 保留、不退出）", () => {
+  const previewSrc =
+    actionsSrc.match(/async function handleBoundaryPreview[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(
+    previewSrc.includes("setErrors"),
+    "预览失败须 setErrors 保留行内错误",
+  );
+  const applySrc =
+    actionsSrc.match(/async function handleBoundaryApply[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(
+    applySrc.includes("setErrors"),
+    "确认调整失败须 setErrors 保留行内错误",
+  );
+  assert.ok(applySrc.includes("setSubmitting"), "提交态管理缺失");
+});
+
+test("FragmentActions: 无自动调整（useEffect 内不调 previewBoundaryFragment/applyBoundaryFragment）+ 不直接 fetch + 无硬编码样例 + 不导航", () => {
+  const effectBlock = actionsSrc.match(
+    /useEffect\(\(\) => \{[\s\S]*?\}, \[[^\]]+\]\)/,
+  );
+  assert.ok(effectBlock, "useEffect 缺失");
+  assert.ok(
+    !effectBlock[0].includes("previewBoundaryFragment"),
+    "useEffect 内不得调用 previewBoundaryFragment（无自动调整）",
+  );
+  assert.ok(
+    !effectBlock[0].includes("applyBoundaryFragment"),
+    "useEffect 内不得调用 applyBoundaryFragment（无自动调整）",
   );
   assert.ok(!actionsSrc.includes("fetch("), "组件不直接 fetch，须走 client");
   assert.ok(!actionsSrc.includes("示例"), "无硬编码样例");

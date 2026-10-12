@@ -548,3 +548,113 @@ export function applyRetireFragment(
     { commandId: params.commandId },
   );
 }
+
+// ---------------------------------------------------------------------------
+// SOURCE-14 · 片段边界调整（契约 v2.9，附录 02 §2 F8）
+// ---------------------------------------------------------------------------
+
+/** F8 边界预览参数。 */
+export interface BoundaryPreviewParams {
+  targetFragmentId: string;
+  newRange: { start: number; end: number };
+  commandId: string;
+}
+
+/**
+ * F8 边界预览响应（附录 00 §5.1：恰 4 字段，preview 是一次幂等写，
+ * 记录 state=pending 不外露；range/重叠/版本非 active 均在 preview 阶段即校验）。
+ */
+export interface BoundaryPreviewDto {
+  preview_id: string;
+  kind: string;
+  baseline: {
+    fragment: { kind: string; id: string; revision: number };
+    range_set: { id: string | null; cas: number | null };
+  };
+  impact: {
+    affected: Array<{
+      object_ref: { kind: string; id: string; revision: number | null };
+    }>;
+    needs_review: Array<{
+      object_ref: { kind: string; id: string; revision: number | null };
+    }>;
+    preservable: Array<{
+      object_ref: { kind: string; id: string; revision: number | null };
+    }>;
+  };
+}
+
+/**
+ * F8 预览片段边界变更（附录 02 §2 F8；preview 是一次幂等写，记录
+ * state=pending 不外露；幂等重放命中 → 200 原 result_payload，零写零 commit）。
+ *
+ * - POST /api/studio/projects/{pid}/fragments/{fid}/boundary，body =
+ *   { target_fragment_id, new_range: {start, end}, command_id }
+ *   （command_id 由 client.post 合并进 body）；
+ * - 成功（200，含幂等重放）返回 res（恰 4 字段 {preview_id, kind,
+ *   baseline, impact}）；
+ * - 一切错误原样透传（不重试、不改写）：422 range_invalid
+ *   （details.rule：empty | out_of_bounds | proxy_split | blank |
+ *   non_integer，message 含 canonical 长度）、409 range_overlap
+ *   （details.conflicts）、422 precondition_failed（details.reason）、
+ *   422 validation_failed（details.violations：mismatch | reused）、
+ *   404 not_found、network。
+ */
+export function previewBoundaryFragment(
+  client: StudioClient,
+  pid: string,
+  fid: string,
+  params: BoundaryPreviewParams,
+): Promise<StudioApiResponse<BoundaryPreviewDto>> {
+  const path = `/api/studio/projects/${encodeURIComponent(pid)}/fragments/${encodeURIComponent(fid)}/boundary`;
+  return client.post<BoundaryPreviewDto>(
+    path,
+    {
+      target_fragment_id: params.targetFragmentId,
+      new_range: { start: params.newRange.start, end: params.newRange.end },
+    },
+    { commandId: params.commandId },
+  );
+}
+
+/** F8 边界应用参数。 */
+export interface BoundaryApplyParams {
+  previewId: string;
+  commandId: string;
+  expectedRevision: number;
+  expectedRangeSetRevision: number;
+}
+
+/**
+ * F8 应用片段边界变更（附录 02 §2 F8；新 FragmentRevision reason='boundary'、
+ * ID 不变、revision+1、range=new_range；range_set 是 CAS 写点，cas+1；
+ * 幂等重放命中 → 200 原 result_payload，零写零 commit）。
+ *
+ * - POST /api/studio/projects/{pid}/fragments/{fid}/boundary/apply，body =
+ *   { preview_id, command_id, expected_revision, expected_range_set_revision }
+ *   （command_id 由 client.post 合并进 body）；
+ * - 成功（200，含幂等重放）返回 res（FragmentDto 复用既有接口：
+ *   range=new_range、object_ref.revision+1）；
+ * - 一切错误原样透传（不重试、不改写）：409 preview_stale
+ *   （details.preview_id + details.conflicts）、409 revision_conflict
+ *   （details.object.kind：fragment | range_set）、422 validation_failed
+ *   （violations：mismatch | reused）、422 precondition_failed、
+ *   404 not_found、network。
+ */
+export function applyBoundaryFragment(
+  client: StudioClient,
+  pid: string,
+  fid: string,
+  params: BoundaryApplyParams,
+): Promise<StudioApiResponse<FragmentDto>> {
+  const path = `/api/studio/projects/${encodeURIComponent(pid)}/fragments/${encodeURIComponent(fid)}/boundary/apply`;
+  return client.post<FragmentDto>(
+    path,
+    {
+      preview_id: params.previewId,
+      expected_revision: params.expectedRevision,
+      expected_range_set_revision: params.expectedRangeSetRevision,
+    },
+    { commandId: params.commandId },
+  );
+}

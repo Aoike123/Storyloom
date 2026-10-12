@@ -2598,12 +2598,46 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "预览新范围后应用，冲突可定位。",
-      "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "web/features/studio/source/api.ts（纯逻辑追加：BoundaryPreviewParams/BoundaryPreviewDto/previewBoundaryFragment + BoundaryApplyParams/applyBoundaryFragment）、web/features/studio/source/components/FragmentActions.tsx（扩展边界两步表单）、web/tests/studio/fragment-actions.test.cjs（扩展，既有 61 项保持）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-12",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-12",
+        "contract_version": "2.9",
+        "tested_baseline": "9968c42 + 3 白名单文件（本卡提交）",
+        "scope": "f8_boundary_fragment_ui",
+        "checks": [
+          "主模型独立复验（不复用执行器报告）：node --test web/tests/studio/fragment-actions.test.cjs → 90/90（既有 61 + 新增 29）；node --test web/tests/studio/*.test.cjs → 264/264 无回归；cd web && npx tsc --noEmit → exit 0；git status 仅白名单 3 文件。",
+          "F8 preview 协议（diff 逐行核对 + mock fetch 测试）：POST /api/studio/projects/{pid}/fragments/{fid}/boundary（pid/fid 均 encodeURIComponent），body = {target_fragment_id, new_range:{start,end}, command_id}；200 恰 4 字段 {preview_id, kind:'fragment_boundary', baseline:{fragment:{kind,id,revision}, range_set:{id,cas}}, impact:{affected[], needs_review[], preservable[]}}；preview 阶段即校验 range_invalid（五判定：empty/out_of_bounds/proxy_split/blank/non_integer，message 含 canonical 长度）与 range_overlap（conflicts 按 id 排序、message 点名首个）；错误透传不重试（422 range_invalid、409 range_overlap、422 precondition_failed reason=source_revision_inactive、422 validation_failed rule=mismatch/reused、404 not_found、network 测试断言请求恰 1 次 + details 逐字段透传）。",
+          "F8 apply 协议（diff 逐行核对 + mock fetch 测试）：POST /api/studio/projects/{pid}/fragments/{fid}/boundary/apply，body = {preview_id, command_id, expected_revision, expected_range_set_revision}；expected_revision 取该行 fragment.object_ref.revision（真实服务端值）；expected_range_set_revision 取 preview 返回的 baseline.range_set.cas（冻结基准，preview 时快照；cas 为 null 时 ?? 0）；200 F3 形状 DTO（新 FragmentRevision reason='boundary'、ID 不变、revision+1、range=new_range、range_set cas+1）；错误透传不重试（409 preview_stale{preview_id, conflicts[]}、409 revision_conflict object.kind=fragment/range_set、422 validation_failed rule=reused、404 not_found、network 测试断言请求恰 1 次 + details 逐字段透传）。",
+          "两步显式操作（卡面\"预览新范围后应用\"）：点击「边界」→ 阶段 1 两个数字输入框（新 start/新 end，初始值 = 当前 fragment.range.start/end）+「预览」+「取消」；本地整数校验（Number.isInteger，非整数/NaN/空 → 本地 validation_failed 提示「范围端点必须为整数。」，不发请求、保留表单）；预览成功 → 阶段 2 展示 impact 摘要（「影响：N 项 / 待复核：N 项 / 可保留：N 项」）+「确认调整」+「取消」；确认调整仅 preview 成功后可点击（handleBoundaryApply 内 preview === undefined 直接 return，字符串断言）；无自动调整（useEffect 内不调 previewBoundaryFragment/applyBoundaryFragment，字符串断言）。",
+          "冲突可定位（卡面验收）：range_overlap → 行内列出 details.conflicts 每个冲突（name + 范围 start/end），文案「该范围与已有片段重叠（不自动裁切）：」；range_invalid → 行内显示 error.message（含 canonical 长度）；不自动裁切、不清 pending、保留表单。",
+          "刷新结果一致（卡面验收）：apply 成功 → 清除该行错误 + setRefreshTick 内部重取（列表范围更新为新范围、revision+1）；新取数成功 = 新快照，行内错误与边界表单（boundary）一并清除（防陈旧预览）。",
+          "过期/断网可恢复（卡面验收）：失败 → 该行行内错误（保留表单与 impact 摘要，不退出、不丢错误）；行内错误区统一（确认/改名/退役/边界共用 rowErrorText）：preview_stale →「预览已过期，请重新预览。」；revision_conflict → 确认/改名「片段版本已变化，请刷新后重试。」、退役/边界「版本已变化，请刷新后重试。」（RowErrorSource 区分）；precondition_failed →「片段状态已变化，请刷新后重试。」；validation_failed → details.violations 每条 message；其他显示 error.message。",
+          "取消零 API 调用（handleBoundaryCancel 仅 setBoundary，无 previewBoundaryFragment/applyBoundaryFragment，字符串断言）；每次显式点击 makeCommandId() 恰一次（既有测试 commandId 断言更新为 6 处：确认/保存/预览影响/确认退役/预览/确认调整各一次，crypto.randomUUID 仍恰 1 处）；提交中对应按钮 disabled（防双击）。",
+          "SOURCE-14-a/b/c 已验收行为不变（diff 核对）：确认按钮仅 candidate、显式点击、重取、行内错误；改名按钮仅 candidate/confirmed、行内表单、失败保留输入；退役按钮仅 candidate/confirmed、两步表单、impact 摘要；既有 61 项断言全部保持通过。",
+          "组件不直接 fetch（走 client）、不导航（无 router.push/window.location）、无硬编码样例文本、styled-jsx 作用域独立（.fragment-actions__boundary*）。"
+        ],
+        "evidence": [
+          "web/features/studio/source/api.ts（第 548 行起追加：BoundaryPreviewParams/BoundaryPreviewDto/previewBoundaryFragment + BoundaryApplyParams/applyBoundaryFragment）",
+          "web/features/studio/source/components/FragmentActions.tsx（扩展：边界按钮 + 两步表单 + 本地整数校验 + impact 摘要 + 统一行内错误区 range_invalid/range_overlap 分支）",
+          "web/tests/studio/fragment-actions.test.cjs（90 项：既有 61 + 新增 29）"
+        ],
+        "limitations": [
+          "浏览器实测（真实点击边界调整交互）待 GATE-02 关键浏览器连续操作门验收；本轮以纯逻辑 vm 测试 + 组件字符串断言为准（与 SOURCE-12/13/14-a/b/c 同一验收深度）。",
+          "FragmentActions 尚未接入工作台壳（与 FragmentList/SourceReader 同为独立组件），接入归 UI 批次。"
+        ]
+      }
     },
     {
       "id": "SOURCE-14-e",
