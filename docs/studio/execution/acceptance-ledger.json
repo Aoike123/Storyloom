@@ -2796,12 +2796,46 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "预览/明确应用新版本，失败不退出表单。",
-      "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "web/features/studio/source/api.ts（纯逻辑追加：SourceActivatePreviewParams/SourceActivatePreviewDto/previewSourceActivate + SourceActivateApplyParams/applySourceActivate + SourceRevisionListDto/listSourceRevisions）、web/features/studio/source/components/SourceChangeReview.tsx（新建独立组件）、web/tests/studio/source-change-review.test.cjs（新建）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-12",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-12",
+        "contract_version": "2.9",
+        "tested_baseline": "4d17e37 + 3 白名单文件（本卡提交）",
+        "scope": "s4_s5_source_activate_ui",
+        "checks": [
+          "主模型独立复验（不复用执行器报告）：node --test web/tests/studio/source-change-review.test.cjs → 35/35（17 纯逻辑 + 18 组件字符串断言）；node --test web/tests/studio/*.test.cjs → 361/361 无回归；cd web && npx tsc --noEmit → exit 0；git status 仅白名单 3 文件（M api.ts、?? SourceChangeReview.tsx、?? source-change-review.test.cjs）。",
+          "S4 preview 协议（diff 逐行核对 + mock fetch 测试）：POST /api/studio/projects/{pid}/source-changes/preview（pid 均 encodeURIComponent），body = {kind:\"source_activate\", target_revision_id, command_id}；200 恰 4 字段 {preview_id, kind:'source_activate', baseline:{active_revision_id, target_revision_id, target_canonical_hash}, impact:{affected[], needs_review[], preservable[]}}（激活语义：affected=绑定 target 的片段、needs_review=绑定原 active 的未退役片段（范围不能套进新文本）、preservable=以原 active 为输入依据的视频/剪辑/发布）；错误透传不重试（422 validation_failed kind invalid/target_revision_id not_found/command_id reused、422 precondition_failed reason=already_active、404 not_found、network 测试断言请求恰 1 次 + details 逐字段透传）。",
+          "S5 apply 协议（diff 逐行核对 + mock fetch 测试）：POST /api/studio/projects/{pid}/source-changes/apply，body = {preview_id, command_id, expected_active_revision_id}；expected_active_revision_id 取当前项目的 active_source_revision_id（真实服务端值；为 null 时不提交）；200 项目 DTO（P3 全字段，active_source_revision_id==target）；错误透传不重试（409 preview_stale{preview_id, conflicts[]}、409 revision_conflict object.kind=project、422 validation_failed preview_id mismatch/command_id reused、404 not_found kind=preview、network 测试断言请求恰 1 次 + details 逐字段透传）。",
+          "两步显式操作（卡面\"预览/明确应用新版本\"）：项目级「正文变更」按钮（非行级）→ 阶段 1 目标版本下拉选择器（选项 = 当前列表 is_active===false 的源版本，文本 = 版本 id + created_at 日期；当前 active 版本不显示——已是 active → 422）+「预览」+「取消」；本地校验（targetRevisionId === \"\" → 本地 validation_failed「请选择一个目标版本。」，不发请求、保留表单）；预览成功 → 阶段 2 展示 impact 摘要（「影响：N 项 / 待复核：N 项 / 可保留：N 项」）+「确认激活」+「取消」；确认激活仅 preview 成功后可点击（handleApply 内 preview === undefined 直接 return，字符串断言）；无自动激活（useEffect 内不调 previewSourceActivate/applySourceActivate，字符串断言）。",
+          "失败不退出表单（卡面验收）：失败 → reviewError 行内错误（保留表单与 impact 摘要，不退出、不丢错误）；行内错误区：already_active →「该版本已是当前活跃版本。」；not_found →「指定正文版本不存在。」；preview_stale →「预览已过期，请重新预览。」；revision_conflict →「版本已变化，请刷新后重试。」；validation_failed → details.violations 每条 message；其他显示 error.message。",
+          "刷新结果一致（卡面验收）：apply 成功 → 清除 reviewError + setRefreshTick 内部重取（项目 active_source_revision_id 更新）；新取数成功 = 新快照，两步表单（reviewing）与行内错误一并清除（防陈旧表单/错误/预览）。",
+          "取消零 API 调用（handleCancel 仅 setReviewing/setReviewError，无 previewSourceActivate/applySourceActivate，字符串断言）；每次显式点击 makeCommandId() 恰一次（crypto.randomUUID 恰 1 处）；提交中对应按钮 disabled（防双击）。",
+          "激活不删除任何版本、不移动任何范围（R03/R11 后端冻结）：apply 仅切换 active_source_revision_id；前端不干预。",
+          "组件不直接 fetch（走 client）、不导航（无 router.push/window.location）、无硬编码样例文本、styled-jsx 作用域独立（.source-change-review*）。"
+        ],
+        "evidence": [
+          "web/features/studio/source/api.ts（第 924 行起追加：SourceActivatePreviewParams/SourceActivatePreviewDto/previewSourceActivate + SourceActivateApplyParams/applySourceActivate + SourceRevisionListDto/listSourceRevisions）",
+          "web/features/studio/source/components/SourceChangeReview.tsx（新建：独立组件，两步表单 + 行内错误区 + 自取数据）",
+          "web/tests/studio/source-change-review.test.cjs（35 项：17 纯逻辑 + 18 组件字符串断言）"
+        ],
+        "limitations": [
+          "浏览器实测（真实点击正文变更交互）待 GATE-02 关键浏览器连续操作门验收；本轮以纯逻辑 vm 测试 + 组件字符串断言为准（与 SOURCE-12/13/14-a～f 同一验收深度）。",
+          "SourceChangeReview 尚未接入工作台壳（与 FragmentActions/FragmentList/SourceReader 同为独立组件），接入归 UI 批次。",
+          "契约问题（执行器报告）：S2 列表路由 GET /projects/{pid}/sources（附录 01 §2 S2 行）在契约中已冻结，但 backend/studio/sources/api.py 目前只有 S1 POST /sources 与 S3 GET /sources/{revision_id}，S2 列表路由尚未实现（service.py 无 list 函数）。前端 listSourceRevisions 已按冻结契约实现并通过测试；后端 S2 路由填充前，SourceChangeReview 组件取数会 404（组件进入错误态 + 重试按钮，不崩溃）。S2 后端由 SOURCE-01-f 子卡负责（本卡验收后派发）。"
+        ]
+      }
     },
     {
       "id": "SOURCE-14-h",

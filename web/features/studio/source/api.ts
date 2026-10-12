@@ -924,3 +924,142 @@ export function applyMergeFragments(
     { commandId: params.commandId },
   );
 }
+
+// ---------------------------------------------------------------------------
+// SOURCE-14 · 正文版本激活（契约 v2.9，附录 01 §2 S4/S5 + S2）
+// ---------------------------------------------------------------------------
+
+/** S4 正文激活预览参数。 */
+export interface SourceActivatePreviewParams {
+  targetRevisionId: string;
+  commandId: string;
+}
+
+/**
+ * S4 正文激活预览响应（附录 00 §5.1：恰 4 字段，preview 是一次幂等写，
+ * 记录 state=pending 不外露；幂等重放命中 → 200 原 result_payload，
+ * 零写零 commit）。
+ */
+export interface SourceActivatePreviewDto {
+  preview_id: string;
+  kind: string;
+  baseline: {
+    active_revision_id: string;
+    target_revision_id: string;
+    target_canonical_hash: string;
+  };
+  impact: {
+    affected: Array<{
+      object_ref: { kind: string; id: string; revision: number | null };
+    }>;
+    needs_review: Array<{
+      object_ref: { kind: string; id: string; revision: number | null };
+    }>;
+    preservable: Array<{
+      object_ref: { kind: string; id: string; revision: number | null };
+    }>;
+  };
+}
+
+/**
+ * S4 预览正文版本激活（附录 01 §2 S4；preview 是一次幂等写，记录
+ * state=pending 不外露；幂等重放命中 → 200 原 result_payload，零写零
+ * commit）。
+ *
+ * - POST /api/studio/projects/{pid}/source-changes/preview，body =
+ *   { kind: "source_activate", target_revision_id, command_id }
+ *   （command_id 由 client.post 合并进 body）；
+ * - 成功（200，含幂等重放）返回 res（恰 4 字段 {preview_id, kind,
+ *   baseline, impact}）；
+ * - 一切错误原样透传（不重试、不改写）：422 validation_failed
+ *   （violations：kind invalid、target_revision_id not_found、
+ *   command_id reused）、422 precondition_failed（details.reason：
+ *   already_active）、404 not_found、network。
+ */
+export function previewSourceActivate(
+  client: StudioClient,
+  pid: string,
+  params: SourceActivatePreviewParams,
+): Promise<StudioApiResponse<SourceActivatePreviewDto>> {
+  const path = `/api/studio/projects/${encodeURIComponent(pid)}/source-changes/preview`;
+  return client.post<SourceActivatePreviewDto>(
+    path,
+    {
+      kind: "source_activate",
+      target_revision_id: params.targetRevisionId,
+    },
+    { commandId: params.commandId },
+  );
+}
+
+/** S5 正文激活应用参数。 */
+export interface SourceActivateApplyParams {
+  previewId: string;
+  commandId: string;
+  expectedActiveRevisionId: string;
+}
+
+/**
+ * S5 应用正文版本激活（附录 01 §2 S5；激活切换 + ReviewDecision；
+ * 幂等重放命中 → 200 原 result_payload，零写零 commit）。
+ *
+ * - POST /api/studio/projects/{pid}/source-changes/apply，body =
+ *   { preview_id, command_id, expected_active_revision_id }
+ *   （command_id 由 client.post 合并进 body）；
+ * - 成功（200，含幂等重放）返回 res（ProjectDto：
+ *   active_source_revision_id == target）；
+ * - 一切错误原样透传（不重试、不改写）：409 preview_stale
+ *   （details.preview_id + details.conflicts）、409 revision_conflict
+ *   （details.object.kind：project）、422 validation_failed
+ *   （violations：preview_id mismatch、command_id reused）、422
+ *   precondition_failed、404 not_found、network。
+ */
+export function applySourceActivate(
+  client: StudioClient,
+  pid: string,
+  params: SourceActivateApplyParams,
+): Promise<StudioApiResponse<ProjectDto>> {
+  const path = `/api/studio/projects/${encodeURIComponent(pid)}/source-changes/apply`;
+  return client.post<ProjectDto>(
+    path,
+    {
+      preview_id: params.previewId,
+      expected_active_revision_id: params.expectedActiveRevisionId,
+    },
+    { commandId: params.commandId },
+  );
+}
+
+/** S2 来源版本列表响应（倒序；fragment_count = 该版本未退役片段数，计算值）。 */
+export interface SourceRevisionListDto {
+  items: Array<{
+    id: string;
+    previous_revision_id: string | null;
+    raw_hash: string;
+    canonical_hash: string;
+    offset_policy: string;
+    char_length: number;
+    created_at: number;
+    is_active: boolean;
+    fragment_count: number;
+  }>;
+  next_cursor: string | null;
+}
+
+/**
+ * S2 来源版本列表：GET /api/studio/projects/{pid}/sources[?cursor=]。纯读。
+ *
+ * - pid 经 encodeURIComponent；cursor 非空时附加 ?cursor=；
+ * - 成功（200）返回 res（版本列表，倒序）；
+ * - 一切错误原样透传（不重试、不改写）：404 not_found、network。
+ */
+export function listSourceRevisions(
+  client: StudioClient,
+  pid: string,
+  cursor?: string,
+): Promise<StudioApiResponse<SourceRevisionListDto>> {
+  const query = buildQuery([["cursor", cursor]]);
+  return client.get<SourceRevisionListDto>(
+    `/api/studio/projects/${encodeURIComponent(pid)}/sources${query}`,
+  );
+}
