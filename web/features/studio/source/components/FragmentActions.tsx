@@ -84,6 +84,37 @@
 //   start: number | null, end: number | null, preview? }>），
 //   与 14-a/b/c 的 errors/submitting 并列；新取数成功（新快照）时一并
 //   清除（防陈旧表单/错误/预览）。
+// - 拆分动作（F9，本卡）：两步显式操作（先输入拆分点预览、再确认拆分），
+//   点击「拆分」→ 该行动作区切换为行内拆分表单（阶段 1：拆分点数字输入框
+//   （初始值 = Math.floor((fragment.range.start + fragment.range.end) / 2)，
+//   即当前范围中点）+ 左名/右名可选文本输入框（初始值空）+「预览」+
+//   「取消」）；「取消」→ 回到按钮态（零 API 调用）；「预览」：本地校验
+//   （split_point 必须为整数（Number.isInteger，非整数/NaN/空 → 本地提示
+//   「拆分点必须为整数。」，不发请求、保留表单）；split_point 必须严格介于
+//   当前 range 端点之间（fragment.range.start < split_point <
+//   fragment.range.end，否则某半空 → 本地提示「拆分点必须严格介于当前范围
+//   端点之间。」，不发请求、保留表单）），否则每次点击生成一次 commandId →
+//   previewSplitFragment(client, pid, fid, { targetFragmentId: fid,
+//   splitPoint, leftName: leftName.trim() === "" ? undefined :
+//   leftName.trim(), rightName: rightName.trim() === "" ? undefined :
+//   rightName.trim(), commandId })（left_name/right_name 空串 → undefined，
+//   不附加进 body）；成功（res.ok）→ 该行进入阶段 2（展示 impact 摘要 +
+//   「确认拆分」+「取消」）；失败（!res.ok）→ 行内错误（保留表单，不退出）。
+//   「确认拆分」：每次点击生成一次 commandId → applySplitFragment(client,
+//   pid, fid, { previewId: res.data.preview_id, commandId,
+//   expectedRevision: object_ref.revision,
+//   expectedRangeSetRevision: res.data.baseline.range_set.cas ?? 0 })；
+//   expected_range_set_revision 取 preview 返回的 baseline.range_set.cas
+//   （冻结基准，preview 时快照）；成功（res.ok）→ 清除该行错误 + 内部重取
+//   （列表中原片段退役、左/右新片段出现）；失败（!res.ok）→ 行内错误
+//   （保留表单与 impact 摘要，不退出）。
+//   「拆分」按钮仅 state === "candidate" 或 state === "confirmed" 显示
+//   （retired 不显示——F9 前置已 retired → 422；与 14-b/c/d 同冻结）。
+// - 每行的拆分表单用行级 state（splitting:
+//   Record<string, { open, stage: "preview" | "confirm", splitPoint,
+//   leftName, rightName, preview? }>），与 14-a/b/c/d 的
+//   errors/submitting/renaming/retiring/boundary 并列；新取数成功（新快照）
+//   时一并清除（防陈旧表单/错误/预览）。
 // - 组件不直接 fetch（走 client）；不 import 旧组件；无硬编码占位文本；
 //   不导航（不跳转页面）。
 
@@ -93,16 +124,20 @@ import defaultClient from "@/shared/api/client";
 import {
   applyBoundaryFragment,
   applyRetireFragment,
+  applySplitFragment,
   confirmFragment,
   fetchAllFragments,
   previewBoundaryFragment,
   previewRetireFragment,
+  previewSplitFragment,
   renameFragment,
 } from "../api";
 import type {
   BoundaryPreviewDto,
   FragmentDto,
   RetirePreviewDto,
+  SplitApplyDto,
+  SplitPreviewDto,
   StudioClient,
 } from "../api";
 import type { StudioApiResponse } from "@/shared/api/types";
@@ -119,14 +154,16 @@ type ListState =
   | { kind: "error"; message: string }
   | { kind: "ready"; items: FragmentDto[] };
 
-/** 行内错误（确认/改名/退役/边界共用同一错误区；仅用错误字段，data 形状随动作）。 */
+/** 行内错误（确认/改名/退役/边界/拆分共用同一错误区；仅用错误字段，data 形状随动作）。 */
 type RowError =
   | (StudioApiResponse<FragmentDto> & { ok: false })
   | (StudioApiResponse<RetirePreviewDto> & { ok: false })
-  | (StudioApiResponse<BoundaryPreviewDto> & { ok: false });
+  | (StudioApiResponse<BoundaryPreviewDto> & { ok: false })
+  | (StudioApiResponse<SplitPreviewDto> & { ok: false })
+  | (StudioApiResponse<SplitApplyDto> & { ok: false });
 
 /** 产生该行错误的动作（决定 revision_conflict 文案）。 */
-type RowErrorSource = "confirm" | "rename" | "retire" | "boundary";
+type RowErrorSource = "confirm" | "rename" | "retire" | "boundary" | "split";
 
 /** 每行行内错误（错误体 + 产生动作）。 */
 type RowErrorEntry = { error: RowError; source: RowErrorSource };
@@ -150,6 +187,16 @@ type BoundaryForm = {
   preview?: BoundaryPreviewDto;
 };
 
+/** 每行拆分表单状态（展开态 + 阶段 + 拆分点/左右名输入值 + 预览结果）。 */
+type SplittingForm = {
+  open: boolean;
+  stage: "preview" | "confirm";
+  splitPoint: number | null;
+  leftName: string;
+  rightName: string;
+  preview?: SplitPreviewDto;
+};
+
 /** 每次点击生成一次 commandId（显式点击，无自动提交）。 */
 function makeCommandId(): string {
   return crypto.randomUUID();
@@ -169,6 +216,7 @@ export default function FragmentActions({
   const [renaming, setRenaming] = useState<Record<string, RenamingForm>>({});
   const [retiring, setRetiring] = useState<Record<string, RetiringForm>>({});
   const [boundary, setBoundary] = useState<Record<string, BoundaryForm>>({});
+  const [splitting, setSplitting] = useState<Record<string, SplittingForm>>({});
 
   useEffect(() => {
     let alive = true;
@@ -181,12 +229,13 @@ export default function FragmentActions({
         return;
       }
       setState({ kind: "ready", items: res.data });
-      // 新取数成功 = 新快照：行内确认/改名/退役/边界错误、改名/退役/边界
-      // 表单属于旧快照，一并清除（防陈旧表单/错误/预览）
+      // 新取数成功 = 新快照：行内确认/改名/退役/边界/拆分错误、
+      // 改名/退役/边界/拆分表单属于旧快照，一并清除（防陈旧表单/错误/预览）
       setErrors({});
       setRenaming({});
       setRetiring({});
       setBoundary({});
+      setSplitting({});
     })();
     return () => {
       alive = false;
@@ -517,13 +566,192 @@ export default function FragmentActions({
     }
   }
 
+  /** 点击「拆分」：该行动作区切换为行内拆分表单（阶段 1：预览；
+   * 初始拆分点 = Math.floor((start+end)/2)，即当前范围中点）。 */
+  function handleSplitOpen(fragment: FragmentDto): void {
+    const fid = fragment.object_ref.id;
+    setSplitting((prev) => ({
+      ...prev,
+      [fid]: {
+        open: true,
+        stage: "preview",
+        splitPoint: Math.floor((fragment.range.start + fragment.range.end) / 2),
+        leftName: "",
+        rightName: "",
+      },
+    }));
+  }
+
+  /** 点击「取消」：回到按钮态（零 API 调用）。 */
+  function handleSplitCancel(fid: string): void {
+    setSplitting((prev) => ({
+      ...prev,
+      [fid]: {
+        open: false,
+        stage: "preview",
+        splitPoint: null,
+        leftName: "",
+        rightName: "",
+      },
+    }));
+  }
+
+  /** 更新拆分表单某个输入（拆分点：空串 → null；否则 Number 化，
+   * 非整数/NaN 由「预览」时本地校验拦截；左右名为文本直存）。 */
+  function updateSplitInput(
+    fid: string,
+    field: "splitPoint" | "leftName" | "rightName",
+    raw: string,
+  ): void {
+    setSplitting((prev) => {
+      const form = prev[fid] ?? {
+        open: true,
+        stage: "preview" as const,
+        splitPoint: null,
+        leftName: "",
+        rightName: "",
+      };
+      const value =
+        field === "splitPoint"
+          ? raw === ""
+            ? (null as number | null)
+            : Number(raw)
+          : raw;
+      return {
+        ...prev,
+        [fid]: { ...form, [field]: value },
+      };
+    });
+  }
+
+  /** 点击「预览」：本地校验（Number.isInteger + 严格介于当前 range 端点
+   * 之间，非整数/NaN/空/端点/越界不发请求、保留表单）→ 每次点击生成
+   * 一次 commandId → previewSplitFragment。 */
+  async function handleSplitPreview(fragment: FragmentDto): Promise<void> {
+    const fid = fragment.object_ref.id;
+    const splitPoint = splitting[fid]?.splitPoint ?? null;
+    const leftName = splitting[fid]?.leftName ?? "";
+    const rightName = splitting[fid]?.rightName ?? "";
+    if (splitPoint === null || !Number.isInteger(splitPoint)) {
+      // 本地拦截：非整数/NaN/空不发请求，保留表单（文案与服务端
+      // rule=non_integer 一致）
+      setErrors((prev) => ({
+        ...prev,
+        [fid]: {
+          error: {
+            ok: false,
+            code: "validation_failed",
+            message: "拆分点必须为整数。",
+            details: {
+              violations: [
+                {
+                  field: "split_point",
+                  rule: "non_integer",
+                  message: "拆分点必须为整数。",
+                },
+              ],
+            },
+          },
+          source: "split",
+        },
+      }));
+      return;
+    }
+    if (!(fragment.range.start < splitPoint && splitPoint < fragment.range.end)) {
+      // 本地拦截：不严格介于端点之间（== start / == end / 越界 → 某半空）
+      // 不发请求，保留表单（文案与服务端 rule=empty 一致）
+      setErrors((prev) => ({
+        ...prev,
+        [fid]: {
+          error: {
+            ok: false,
+            code: "range_invalid",
+            message: "拆分点必须严格介于当前范围端点之间。",
+            details: { rule: "empty" },
+          },
+          source: "split",
+        },
+      }));
+      return;
+    }
+    setSubmitting((prev) => ({ ...prev, [fid]: true }));
+    try {
+      // 每次点击生成一次 commandId（显式点击，无自动拆分）
+      const commandId = makeCommandId();
+      const res = await previewSplitFragment(clientObj, projectId, fid, {
+        targetFragmentId: fid,
+        splitPoint,
+        leftName: leftName.trim() === "" ? undefined : leftName.trim(),
+        rightName: rightName.trim() === "" ? undefined : rightName.trim(),
+        commandId,
+      });
+      if (res.ok) {
+        // 成功：进入阶段 2（展示 impact 摘要 +「确认拆分」+「取消」）
+        setSplitting((prev) => ({
+          ...prev,
+          [fid]: {
+            open: true,
+            stage: "confirm",
+            splitPoint,
+            leftName,
+            rightName,
+            preview: res.data,
+          },
+        }));
+      } else {
+        // 失败：保留表单（不退出、不丢错误）
+        setErrors((prev) => ({
+          ...prev,
+          [fid]: { error: res as RowError, source: "split" },
+        }));
+      }
+    } finally {
+      setSubmitting((prev) => ({ ...prev, [fid]: false }));
+    }
+  }
+
+  /** 点击「确认拆分」：每次点击生成一次 commandId → applySplitFragment。 */
+  async function handleSplitApply(fragment: FragmentDto): Promise<void> {
+    const fid = fragment.object_ref.id;
+    const preview = splitting[fid]?.preview;
+    if (preview === undefined) return;
+    setSubmitting((prev) => ({ ...prev, [fid]: true }));
+    try {
+      // 每次点击生成一次 commandId（显式点击，无自动拆分）
+      const commandId = makeCommandId();
+      const res = await applySplitFragment(clientObj, projectId, fid, {
+        previewId: preview.preview_id,
+        commandId,
+        expectedRevision: fragment.object_ref.revision,
+        expectedRangeSetRevision: preview.baseline.range_set.cas ?? 0,
+      });
+      if (res.ok) {
+        // 成功：清除该行错误，内部重取（原片段退役、左/右新片段出现）
+        setErrors((prev) => {
+          const next = { ...prev };
+          delete next[fid];
+          return next;
+        });
+        setRefreshTick((t) => t + 1);
+      } else {
+        // 失败：保留表单与 impact 摘要（不退出、不丢错误）
+        setErrors((prev) => ({
+          ...prev,
+          [fid]: { error: res as RowError, source: "split" },
+        }));
+      }
+    } finally {
+      setSubmitting((prev) => ({ ...prev, [fid]: false }));
+    }
+  }
+
   /**
-   * 行内错误文案（确认/改名/退役/边界统一）：validation_failed →
+   * 行内错误文案（确认/改名/退役/边界/拆分统一）：validation_failed →
    * violations 每条 message；range_invalid → error.message（含 canonical
-   * 长度）；range_overlap → 列出 conflicts 每个冲突（name + 范围）；
-   * preview_stale → 「预览已过期，请重新预览。」；revision_conflict →
-   * 确认/改名「片段版本已变化，请刷新后重试。」、退役/边界
-   * 「版本已变化，请刷新后重试。」；precondition_failed →
+   * 长度、当前 range 与 split_point）；range_overlap → 列出 conflicts
+   * 每个冲突（name + 范围）；preview_stale → 「预览已过期，请重新预览。」；
+   * revision_conflict → 确认/改名「片段版本已变化，请刷新后重试。」、
+   * 退役/边界/拆分「版本已变化，请刷新后重试。」；precondition_failed →
    * 「片段状态已变化，请刷新后重试。」；其他 message。
    */
   function rowErrorText(error: RowError, source?: RowErrorSource): string {
@@ -560,7 +788,7 @@ export default function FragmentActions({
       return "预览已过期，请重新预览。";
     }
     if (error.code === "revision_conflict") {
-      return source === "retire" || source === "boundary"
+      return source === "retire" || source === "boundary" || source === "split"
         ? "版本已变化，请刷新后重试。"
         : "片段版本已变化，请刷新后重试。";
     }
@@ -614,12 +842,18 @@ export default function FragmentActions({
           // 生产，无需调边界；与 14-b/c 同冻结）
           const canBoundary =
             fragment.state === "candidate" || fragment.state === "confirmed";
+          // 拆分仅 candidate/confirmed（retired 不显示——F9 前置已 retired → 422；
+          // 与 14-b/c/d 同冻结）
+          const canSplit =
+            fragment.state === "candidate" || fragment.state === "confirmed";
           const renameForm = renaming[fid];
           const isRenaming = renameForm?.open === true;
           const retireForm = retiring[fid];
           const isRetiring = retireForm?.open === true;
           const boundaryForm = boundary[fid];
           const isBoundary = boundaryForm?.open === true;
+          const splitForm = splitting[fid];
+          const isSplitting = splitForm?.open === true;
           return (
             <li
               key={fid}
@@ -761,6 +995,72 @@ export default function FragmentActions({
                     取消
                   </button>
                 </div>
+              ) : isSplitting ? (
+                <div className="fragment-actions__split-form">
+                  {splitForm?.stage === "confirm" &&
+                    splitForm?.preview !== undefined && (
+                      <p className="fragment-actions__split-impact">
+                        影响：{splitForm.preview.impact.affected.length} 项 /
+                        待复核：{splitForm.preview.impact.needs_review.length}{" "}
+                        项 / 可保留：
+                        {splitForm.preview.impact.preservable.length} 项
+                      </p>
+                    )}
+                  {splitForm?.stage === "preview" ? (
+                    <>
+                      <input
+                        type="number"
+                        className="fragment-actions__split-point"
+                        value={
+                          splitForm?.splitPoint === null
+                            ? ""
+                            : String(splitForm.splitPoint)
+                        }
+                        onChange={(e) =>
+                          updateSplitInput(fid, "splitPoint", e.target.value)
+                        }
+                      />
+                      <input
+                        className="fragment-actions__split-left"
+                        value={splitForm?.leftName ?? ""}
+                        onChange={(e) =>
+                          updateSplitInput(fid, "leftName", e.target.value)
+                        }
+                      />
+                      <input
+                        className="fragment-actions__split-right"
+                        value={splitForm?.rightName ?? ""}
+                        onChange={(e) =>
+                          updateSplitInput(fid, "rightName", e.target.value)
+                        }
+                      />
+                      <button
+                        type="button"
+                        className="fragment-actions__split-preview"
+                        disabled={isSubmitting}
+                        onClick={() => void handleSplitPreview(fragment)}
+                      >
+                        预览
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="fragment-actions__split-apply"
+                      disabled={isSubmitting}
+                      onClick={() => void handleSplitApply(fragment)}
+                    >
+                      确认拆分
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="fragment-actions__split-cancel"
+                    onClick={() => handleSplitCancel(fid)}
+                  >
+                    取消
+                  </button>
+                </div>
               ) : (
                 <>
                   {isCandidate && (
@@ -798,6 +1098,15 @@ export default function FragmentActions({
                       onClick={() => handleBoundaryOpen(fragment)}
                     >
                       边界
+                    </button>
+                  )}
+                  {canSplit && (
+                    <button
+                      type="button"
+                      className="fragment-actions__split"
+                      onClick={() => handleSplitOpen(fragment)}
+                    >
+                      拆分
                     </button>
                   )}
                 </>
@@ -1053,6 +1362,83 @@ export default function FragmentActions({
           opacity: 0.45;
         }
         .fragment-actions__boundary-cancel {
+          flex-shrink: 0;
+          padding: 0.2rem 0.7rem;
+          border: 1px solid #adb5bd;
+          border-radius: 4px;
+          background: #fff;
+          cursor: pointer;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__split {
+          flex-shrink: 0;
+          padding: 0.2rem 0.7rem;
+          border: 1px solid #d9480f;
+          border-radius: 4px;
+          background: #fff;
+          color: #d9480f;
+          cursor: pointer;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__split-form {
+          flex-basis: 100%;
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 0.5rem;
+          margin-top: 0.25rem;
+        }
+        .fragment-actions__split-point {
+          width: 5rem;
+          padding: 0.3rem 0.5rem;
+          border: 1px solid #adb5bd;
+          border-radius: 4px;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__split-left,
+        .fragment-actions__split-right {
+          width: 7rem;
+          padding: 0.3rem 0.5rem;
+          border: 1px solid #adb5bd;
+          border-radius: 4px;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__split-impact {
+          flex-basis: 100%;
+          margin: 0;
+          font-size: 0.85rem;
+          color: #495057;
+          line-height: 1.5;
+        }
+        .fragment-actions__split-preview {
+          flex-shrink: 0;
+          padding: 0.2rem 0.7rem;
+          border: 1px solid #1971c2;
+          border-radius: 4px;
+          background: #fff;
+          color: #1971c2;
+          cursor: pointer;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__split-preview:disabled {
+          cursor: not-allowed;
+          opacity: 0.45;
+        }
+        .fragment-actions__split-apply {
+          flex-shrink: 0;
+          padding: 0.2rem 0.7rem;
+          border: 1px solid #d9480f;
+          border-radius: 4px;
+          background: #d9480f;
+          color: #fff;
+          cursor: pointer;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__split-apply:disabled {
+          cursor: not-allowed;
+          opacity: 0.45;
+        }
+        .fragment-actions__split-cancel {
           flex-shrink: 0;
           padding: 0.2rem 0.7rem;
           border: 1px solid #adb5bd;

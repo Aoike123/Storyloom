@@ -787,7 +787,7 @@ test("FragmentActions: 显式保存接线（onClick + renameFragment）+ 每次�
   );
 });
 
-test("FragmentActions: commandId 生成（crypto.randomUUID 每次点击一次；确认/保存/预览影响/确认退役/预览/确认调整各一次）", () => {
+test("FragmentActions: commandId 生成（crypto.randomUUID 每次点击一次；确认/保存/预览影响/确认退役/预览/确认调整/预览拆分/确认拆分各一次）", () => {
   const helperSrc =
     actionsSrc.match(/function makeCommandId[^{]*\{([\s\S]*?)\n\}/)?.[1] ??
     "";
@@ -798,8 +798,8 @@ test("FragmentActions: commandId 生成（crypto.randomUUID 每次点击一次�
   const callCount = (actionsSrc.match(/= makeCommandId\(\)/g) || []).length;
   assert.equal(
     callCount,
-    6,
-    "确认/保存/预览影响/确认退役/预览/确认调整各每次点击生成一次 commandId",
+    8,
+    "确认/保存/预览影响/确认退役/预览/确认调整/预览拆分/确认拆分各每次点击生成一次 commandId",
   );
   const confirmSrc =
     actionsSrc.match(/async function handleConfirm[^{]*\{([\s\S]*?)\n  \}/)
@@ -2314,6 +2314,852 @@ test("FragmentActions: 无自动调整（useEffect 内不调 previewBoundaryFrag
   assert.ok(
     !effectBlock[0].includes("applyBoundaryFragment"),
     "useEffect 内不得调用 applyBoundaryFragment（无自动调整）",
+  );
+  assert.ok(!actionsSrc.includes("fetch("), "组件不直接 fetch，须走 client");
+  assert.ok(!actionsSrc.includes("示例"), "无硬编码样例");
+  assert.ok(!actionsSrc.includes("样例"), "无硬编码样例");
+  assert.ok(!actionsSrc.includes("Lorem"), "无硬编码样例");
+  assert.ok(!actionsSrc.includes("router.push"), "不得导航（router.push）");
+  assert.ok(
+    !actionsSrc.includes("window.location"),
+    "不得导航（window.location）",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// SOURCE-14 · 片段拆分 UI（契约 v2.9，附录 02 §2 F9）— 新增
+// ---------------------------------------------------------------------------
+
+const { previewSplitFragment, applySplitFragment } = apiContext.exports;
+
+// F9 拆分预览响应（恰 4 字段 {preview_id, kind:'fragment_split', baseline, impact}）
+const SPLIT_PREVIEW_OK = {
+  preview_id: "preview-3",
+  kind: "fragment_split",
+  baseline: {
+    fragment: { kind: "fragment", id: "frag-1", revision: 2 },
+    range_set: { id: "rs-1", cas: 5 },
+  },
+  impact: {
+    affected: [
+      { object_ref: { kind: "source_relation", id: "sr-1", revision: 2 } },
+    ],
+    needs_review: [
+      { object_ref: { kind: "studio_job", id: "job-1", revision: null } },
+    ],
+    preservable: [
+      { object_ref: { kind: "media_artifact", id: "ma-1", revision: null } },
+    ],
+  },
+};
+
+// F9 拆分 apply 成功响应（F9 冻结形状 {left, right, original}：
+// left/right 各 object_ref(revision=1)+range、original object_ref(revision=current)+state='retired'）
+const SPLIT_APPLY_OK = {
+  left: {
+    object_ref: { kind: "fragment", id: "frag-left", revision: 1 },
+    range: { start: 0, end: 2 },
+  },
+  right: {
+    object_ref: { kind: "fragment", id: "frag-right", revision: 1 },
+    range: { start: 2, end: 4 },
+  },
+  original: {
+    object_ref: { kind: "fragment", id: "frag-1", revision: 2 },
+    state: "retired",
+  },
+};
+
+// ---------------------------------------------------------------------------
+// previewSplitFragment（mock fetch，同 confirmFragment 的
+// makeClient/okJson/errJson 模式）
+// ---------------------------------------------------------------------------
+
+test("previewSplitFragment: 首发 URL/方法/body（target_fragment_id、split_point、command_id === 传入值；left_name/right_name 缺省时 body 不含该键）", async () => {
+  let captured;
+  const client = makeClient(async (url, opts) => {
+    captured = { url, opts };
+    return okJson(SPLIT_PREVIEW_OK, 200);
+  });
+  const res = await previewSplitFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    splitPoint: 2,
+    commandId: "cmd-1",
+  });
+  assert.equal(
+    captured.url,
+    "http://test.local/api/studio/projects/p1/fragments/f1/split",
+  );
+  assert.equal(captured.opts.method, "POST");
+  const body = JSON.parse(captured.opts.body);
+  assert.deepEqual(norm(body), {
+    target_fragment_id: "f1",
+    split_point: 2,
+    command_id: "cmd-1",
+  });
+  assert.equal(body.command_id, "cmd-1", "command_id === 传入值");
+  assert.equal(body.left_name, undefined, "left_name 缺省时 body 不含该键");
+  assert.equal(body.right_name, undefined, "right_name 缺省时 body 不含该键");
+  assert.equal(res.ok, true);
+});
+
+test("previewSplitFragment: pid/fid 特殊字符经 encodeURIComponent", async () => {
+  let captured;
+  const client = makeClient(async (url, opts) => {
+    captured = { url, opts };
+    return okJson(SPLIT_PREVIEW_OK, 200);
+  });
+  await previewSplitFragment(client, "p/1?a", "f 1", {
+    targetFragmentId: "f 1",
+    splitPoint: 2,
+    commandId: "cmd-1",
+  });
+  assert.equal(
+    captured.url,
+    "http://test.local/api/studio/projects/" +
+      encodeURIComponent("p/1?a") +
+      "/fragments/" +
+      encodeURIComponent("f 1") +
+      "/split",
+  );
+});
+
+test("previewSplitFragment: left_name/right_name 附加（非空时 body.left_name/right_name === 传入值）", async () => {
+  let captured;
+  const client = makeClient(async (url, opts) => {
+    captured = { url, opts };
+    return okJson(SPLIT_PREVIEW_OK, 200);
+  });
+  const res = await previewSplitFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    splitPoint: 2,
+    leftName: "片段甲（左）",
+    rightName: "片段甲（右）",
+    commandId: "cmd-1",
+  });
+  const body = JSON.parse(captured.opts.body);
+  assert.equal(body.left_name, "片段甲（左）");
+  assert.equal(body.right_name, "片段甲（右）");
+  assert.equal(res.ok, true);
+});
+
+test("previewSplitFragment: 200（恰 4 字段 {preview_id, kind:'fragment_split', baseline, impact}）→ ok、data.preview_id/data.baseline 可用", async () => {
+  const client = makeClient(async () => okJson(SPLIT_PREVIEW_OK, 200));
+  const res = await previewSplitFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    splitPoint: 2,
+    commandId: "cmd-1",
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.data.preview_id, "preview-3");
+  assert.equal(res.data.kind, "fragment_split");
+  assert.equal(res.data.baseline.fragment.id, "frag-1");
+  assert.equal(res.data.baseline.fragment.revision, 2);
+  assert.equal(res.data.baseline.range_set.cas, 5);
+  assert.deepEqual(
+    norm(Object.keys(res.data).sort()),
+    ["baseline", "impact", "kind", "preview_id"],
+    "恰 4 字段",
+  );
+});
+
+test("previewSplitFragment: 422 range_invalid（details.rule === \"empty\"）→ 不重试（请求恰 1 次）、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "range_invalid",
+        message:
+          "split_point 等于片段范围端点，无法形成非空半段：split_point=0，当前范围 [0, 4)（正文长度 100 个 UTF-16 单位）。",
+        details: { rule: "empty" },
+      },
+    });
+  });
+  const res = await previewSplitFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    splitPoint: 0,
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "range_invalid");
+  assert.equal(res.details.rule, "empty");
+  assert.ok(
+    res.message.includes("正文长度") &&
+      res.message.includes("当前范围") &&
+      res.message.includes("split_point"),
+    "message 须含 canonical 长度、当前 range 与 split_point",
+  );
+});
+
+test("previewSplitFragment: 422 range_invalid（details.rule === \"proxy_split\"）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "range_invalid",
+        message:
+          "左半段边界劈开了代理对：split_point=2，当前范围 [0, 4)（正文长度 100 个 UTF-16 单位）。",
+        details: { rule: "proxy_split" },
+      },
+    });
+  });
+  const res = await previewSplitFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    splitPoint: 2,
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "range_invalid");
+  assert.equal(res.details.rule, "proxy_split");
+});
+
+test("previewSplitFragment: 422 precondition_failed（details.reason === \"already_retired\"）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "precondition_failed",
+        message: "该片段已退役，不能再次拆分。",
+        details: {
+          reason: "already_retired",
+          blocked_by: { kind: "fragment", id: "frag-1", revision: 2 },
+        },
+      },
+    });
+  });
+  const res = await previewSplitFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    splitPoint: 2,
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "precondition_failed");
+  assert.equal(res.details.reason, "already_retired");
+});
+
+test("previewSplitFragment: 422 validation_failed（violations，left_name rule=max_length）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "validation_failed",
+        message: "请求校验失败。",
+        details: {
+          violations: [
+            {
+              field: "left_name",
+              rule: "max_length",
+              message: "left_name 长度不得超过 120 个字符（当前 121）。",
+            },
+          ],
+        },
+      },
+    });
+  });
+  const res = await previewSplitFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    splitPoint: 2,
+    leftName: "x".repeat(121),
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "validation_failed");
+  assert.equal(res.details.violations[0].field, "left_name");
+  assert.equal(res.details.violations[0].rule, "max_length");
+});
+
+test("previewSplitFragment: 422 validation_failed（violations，rule=reused）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "validation_failed",
+        message: "请求校验失败。",
+        details: {
+          violations: [
+            {
+              field: "command_id",
+              rule: "reused",
+              message: "command_id 已被其他命令使用，请生成新的。",
+            },
+          ],
+        },
+      },
+    });
+  });
+  const res = await previewSplitFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    splitPoint: 2,
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "validation_failed");
+  assert.equal(res.details.violations[0].field, "command_id");
+  assert.equal(res.details.violations[0].rule, "reused");
+});
+
+test("previewSplitFragment: 404 not_found → 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(404, {
+      error: {
+        code: "not_found",
+        message: "对象不存在或不属于当前项目。",
+        details: { kind: "fragment", id: "f1" },
+      },
+    });
+  });
+  const res = await previewSplitFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    splitPoint: 2,
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 404);
+  assert.equal(res.code, "not_found");
+  assert.deepEqual(norm(res.details), { kind: "fragment", id: "f1" });
+});
+
+test("previewSplitFragment: network → 不重试、code=network", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    throw new TypeError("Failed to fetch");
+  });
+  const res = await previewSplitFragment(client, "p1", "f1", {
+    targetFragmentId: "f1",
+    splitPoint: 2,
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.code, "network");
+});
+
+// ---------------------------------------------------------------------------
+// applySplitFragment（mock fetch，同 confirmFragment 的
+// makeClient/okJson/errJson 模式）
+// ---------------------------------------------------------------------------
+
+test("applySplitFragment: 首发 URL/方法/body（preview_id、command_id === 传入值、expected_revision、expected_range_set_revision）", async () => {
+  let captured;
+  const client = makeClient(async (url, opts) => {
+    captured = { url, opts };
+    return okJson(SPLIT_APPLY_OK, 200);
+  });
+  const res = await applySplitFragment(client, "p1", "f1", {
+    previewId: "preview-3",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(
+    captured.url,
+    "http://test.local/api/studio/projects/p1/fragments/f1/split/apply",
+  );
+  assert.equal(captured.opts.method, "POST");
+  const body = JSON.parse(captured.opts.body);
+  assert.deepEqual(norm(body), {
+    preview_id: "preview-3",
+    expected_revision: 2,
+    expected_range_set_revision: 5,
+    command_id: "cmd-1",
+  });
+  assert.equal(body.command_id, "cmd-1", "command_id === 传入值");
+  assert.equal(res.ok, true);
+});
+
+test("applySplitFragment: 200（F9 冻结形状 {left, right, original}：left/right 各 object_ref(revision=1)+range、original object_ref(revision=current)+state='retired'）→ ok、data.left/data.right/data.original 可用", async () => {
+  const client = makeClient(async () => okJson(SPLIT_APPLY_OK, 200));
+  const res = await applySplitFragment(client, "p1", "f1", {
+    previewId: "preview-3",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.data.left.object_ref.revision, 1, "左新片段 revision=1");
+  assert.equal(res.data.right.object_ref.revision, 1, "右新片段 revision=1");
+  assert.equal(res.data.left.range.start, 0);
+  assert.equal(res.data.left.range.end, 2);
+  assert.equal(res.data.right.range.start, 2);
+  assert.equal(res.data.right.range.end, 4);
+  assert.equal(res.data.original.object_ref.id, "frag-1", "原片段 ID");
+  assert.equal(res.data.original.object_ref.revision, 2, "原片段 revision=current");
+  assert.equal(res.data.original.state, "retired", "原片段 state='retired'");
+});
+
+test("applySplitFragment: 409 preview_stale（details.preview_id + details.conflicts）→ 不重试（请求恰 1 次）、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(409, {
+      error: {
+        code: "preview_stale",
+        message: "预览已过期或状态已变化，请重新预览。",
+        details: {
+          preview_id: "preview-3",
+          conflicts: [
+            {
+              object: { kind: "preview", id: "preview-3" },
+              expected: "pending",
+              actual: "expired",
+            },
+          ],
+        },
+      },
+    });
+  });
+  const res = await applySplitFragment(client, "p1", "f1", {
+    previewId: "preview-3",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 409);
+  assert.equal(res.code, "preview_stale");
+  assert.equal(res.details.preview_id, "preview-3");
+  assert.equal(res.details.conflicts.length, 1);
+});
+
+test("applySplitFragment: 409 revision_conflict（details.object.kind === \"range_set\"）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(409, {
+      error: {
+        code: "revision_conflict",
+        message: "范围集合版本已变化，请刷新片段列表后重试。",
+        details: {
+          object: { kind: "range_set", id: "rs-1" },
+          expected: 5,
+          actual: 6,
+        },
+      },
+    });
+  });
+  const res = await applySplitFragment(client, "p1", "f1", {
+    previewId: "preview-3",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 409);
+  assert.equal(res.code, "revision_conflict");
+  assert.equal(res.details.object.kind, "range_set");
+});
+
+test("applySplitFragment: 409 revision_conflict（details.object.kind === \"fragment\"）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(409, {
+      error: {
+        code: "revision_conflict",
+        message: "片段版本已变化，请刷新片段详情后重试。",
+        details: {
+          object: { kind: "fragment", id: "frag-1" },
+          expected: 2,
+          actual: 3,
+        },
+      },
+    });
+  });
+  const res = await applySplitFragment(client, "p1", "f1", {
+    previewId: "preview-3",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 409);
+  assert.equal(res.code, "revision_conflict");
+  assert.equal(res.details.object.kind, "fragment");
+});
+
+test("applySplitFragment: 422 validation_failed（violations，rule=reused）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "validation_failed",
+        message: "请求校验失败。",
+        details: {
+          violations: [
+            {
+              field: "command_id",
+              rule: "reused",
+              message: "command_id 已被其他命令使用，请生成新的。",
+            },
+          ],
+        },
+      },
+    });
+  });
+  const res = await applySplitFragment(client, "p1", "f1", {
+    previewId: "preview-3",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "validation_failed");
+  assert.equal(res.details.violations[0].field, "command_id");
+  assert.equal(res.details.violations[0].rule, "reused");
+});
+
+test("applySplitFragment: 404 not_found（kind=preview）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(404, {
+      error: {
+        code: "not_found",
+        message: "对象不存在或不属于当前项目。",
+        details: { kind: "preview", id: "preview-3" },
+      },
+    });
+  });
+  const res = await applySplitFragment(client, "p1", "f1", {
+    previewId: "preview-3",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 404);
+  assert.equal(res.code, "not_found");
+  assert.deepEqual(norm(res.details), { kind: "preview", id: "preview-3" });
+});
+
+test("applySplitFragment: network → 不重试、code=network", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    throw new TypeError("Failed to fetch");
+  });
+  const res = await applySplitFragment(client, "p1", "f1", {
+    previewId: "preview-3",
+    commandId: "cmd-1",
+    expectedRevision: 2,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.code, "network");
+});
+
+// ---------------------------------------------------------------------------
+// FragmentActions.tsx 拆分 UI 字符串断言（selection.test.cjs 模式）
+// ---------------------------------------------------------------------------
+
+test("FragmentActions: 拆分按钮仅 candidate/confirmed（retired 不显示拆分）", () => {
+  assert.ok(
+    actionsSrc.includes(
+      'fragment.state === "candidate" || fragment.state === "confirmed"',
+    ),
+    "拆分判定须为 state === \"candidate\" 或 state === \"confirmed\"",
+  );
+  assert.ok(
+    actionsSrc.includes('fragment-actions__split"'),
+    "「拆分」按钮缺失",
+  );
+  assert.ok(actionsSrc.includes("拆分"), "「拆分」按钮文案缺失");
+  assert.ok(
+    !actionsSrc.includes('state === "retired"'),
+    "retired 行不得显示拆分（也不显示确认）",
+  );
+});
+
+test("FragmentActions: 两步显式（阶段 1「预览」→ 阶段 2「确认拆分」）+ 确认拆分仅 preview 成功后可点击", () => {
+  assert.ok(
+    actionsSrc.includes("fragment-actions__split-form"),
+    "行内拆分表单容器缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("fragment-actions__split-preview"),
+    "「预览」按钮缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("fragment-actions__split-apply"),
+    "「确认拆分」按钮缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("fragment-actions__split-cancel"),
+    "「取消」按钮缺失",
+  );
+  assert.ok(actionsSrc.includes("确认拆分"), "「确认拆分」按钮文案缺失");
+  assert.ok(
+    actionsSrc.includes('stage === "confirm"'),
+    "阶段 2（确认拆分）判定缺失",
+  );
+  assert.ok(
+    actionsSrc.includes('stage === "preview"'),
+    "阶段 1（预览）判定缺失",
+  );
+  const applySrc =
+    actionsSrc.match(/async function handleSplitApply[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(
+    applySrc.includes("preview === undefined"),
+    "无 preview（未预览成功）时确认拆分不得执行（仅 preview 成功后可点击）",
+  );
+});
+
+test("FragmentActions: 拆分点数字输入框（初始值 = Math.floor((start+end)/2) 中点）+ left_name/right_name 可选输入框", () => {
+  assert.ok(
+    actionsSrc.includes("fragment-actions__split-point"),
+    "拆分点输入框缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("fragment-actions__split-left"),
+    "左名输入框缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("fragment-actions__split-right"),
+    "右名输入框缺失",
+  );
+  const openSrc =
+    actionsSrc.match(/function handleSplitOpen[^{]*\{([\s\S]*?)\n  \}/)?.[1] ??
+    "";
+  assert.ok(openSrc.length > 0, "handleSplitOpen 缺失");
+  assert.ok(
+    openSrc.includes("Math.floor((fragment.range.start + fragment.range.end) / 2)"),
+    "初始拆分点须取 Math.floor((start+end)/2)（当前范围中点）",
+  );
+});
+
+test("FragmentActions: 本地校验（Number.isInteger + 严格介于端点之间，先于 previewSplitFragment 调用）", () => {
+  const previewSrc =
+    actionsSrc.match(/async function handleSplitPreview[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(previewSrc.length > 0, "handleSplitPreview 缺失");
+  assert.ok(
+    previewSrc.includes("Number.isInteger"),
+    "Number.isInteger 判定缺失",
+  );
+  const intCheck = previewSrc.indexOf("Number.isInteger");
+  const call = previewSrc.indexOf("previewSplitFragment");
+  assert.ok(
+    intCheck !== -1 && call !== -1 && intCheck < call,
+    "整数判定须先于 previewSplitFragment（本地拦截，不发请求）",
+  );
+  assert.ok(
+    previewSrc.includes("fragment.range.start < splitPoint && splitPoint < fragment.range.end"),
+    "严格介于端点之间判定缺失",
+  );
+  const rangeCheck = previewSrc.indexOf("fragment.range.start < splitPoint");
+  assert.ok(
+    rangeCheck !== -1 && call !== -1 && rangeCheck < call,
+    "端点判定须先于 previewSplitFragment（本地拦截，不发请求）",
+  );
+  assert.ok(previewSrc.includes("return;"), "本地拦截须提前返回（保留表单）");
+  assert.ok(
+    previewSrc.includes("拆分点必须为整数。"),
+    "非整数本地提示文案缺失",
+  );
+  assert.ok(
+    previewSrc.includes("拆分点必须严格介于当前范围端点之间。"),
+    "端点本地提示文案缺失",
+  );
+});
+
+test("FragmentActions: left_name/right_name 空串 → undefined（不附加进 body）", () => {
+  const previewSrc =
+    actionsSrc.match(/async function handleSplitPreview[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(
+    previewSrc.includes('leftName.trim() === "" ? undefined : leftName.trim()'),
+    "left_name 空串须转 undefined（不附加进 body）",
+  );
+  assert.ok(
+    previewSrc.includes('rightName.trim() === "" ? undefined : rightName.trim()'),
+    "right_name 空串须转 undefined（不附加进 body）",
+  );
+});
+
+test("FragmentActions: 显式点击接线（onClick + previewSplitFragment/applySplitFragment）+ makeCommandId() 每次点击一次", () => {
+  const previewSrc =
+    actionsSrc.match(/async function handleSplitPreview[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(previewSrc.length > 0, "handleSplitPreview 缺失");
+  assert.ok(
+    previewSrc.includes("previewSplitFragment"),
+    "预览须调用 previewSplitFragment",
+  );
+  assert.ok(
+    previewSrc.includes("makeCommandId()"),
+    "预览须每次点击生成一次 commandId",
+  );
+  const applySrc =
+    actionsSrc.match(/async function handleSplitApply[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(applySrc.length > 0, "handleSplitApply 缺失");
+  assert.ok(
+    applySrc.includes("applySplitFragment"),
+    "确认拆分须调用 applySplitFragment",
+  );
+  assert.ok(
+    applySrc.includes("makeCommandId()"),
+    "确认拆分须每次点击生成一次 commandId",
+  );
+  assert.ok(
+    actionsSrc.includes("onClick={() => void handleSplitPreview(fragment)}"),
+    "「预览」按钮 onClick 接线缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("onClick={() => void handleSplitApply(fragment)}"),
+    "「确认拆分」按钮 onClick 接线缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("onClick={() => handleSplitOpen(fragment)}"),
+    "「拆分」按钮 onClick 接线缺失",
+  );
+});
+
+test("FragmentActions: 拆分 expected_revision 取 object_ref.revision；expected_range_set_revision 取 preview.baseline.range_set.cas", () => {
+  const applySrc =
+    actionsSrc.match(/async function handleSplitApply[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(
+    applySrc.includes("object_ref.revision"),
+    "expected_revision 须取 object_ref.revision（真实服务端值）",
+  );
+  assert.ok(
+    applySrc.includes("baseline.range_set.cas"),
+    "expected_range_set_revision 须取 preview.baseline.range_set.cas（冻结基准）",
+  );
+});
+
+test("FragmentActions: 拆分 impact 摘要展示（affected/needs_review/preservable 计数）", () => {
+  assert.ok(
+    actionsSrc.includes("fragment-actions__split-impact"),
+    "拆分 impact 摘要缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("impact.affected.length"),
+    "impact 摘要 affected 计数缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("impact.needs_review.length"),
+    "impact 摘要 needs_review 计数缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("impact.preservable.length"),
+    "impact 摘要 preservable 计数缺失",
+  );
+});
+
+test("FragmentActions: 拆分取消零 API 调用（onCancel 路径无 previewSplitFragment/applySplitFragment）", () => {
+  const cancelSrc =
+    actionsSrc.match(/function handleSplitCancel[^{]*\{([\s\S]*?)\n  \}/)?.[1] ??
+    "";
+  assert.ok(cancelSrc.length > 0, "handleSplitCancel 缺失");
+  assert.ok(
+    cancelSrc.includes("setSplitting"),
+    "取消须以 setSplitting 回到按钮态",
+  );
+  assert.ok(
+    !cancelSrc.includes("previewSplitFragment"),
+    "取消不得调用 previewSplitFragment（零 API 调用）",
+  );
+  assert.ok(
+    !cancelSrc.includes("applySplitFragment"),
+    "取消不得调用 applySplitFragment（零 API 调用）",
+  );
+  assert.ok(
+    !cancelSrc.includes("clientObj"),
+    "取消不得使用 client",
+  );
+  assert.ok(
+    actionsSrc.includes("onClick={() => handleSplitCancel(fid)}"),
+    "取消按钮 onClick 接线缺失",
+  );
+});
+
+test("FragmentActions: 拆分失败保留表单（setErrors 保留、不关表单、不退出）", () => {
+  const previewSrc =
+    actionsSrc.match(/async function handleSplitPreview[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(
+    previewSrc.includes("setErrors"),
+    "预览失败须 setErrors 保留行内错误",
+  );
+  assert.ok(
+    !previewSrc.includes("open: false"),
+    "预览失败不得关闭拆分表单（保留表单）",
+  );
+  const applySrc =
+    actionsSrc.match(/async function handleSplitApply[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(
+    applySrc.includes("setErrors"),
+    "确认拆分失败须 setErrors 保留行内错误",
+  );
+  assert.ok(
+    !applySrc.includes("open: false"),
+    "确认拆分失败不得关闭拆分表单（保留表单与 impact 摘要）",
+  );
+  assert.ok(applySrc.includes("setSubmitting"), "提交态管理缺失");
+});
+
+test("FragmentActions: 拆分成功 → 清除该行错误 + 内部重取（refreshTick）；新快照清除 splitting（表单收起）", () => {
+  const applySrc =
+    actionsSrc.match(/async function handleSplitApply[^{]*\{([\s\S]*?)\n  \}/)
+      ?.[1] ?? "";
+  assert.ok(
+    applySrc.includes("setRefreshTick"),
+    "拆分成功须内部重取（refreshTick，原片段退役、左/右新片段出现）",
+  );
+  assert.ok(
+    applySrc.includes("delete next[fid]"),
+    "拆分成功须清除该行错误",
+  );
+  const effectBlock = actionsSrc.match(
+    /useEffect\(\(\) => \{[\s\S]*?\}, \[[^\]]+\]\)/,
+  );
+  assert.ok(effectBlock, "useEffect 缺失");
+  assert.ok(effectBlock[0].includes("setSplitting({})"), "新快照须清除拆分表单（防陈旧表单/错误/预览）");
+});
+
+test("FragmentActions: 无自动拆分（useEffect 内不调 previewSplitFragment/applySplitFragment）+ 不直接 fetch + 无硬编码样例 + 不导航", () => {
+  const effectBlock = actionsSrc.match(
+    /useEffect\(\(\) => \{[\s\S]*?\}, \[[^\]]+\]\)/,
+  );
+  assert.ok(effectBlock, "useEffect 缺失");
+  assert.ok(
+    !effectBlock[0].includes("previewSplitFragment"),
+    "useEffect 内不得调用 previewSplitFragment（无自动拆分）",
+  );
+  assert.ok(
+    !effectBlock[0].includes("applySplitFragment"),
+    "useEffect 内不得调用 applySplitFragment（无自动拆分）",
   );
   assert.ok(!actionsSrc.includes("fetch("), "组件不直接 fetch，须走 client");
   assert.ok(!actionsSrc.includes("示例"), "无硬编码样例");

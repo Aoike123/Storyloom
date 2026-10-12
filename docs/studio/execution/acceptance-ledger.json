@@ -2662,12 +2662,52 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "明确拆分点与继承，原子提交。",
-      "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "web/features/studio/source/api.ts（纯逻辑追加：SplitPreviewParams/SplitPreviewDto/previewSplitFragment + SplitApplyParams/SplitApplyDto/applySplitFragment）、web/features/studio/source/components/FragmentActions.tsx（扩展拆分两步表单）、web/tests/studio/fragment-actions.test.cjs（扩展，既有 90 项保持）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-12",
+          "result": "interrupted（执行器在产出任何文件前耗尽上下文；工作树干净无残留）"
+        },
+        {
+          "n": 2,
+          "by": "executor",
+          "date": "2026-10-12",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-12",
+        "contract_version": "2.9",
+        "tested_baseline": "e671525 + 3 白名单文件（本卡提交）",
+        "scope": "f9_split_fragment_ui",
+        "checks": [
+          "主模型独立复验（不复用执行器报告）：node --test web/tests/studio/fragment-actions.test.cjs → 121/121（既有 90 + 新增 31）；node --test web/tests/studio/*.test.cjs → 295/295 无回归；cd web && npx tsc --noEmit → exit 0；git status 仅白名单 3 文件。",
+          "F9 preview 协议（diff 逐行核对 + mock fetch 测试）：POST /api/studio/projects/{pid}/fragments/{fid}/split（pid/fid 均 encodeURIComponent），body = {target_fragment_id, split_point, command_id}（left_name/right_name 仅在非空时附加，空串 → undefined 不附加，测试断言 body 不含该键）；200 恰 4 字段 {preview_id, kind:'fragment_split', baseline:{fragment:{kind,id,revision}, range_set:{id,cas}}, impact:{affected[], needs_review[], preservable[]}}；preview 阶段即校验 split_point 五判定（== 端点→empty（某半空）、越出当前 range→out_of_bounds、对两半 validate_range surrogate_split→proxy_split/blank/non_integer；message 含 canonical 长度、当前 range 与 split_point）与命名派生（缺省派生「<原 name>（左/右）」、派生或给定 strip 后非空且 ≤120）；错误透传不重试（422 range_invalid、422 precondition_failed reason=source_revision_inactive/already_retired、422 validation_failed rule=mismatch/reused/required/max_length、404 not_found、network 测试断言请求恰 1 次 + details 逐字段透传）。",
+          "F9 apply 协议（diff 逐行核对 + mock fetch 测试）：POST /api/studio/projects/{pid}/fragments/{fid}/split/apply，body = {preview_id, command_id, expected_revision, expected_range_set_revision}；expected_revision 取该行 fragment.object_ref.revision（真实服务端值）；expected_range_set_revision 取 preview 返回的 baseline.range_set.cas（冻结基准，preview 时快照；cas 为 null 时 ?? 0）；200 F9 冻结形状 {left:{object_ref(kind,id,revision=1), range{start,end}}, right:{object_ref(kind,id,revision=1), range{start,end}}, original:{object_ref(kind,id,revision=current), state:'retired'}}（原片段退役不新建其 revision、左/右新 ID 各建 revision=1 reason='split' predecessor=[原 fid]、range_set cas+1）；错误透传不重试（409 preview_stale{preview_id, conflicts[]}、409 revision_conflict object.kind=fragment/range_set、422 validation_failed rule=reused、404 not_found kind=preview、network 测试断言请求恰 1 次 + details 逐字段透传）。",
+          "两步显式操作（卡面\"明确拆分点与继承，原子提交\"）：点击「拆分」→ 阶段 1 拆分点数字输入框（初始值 = Math.floor((range.start+range.end)/2) 中点）+ 左右名可选输入框（初始空）+「预览」+「取消」；本地校验（Number.isInteger →「拆分点必须为整数。」；严格介于端点之间 →「拆分点必须严格介于当前范围端点之间。」，均不发请求、保留表单）；预览成功 → 阶段 2 展示 impact 摘要（「影响：N 项 / 待复核：N 项 / 可保留：N 项」）+「确认拆分」+「取消」；确认拆分仅 preview 成功后可点击（handleSplitApply 内 preview === undefined 直接 return，字符串断言）；无自动拆分（useEffect 内不调 previewSplitFragment/applySplitFragment，字符串断言）。",
+          "继承与原子提交（卡面验收）：apply 成功 → 原片段退役（state='retired'）、左/右新片段各得 revision=1（reason='split'、predecessor=[原 fid]）、range_set cas+1（后端冻结）；前端内部重取（列表中原片段退役、左/右新片段出现）；单事务无半次保存（后端冻结，前端不干预）。",
+          "刷新结果一致（卡面验收）：apply 成功 → 清除该行错误 + setRefreshTick 内部重取；新取数成功 = 新快照，行内错误与拆分表单（splitting）一并清除（防陈旧预览）。",
+          "过期/断网可恢复（卡面验收）：失败 → 该行行内错误（保留表单与 impact 摘要，不退出、不丢错误）；行内错误区统一（确认/改名/退役/边界/拆分共用 rowErrorText）：range_invalid → error.message（含 canonical 长度、当前 range 与 split_point）；preview_stale →「预览已过期，请重新预览。」；revision_conflict → 确认/改名「片段版本已变化，请刷新后重试。」、退役/边界/拆分「版本已变化，请刷新后重试。」（RowErrorSource 区分）；precondition_failed →「片段状态已变化，请刷新后重试。」；validation_failed → details.violations 每条 message；其他显示 error.message。",
+          "取消零 API 调用（handleSplitCancel 仅 setSplitting，无 previewSplitFragment/applySplitFragment，字符串断言）；每次显式点击 makeCommandId() 恰一次（既有测试 commandId 断言更新为 8 处：确认/保存/预览影响/确认退役/预览边界/确认调整/预览拆分/确认拆分各一次，crypto.randomUUID 仍恰 1 处）；提交中对应按钮 disabled（防双击）。",
+          "SOURCE-14-a/b/c/d 已验收行为不变（diff 核对）：确认按钮仅 candidate、显式点击、重取、行内错误；改名按钮仅 candidate/confirmed、行内表单、失败保留输入；退役/边界按钮仅 candidate/confirmed、两步表单、impact 摘要；既有 90 项断言全部保持通过。",
+          "组件不直接 fetch（走 client）、不导航（无 router.push/window.location）、无硬编码样例文本、styled-jsx 作用域独立（.fragment-actions__split*）。"
+        ],
+        "evidence": [
+          "web/features/studio/source/api.ts（第 658 行起追加：SplitPreviewParams/SplitPreviewDto/previewSplitFragment + SplitApplyParams/SplitApplyDto/applySplitFragment）",
+          "web/features/studio/source/components/FragmentActions.tsx（扩展：拆分按钮 + 两步表单 + 本地校验 + impact 摘要 + 统一行内错误区 split 分支）",
+          "web/tests/studio/fragment-actions.test.cjs（121 项：既有 90 + 新增 31）"
+        ],
+        "limitations": [
+          "浏览器实测（真实点击拆分交互）待 GATE-02 关键浏览器连续操作门验收；本轮以纯逻辑 vm 测试 + 组件字符串断言为准（与 SOURCE-12/13/14-a/b/c/d 同一验收深度）。",
+          "FragmentActions 尚未接入工作台壳（与 FragmentList/SourceReader 同为独立组件），接入归 UI 批次。"
+        ]
+      }
     },
     {
       "id": "SOURCE-14-f",

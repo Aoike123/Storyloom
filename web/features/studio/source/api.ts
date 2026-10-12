@@ -658,3 +658,140 @@ export function applyBoundaryFragment(
     { commandId: params.commandId },
   );
 }
+
+// ---------------------------------------------------------------------------
+// SOURCE-14 · 片段拆分（契约 v2.9，附录 02 §2 F9）
+// ---------------------------------------------------------------------------
+
+/** F9 拆分预览参数。 */
+export interface SplitPreviewParams {
+  targetFragmentId: string;
+  splitPoint: number;
+  leftName?: string;
+  rightName?: string;
+  commandId: string;
+}
+
+/**
+ * F9 拆分预览响应（附录 00 §5.1：恰 4 字段，preview 是一次幂等写，
+ * 记录 state=pending 不外露；命名派生与 split_point 五判定均在
+ * preview 阶段即校验——F9 行冻结）。
+ */
+export interface SplitPreviewDto {
+  preview_id: string;
+  kind: string;
+  baseline: {
+    fragment: { kind: string; id: string; revision: number };
+    range_set: { id: string | null; cas: number | null };
+  };
+  impact: {
+    affected: Array<{
+      object_ref: { kind: string; id: string; revision: number | null };
+    }>;
+    needs_review: Array<{
+      object_ref: { kind: string; id: string; revision: number | null };
+    }>;
+    preservable: Array<{
+      object_ref: { kind: string; id: string; revision: number | null };
+    }>;
+  };
+}
+
+/**
+ * F9 预览片段拆分（附录 02 §2 F9；preview 是一次幂等写，记录
+ * state=pending 不外露；幂等重放命中 → 200 原 result_payload，零写零 commit）。
+ *
+ * - POST /api/studio/projects/{pid}/fragments/{fid}/split，body =
+ *   { target_fragment_id, split_point, command_id }（command_id 由
+ *   client.post 合并进 body）；left_name/right_name 仅在非空时附加；
+ * - 成功（200，含幂等重放）返回 res（恰 4 字段 {preview_id, kind,
+ *   baseline, impact}）；
+ * - 一切错误原样透传（不重试、不改写）：422 range_invalid
+ *   （details.rule：empty | out_of_bounds | proxy_split | blank |
+ *   non_integer，message 含 canonical 长度、当前 range 与 split_point）、
+ *   422 precondition_failed（details.reason：source_revision_inactive |
+ *   already_retired）、422 validation_failed（details.violations：
+ *   mismatch | reused | left_name/right_name required/max_length）、
+ *   404 not_found、network。
+ */
+export function previewSplitFragment(
+  client: StudioClient,
+  pid: string,
+  fid: string,
+  params: SplitPreviewParams,
+): Promise<StudioApiResponse<SplitPreviewDto>> {
+  const path = `/api/studio/projects/${encodeURIComponent(pid)}/fragments/${encodeURIComponent(fid)}/split`;
+  const body: Record<string, unknown> = {
+    target_fragment_id: params.targetFragmentId,
+    split_point: params.splitPoint,
+  };
+  if (params.leftName !== undefined) body.left_name = params.leftName;
+  if (params.rightName !== undefined) body.right_name = params.rightName;
+  return client.post<SplitPreviewDto>(path, body, {
+    commandId: params.commandId,
+  });
+}
+
+/** F9 拆分应用参数。 */
+export interface SplitApplyParams {
+  previewId: string;
+  commandId: string;
+  expectedRevision: number;
+  expectedRangeSetRevision: number;
+}
+
+/**
+ * F9 拆分应用响应（F9 冻结形状 {left, right, original}：left/right 各
+ * object_ref(revision=1)+range，original object_ref(revision=current)
+ * +state='retired'）。
+ */
+export interface SplitApplyDto {
+  left: {
+    object_ref: { kind: string; id: string; revision: number };
+    range: { start: number; end: number };
+  };
+  right: {
+    object_ref: { kind: string; id: string; revision: number };
+    range: { start: number; end: number };
+  };
+  original: {
+    object_ref: { kind: string; id: string; revision: number };
+    state: string;
+  };
+}
+
+/**
+ * F9 应用片段拆分（附录 02 §2 F9；原片段退役不新建其 revision，左/右
+ * 新片段各得一行 revision=1（reason='split'、predecessor=[原 fid]）、
+ * state='candidate'；range_set 是 CAS 唯一写点之一，cas+1；幂等重放
+ * 命中 → 200 原 result_payload，零写零 commit）。
+ *
+ * - POST /api/studio/projects/{pid}/fragments/{fid}/split/apply，body =
+ *   { preview_id, command_id, expected_revision, expected_range_set_revision }
+ *   （command_id 由 client.post 合并进 body）；
+ * - 成功（200，含幂等重放）返回 res（SplitApplyDto：left/right 各
+ *   object_ref(revision=1)+range、original object_ref(revision=current)
+ *   +state='retired'）；
+ * - 一切错误原样透传（不重试、不改写）：409 preview_stale
+ *   （details.preview_id + details.conflicts）、409 revision_conflict
+ *   （details.object.kind：fragment | range_set）、422 validation_failed
+ *   （violations：mismatch | reused）、422 precondition_failed、
+ *   404 not_found、network。
+ */
+export function applySplitFragment(
+  client: StudioClient,
+  pid: string,
+  fid: string,
+  params: SplitApplyParams,
+): Promise<StudioApiResponse<SplitApplyDto>> {
+  const path = `/api/studio/projects/${encodeURIComponent(pid)}/fragments/${encodeURIComponent(fid)}/split/apply`;
+  return client.post<SplitApplyDto>(
+    path,
+    {
+      preview_id: params.previewId,
+      expected_revision: params.expectedRevision,
+      expected_range_set_revision: params.expectedRangeSetRevision,
+    },
+    { commandId: params.commandId },
+  );
+}
