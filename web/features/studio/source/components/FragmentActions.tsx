@@ -115,6 +115,34 @@
 //   leftName, rightName, preview? }>），与 14-a/b/c/d 的
 //   errors/submitting/renaming/retiring/boundary 并列；新取数成功（新快照）
 //   时一并清除（防陈旧表单/错误/预览）。
+// - 合并动作（F10，本卡）：项目级（非行级）两步显式操作（先选择两个片段
+//   预览、再确认合并），片段列表上方的项目级动作区：点击「合并」→ 展开
+//   项目级合并表单（阶段 1：两个片段选择器（下拉框，选项 = 当前列表中
+//   state === "candidate" 或 state === "confirmed" 的片段，选项文本 =
+//   片段名 + 状态标签，分别选 a 和 b）+ 可选文本输入框（合并名
+//   merged_name，初始值空）+「预览」+「取消」）；「取消」→ 回到按钮态
+//   （零 API 调用）；「预览」：本地校验（两个选择器必须各选一个片段且
+//   a ≠ b，未选/相同 → 本地提示「请选择两个不同的片段。」，不发请求、
+//   保留表单），否则每次点击生成一次 commandId →
+//   previewMergeFragments(client, pid, { fragmentIds: [aId, bId],
+//   mergedName: mergedName.trim() === "" ? undefined : mergedName.trim(),
+//   commandId })（merged_name 空串 → undefined，不附加进 body）；
+//   成功（res.ok）→ 进入阶段 2（展示 impact 摘要 +「确认合并」+「取消」）；
+//   失败（!res.ok）→ 行内错误（保留表单，不退出）。「确认合并」：每次
+//   点击生成一次 commandId → applyMergeFragments(client, pid,
+//   { previewId: res.data.preview_id, commandId,
+//   expectedRevisionA: fragmentA.object_ref.revision,
+//   expectedRevisionB: fragmentB.object_ref.revision,
+//   expectedRangeSetRevision: res.data.baseline.range_set.cas ?? 0 })；
+//   expected_revision_a/b 取 a/b 片段的 object_ref.revision（真实服务端
+//   值）；expected_range_set_revision 取 preview 返回的
+//   baseline.range_set.cas（冻结基准，preview 时快照）；成功（res.ok）→
+//   清除行内错误 + 内部重取（列表中 a/b 退役、合并新片段出现）；失败
+//   （!res.ok）→ 行内错误（保留表单与 impact 摘要，不退出）。
+// - 项目级合并表单用 state（merging: { open, stage: "preview" | "confirm",
+//   fragmentAId, fragmentBId, mergedName, preview? }），与 14-a/b/c/d/e 的
+//   行级 state 并列；新取数成功（新快照）时一并清除（防陈旧表单/错误/
+//   预览）。
 // - 组件不直接 fetch（走 client）；不 import 旧组件；无硬编码占位文本；
 //   不导航（不跳转页面）。
 
@@ -123,11 +151,13 @@ import { useEffect, useState } from "react";
 import defaultClient from "@/shared/api/client";
 import {
   applyBoundaryFragment,
+  applyMergeFragments,
   applyRetireFragment,
   applySplitFragment,
   confirmFragment,
   fetchAllFragments,
   previewBoundaryFragment,
+  previewMergeFragments,
   previewRetireFragment,
   previewSplitFragment,
   renameFragment,
@@ -135,6 +165,8 @@ import {
 import type {
   BoundaryPreviewDto,
   FragmentDto,
+  MergeApplyDto,
+  MergePreviewDto,
   RetirePreviewDto,
   SplitApplyDto,
   SplitPreviewDto,
@@ -154,16 +186,24 @@ type ListState =
   | { kind: "error"; message: string }
   | { kind: "ready"; items: FragmentDto[] };
 
-/** 行内错误（确认/改名/退役/边界/拆分共用同一错误区；仅用错误字段，data 形状随动作）。 */
+/** 行内错误（确认/改名/退役/边界/拆分/合并共用同一错误区；仅用错误字段，data 形状随动作）。 */
 type RowError =
   | (StudioApiResponse<FragmentDto> & { ok: false })
   | (StudioApiResponse<RetirePreviewDto> & { ok: false })
   | (StudioApiResponse<BoundaryPreviewDto> & { ok: false })
   | (StudioApiResponse<SplitPreviewDto> & { ok: false })
-  | (StudioApiResponse<SplitApplyDto> & { ok: false });
+  | (StudioApiResponse<SplitApplyDto> & { ok: false })
+  | (StudioApiResponse<MergePreviewDto> & { ok: false })
+  | (StudioApiResponse<MergeApplyDto> & { ok: false });
 
 /** 产生该行错误的动作（决定 revision_conflict 文案）。 */
-type RowErrorSource = "confirm" | "rename" | "retire" | "boundary" | "split";
+type RowErrorSource =
+  | "confirm"
+  | "rename"
+  | "retire"
+  | "boundary"
+  | "split"
+  | "merge";
 
 /** 每行行内错误（错误体 + 产生动作）。 */
 type RowErrorEntry = { error: RowError; source: RowErrorSource };
@@ -197,6 +237,16 @@ type SplittingForm = {
   preview?: SplitPreviewDto;
 };
 
+/** 项目级合并表单状态（展开态 + 阶段 + 两个片段选择 + 合并名输入值 + 预览结果）。 */
+type MergingForm = {
+  open: boolean;
+  stage: "preview" | "confirm";
+  fragmentAId: string;
+  fragmentBId: string;
+  mergedName: string;
+  preview?: MergePreviewDto;
+};
+
 /** 每次点击生成一次 commandId（显式点击，无自动提交）。 */
 function makeCommandId(): string {
   return crypto.randomUUID();
@@ -217,6 +267,15 @@ export default function FragmentActions({
   const [retiring, setRetiring] = useState<Record<string, RetiringForm>>({});
   const [boundary, setBoundary] = useState<Record<string, BoundaryForm>>({});
   const [splitting, setSplitting] = useState<Record<string, SplittingForm>>({});
+  const [merging, setMerging] = useState<MergingForm>({
+    open: false,
+    stage: "preview",
+    fragmentAId: "",
+    fragmentBId: "",
+    mergedName: "",
+  });
+  const [mergeError, setMergeError] = useState<RowErrorEntry | null>(null);
+  const [mergeSubmitting, setMergeSubmitting] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -229,13 +288,22 @@ export default function FragmentActions({
         return;
       }
       setState({ kind: "ready", items: res.data });
-      // 新取数成功 = 新快照：行内确认/改名/退役/边界/拆分错误、
-      // 改名/退役/边界/拆分表单属于旧快照，一并清除（防陈旧表单/错误/预览）
+      // 新取数成功 = 新快照：行内确认/改名/退役/边界/拆分/合并错误、
+      // 改名/退役/边界/拆分/合并表单属于旧快照，一并清除（防陈旧表单/错误/预览）
       setErrors({});
       setRenaming({});
       setRetiring({});
       setBoundary({});
       setSplitting({});
+      setMerging({
+        open: false,
+        stage: "preview",
+        fragmentAId: "",
+        fragmentBId: "",
+        mergedName: "",
+      });
+      setMergeError(null);
+      setMergeSubmitting(false);
     })();
     return () => {
       alive = false;
@@ -745,13 +813,124 @@ export default function FragmentActions({
     }
   }
 
+  /** 点击「合并」：展开项目级合并表单（阶段 1：两个片段选择器 +
+   * 合并名输入 + 预览；初始值空）。 */
+  function handleMergeOpen(): void {
+    setMerging({
+      open: true,
+      stage: "preview",
+      fragmentAId: "",
+      fragmentBId: "",
+      mergedName: "",
+    });
+  }
+
+  /** 点击「取消」：回到按钮态（零 API 调用）。 */
+  function handleMergeCancel(): void {
+    setMerging({
+      open: false,
+      stage: "preview",
+      fragmentAId: "",
+      fragmentBId: "",
+      mergedName: "",
+    });
+    setMergeError(null);
+  }
+
+  /** 点击「预览」：本地校验（两个选择器必须各选一个片段且 a ≠ b，
+   * 未选/相同不发请求、保留表单）→ 每次点击生成一次 commandId →
+   * previewMergeFragments。 */
+  async function handleMergePreview(): Promise<void> {
+    const aId = merging.fragmentAId;
+    const bId = merging.fragmentBId;
+    const mergedName = merging.mergedName;
+    if (aId === "" || bId === "" || aId === bId) {
+      // 本地拦截：未选/相同不发请求，保留表单
+      setMergeError({
+        error: {
+          ok: false,
+          code: "validation_failed",
+          message: "请选择两个不同的片段。",
+          details: {
+            violations: [
+              {
+                field: "fragment_ids",
+                rule: "cardinality",
+                message: "请选择两个不同的片段。",
+              },
+            ],
+          },
+        },
+        source: "merge",
+      });
+      return;
+    }
+    setMergeSubmitting(true);
+    try {
+      // 每次点击生成一次 commandId（显式点击，无自动合并）
+      const commandId = makeCommandId();
+      const res = await previewMergeFragments(clientObj, projectId, {
+        fragmentIds: [aId, bId],
+        mergedName: mergedName.trim() === "" ? undefined : mergedName.trim(),
+        commandId,
+      });
+      if (res.ok) {
+        // 成功：进入阶段 2（展示 impact 摘要 +「确认合并」+「取消」）
+        setMergeError(null);
+        setMerging((prev) => ({
+          ...prev,
+          stage: "confirm",
+          preview: res.data,
+        }));
+      } else {
+        // 失败：保留表单（不退出、不丢错误）
+        setMergeError({ error: res as RowError, source: "merge" });
+      }
+    } finally {
+      setMergeSubmitting(false);
+    }
+  }
+
+  /** 点击「确认合并」：每次点击生成一次 commandId → applyMergeFragments。 */
+  async function handleMergeApply(): Promise<void> {
+    const preview = merging.preview;
+    if (preview === undefined) return;
+    const items = state.kind === "ready" ? state.items : [];
+    const fragmentA = items.find((f) => f.object_ref.id === merging.fragmentAId);
+    const fragmentB = items.find((f) => f.object_ref.id === merging.fragmentBId);
+    if (fragmentA === undefined || fragmentB === undefined) return;
+    setMergeSubmitting(true);
+    try {
+      // 每次点击生成一次 commandId（显式点击，无自动合并）
+      const commandId = makeCommandId();
+      const res = await applyMergeFragments(clientObj, projectId, {
+        previewId: preview.preview_id,
+        commandId,
+        expectedRevisionA: fragmentA.object_ref.revision,
+        expectedRevisionB: fragmentB.object_ref.revision,
+        expectedRangeSetRevision: preview.baseline.range_set.cas ?? 0,
+      });
+      if (res.ok) {
+        // 成功：清除行内错误，内部重取（列表中 a/b 退役、合并新片段出现）
+        setMergeError(null);
+        setRefreshTick((t) => t + 1);
+      } else {
+        // 失败：保留表单与 impact 摘要（不退出、不丢错误）
+        setMergeError({ error: res as RowError, source: "merge" });
+      }
+    } finally {
+      setMergeSubmitting(false);
+    }
+  }
+
   /**
-   * 行内错误文案（确认/改名/退役/边界/拆分统一）：validation_failed →
+   * 行内错误文案（确认/改名/退役/边界/拆分/合并统一）：validation_failed →
    * violations 每条 message；range_invalid → error.message（含 canonical
    * 长度、当前 range 与 split_point）；range_overlap → 列出 conflicts
    * 每个冲突（name + 范围）；preview_stale → 「预览已过期，请重新预览。」；
    * revision_conflict → 确认/改名「片段版本已变化，请刷新后重试。」、
-   * 退役/边界/拆分「版本已变化，请刷新后重试。」；precondition_failed →
+   * 退役/边界/拆分/合并「版本已变化，请刷新后重试。」；precondition_failed
+   * → not_contiguous 显示 error.message（含两片范围数值定位）、其余
    * 「片段状态已变化，请刷新后重试。」；其他 message。
    */
   function rowErrorText(error: RowError, source?: RowErrorSource): string {
@@ -788,11 +967,19 @@ export default function FragmentActions({
       return "预览已过期，请重新预览。";
     }
     if (error.code === "revision_conflict") {
-      return source === "retire" || source === "boundary" || source === "split"
+      return source === "retire" ||
+        source === "boundary" ||
+        source === "split" ||
+        source === "merge"
         ? "版本已变化，请刷新后重试。"
         : "片段版本已变化，请刷新后重试。";
     }
     if (error.code === "precondition_failed") {
+      // not_contiguous → 显示 error.message（含两片范围数值定位，按请求序
+      // 报告）；其余 reason（source_revision_inactive/already_retired）→
+      // 「片段状态已变化，请刷新后重试。」
+      const details = error.details as Record<string, unknown> | undefined;
+      if (details?.reason === "not_contiguous") return error.message;
       return "片段状态已变化，请刷新后重试。";
     }
     return error.message;
@@ -822,8 +1009,112 @@ export default function FragmentActions({
     // 空态 ≠ 读失败：诚实文案，不伪造任何片段
     body = <p className="fragment-actions__status">还没有片段。</p>;
   } else {
+    // 项目级合并动作区（列表上方，非行级）：选项 = 当前列表中
+    // state === "candidate" 或 state === "confirmed" 的片段
+    const mergeableFragments = state.items.filter(
+      (f) => f.state === "candidate" || f.state === "confirmed",
+    );
     body = (
-      <ul className="fragment-actions__items">
+      <div className="fragment-actions__ready">
+        {merging.open ? (
+          <div className="fragment-actions__merge-form">
+            {merging.stage === "confirm" &&
+              merging.preview !== undefined && (
+                <p className="fragment-actions__merge-impact">
+                  影响：{merging.preview.impact.affected.length} 项 /
+                  待复核：{merging.preview.impact.needs_review.length}{" "}
+                  项 / 可保留：
+                  {merging.preview.impact.preservable.length} 项
+                </p>
+              )}
+            {merging.stage === "preview" ? (
+              <>
+                <select
+                  className="fragment-actions__merge-select-a"
+                  value={merging.fragmentAId}
+                  onChange={(e) =>
+                    setMerging((prev) => ({
+                      ...prev,
+                      fragmentAId: e.target.value,
+                    }))
+                  }
+                >
+                  <option value="">选择片段 A</option>
+                  {mergeableFragments.map((f) => (
+                    <option key={f.object_ref.id} value={f.object_ref.id}>
+                      {f.name} · {fragmentStateLabel(f.state)}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="fragment-actions__merge-select-b"
+                  value={merging.fragmentBId}
+                  onChange={(e) =>
+                    setMerging((prev) => ({
+                      ...prev,
+                      fragmentBId: e.target.value,
+                    }))
+                  }
+                >
+                  <option value="">选择片段 B</option>
+                  {mergeableFragments.map((f) => (
+                    <option key={f.object_ref.id} value={f.object_ref.id}>
+                      {f.name} · {fragmentStateLabel(f.state)}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  className="fragment-actions__merge-name"
+                  value={merging.mergedName}
+                  onChange={(e) =>
+                    setMerging((prev) => ({
+                      ...prev,
+                      mergedName: e.target.value,
+                    }))
+                  }
+                />
+                <button
+                  type="button"
+                  className="fragment-actions__merge-preview"
+                  disabled={mergeSubmitting}
+                  onClick={() => void handleMergePreview()}
+                >
+                  预览
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="fragment-actions__merge-apply"
+                disabled={mergeSubmitting}
+                onClick={() => void handleMergeApply()}
+              >
+                确认合并
+              </button>
+            )}
+            <button
+              type="button"
+              className="fragment-actions__merge-cancel"
+              onClick={() => handleMergeCancel()}
+            >
+              取消
+            </button>
+            {mergeError !== null && (
+              <div className="fragment-actions__merge-error" role="alert">
+                <p>{rowErrorText(mergeError.error, mergeError.source)}</p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="fragment-actions__merge"
+            onClick={() => handleMergeOpen()}
+          >
+            合并
+          </button>
+        )}
+        <ul className="fragment-actions__items">
         {state.items.map((fragment) => {
           const fid = fragment.object_ref.id;
           const errorEntry = errors[fid];
@@ -1119,7 +1410,8 @@ export default function FragmentActions({
             </li>
           );
         })}
-      </ul>
+        </ul>
+      </div>
     );
   }
 
@@ -1446,6 +1738,95 @@ export default function FragmentActions({
           background: #fff;
           cursor: pointer;
           font-size: 0.85rem;
+        }
+        .fragment-actions__ready {
+          display: block;
+        }
+        .fragment-actions__merge {
+          padding: 0.2rem 0.7rem;
+          border: 1px solid #6741bc;
+          border-radius: 4px;
+          background: #fff;
+          color: #6741bc;
+          cursor: pointer;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__merge-form {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 0.5rem;
+          margin-bottom: 0.5rem;
+          padding: 0.5rem;
+          border: 1px solid #d0b9ff;
+          border-radius: 4px;
+          background: #f6f2ff;
+        }
+        .fragment-actions__merge-select-a,
+        .fragment-actions__merge-select-b {
+          padding: 0.3rem 0.5rem;
+          border: 1px solid #adb5bd;
+          border-radius: 4px;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__merge-name {
+          flex: 1;
+          min-width: 8rem;
+          padding: 0.3rem 0.5rem;
+          border: 1px solid #adb5bd;
+          border-radius: 4px;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__merge-impact {
+          flex-basis: 100%;
+          margin: 0;
+          font-size: 0.85rem;
+          color: #495057;
+          line-height: 1.5;
+        }
+        .fragment-actions__merge-preview {
+          flex-shrink: 0;
+          padding: 0.2rem 0.7rem;
+          border: 1px solid #1971c2;
+          border-radius: 4px;
+          background: #fff;
+          color: #1971c2;
+          cursor: pointer;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__merge-preview:disabled {
+          cursor: not-allowed;
+          opacity: 0.45;
+        }
+        .fragment-actions__merge-apply {
+          flex-shrink: 0;
+          padding: 0.2rem 0.7rem;
+          border: 1px solid #6741bc;
+          border-radius: 4px;
+          background: #6741bc;
+          color: #fff;
+          cursor: pointer;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__merge-apply:disabled {
+          cursor: not-allowed;
+          opacity: 0.45;
+        }
+        .fragment-actions__merge-cancel {
+          flex-shrink: 0;
+          padding: 0.2rem 0.7rem;
+          border: 1px solid #adb5bd;
+          border-radius: 4px;
+          background: #fff;
+          cursor: pointer;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__merge-error {
+          flex-basis: 100%;
+          margin: 0;
+          font-size: 0.85rem;
+          color: #fa5252;
+          line-height: 1.5;
         }
         .fragment-actions__row-error {
           flex-basis: 100%;

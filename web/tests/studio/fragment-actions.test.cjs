@@ -787,7 +787,7 @@ test("FragmentActions: 显式保存接线（onClick + renameFragment）+ 每次�
   );
 });
 
-test("FragmentActions: commandId 生成（crypto.randomUUID 每次点击一次；确认/保存/预览影响/确认退役/预览/确认调整/预览拆分/确认拆分各一次）", () => {
+test("FragmentActions: commandId 生成（crypto.randomUUID 每次点击一次；确认/保存/预览影响/确认退役/预览/确认调整/预览拆分/确认拆分/合并预览/确认合并各一次）", () => {
   const helperSrc =
     actionsSrc.match(/function makeCommandId[^{]*\{([\s\S]*?)\n\}/)?.[1] ??
     "";
@@ -798,8 +798,8 @@ test("FragmentActions: commandId 生成（crypto.randomUUID 每次点击一次�
   const callCount = (actionsSrc.match(/= makeCommandId\(\)/g) || []).length;
   assert.equal(
     callCount,
-    8,
-    "确认/保存/预览影响/确认退役/预览/确认调整/预览拆分/确认拆分各每次点击生成一次 commandId",
+    10,
+    "确认/保存/预览影响/确认退役/预览/确认调整/预览拆分/确认拆分/合并预览/确认合并各每次点击生成一次 commandId",
   );
   const confirmSrc =
     actionsSrc.match(/async function handleConfirm[^{]*\{([\s\S]*?)\n  \}/)
@@ -3160,6 +3160,855 @@ test("FragmentActions: 无自动拆分（useEffect 内不调 previewSplitFragmen
   assert.ok(
     !effectBlock[0].includes("applySplitFragment"),
     "useEffect 内不得调用 applySplitFragment（无自动拆分）",
+  );
+  assert.ok(!actionsSrc.includes("fetch("), "组件不直接 fetch，须走 client");
+  assert.ok(!actionsSrc.includes("示例"), "无硬编码样例");
+  assert.ok(!actionsSrc.includes("样例"), "无硬编码样例");
+  assert.ok(!actionsSrc.includes("Lorem"), "无硬编码样例");
+  assert.ok(!actionsSrc.includes("router.push"), "不得导航（router.push）");
+  assert.ok(
+    !actionsSrc.includes("window.location"),
+    "不得导航（window.location）",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// SOURCE-14 · 片段合并 UI（契约 v2.9，附录 02 §2 F10）— 新增
+// ---------------------------------------------------------------------------
+
+const { previewMergeFragments, applyMergeFragments } = apiContext.exports;
+
+// F10 合并预览响应（恰 4 字段 {preview_id, kind, baseline, impact}）
+const MERGE_PREVIEW_OK = {
+  preview_id: "preview-5",
+  kind: "fragment_merge",
+  baseline: {
+    fragment_a: { kind: "fragment", id: "frag-a", revision: 2 },
+    fragment_b: { kind: "fragment", id: "frag-b", revision: 3 },
+    range_set: { id: "rs-1", cas: 5 },
+  },
+  impact: {
+    affected: [
+      { object_ref: { kind: "source_relation", id: "sr-1", revision: 2 } },
+    ],
+    needs_review: [
+      { object_ref: { kind: "studio_job", id: "job-1", revision: null } },
+    ],
+    preservable: [
+      { object_ref: { kind: "media_artifact", id: "ma-1", revision: null } },
+    ],
+  },
+};
+
+// F10 合并应用响应（冻结形状恰 2 字段：merged + predecessors×2）
+const MERGE_APPLY_OK = {
+  merged: {
+    object_ref: { kind: "fragment", id: "frag-m", revision: 1 },
+    range: { start: 0, end: 8 },
+    name: "片段甲＋片段乙",
+  },
+  predecessors: [
+    {
+      object_ref: { kind: "fragment", id: "frag-a", revision: 2 },
+      state: "retired",
+    },
+    {
+      object_ref: { kind: "fragment", id: "frag-b", revision: 3 },
+      state: "retired",
+    },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// previewMergeFragments（mock fetch，同既有 preview* 的 makeClient/okJson/errJson 模式）
+// ---------------------------------------------------------------------------
+
+test("previewMergeFragments: 首发 URL/方法/body（fragment_ids、command_id === 传入值；merged_name 缺省时 body 不含该键）", async () => {
+  let captured;
+  const client = makeClient(async (url, opts) => {
+    captured = { url, opts };
+    return okJson(MERGE_PREVIEW_OK, 200);
+  });
+  const res = await previewMergeFragments(client, "p1", {
+    fragmentIds: ["a1", "b1"],
+    commandId: "cmd-1",
+  });
+  assert.equal(
+    captured.url,
+    "http://test.local/api/studio/projects/p1/fragments/merge",
+  );
+  assert.equal(captured.opts.method, "POST");
+  const body = JSON.parse(captured.opts.body);
+  assert.deepEqual(norm(body), {
+    fragment_ids: ["a1", "b1"],
+    command_id: "cmd-1",
+  });
+  assert.equal(body.command_id, "cmd-1", "command_id === 传入值");
+  assert.ok(!("merged_name" in body), "merged_name 缺省时 body 不含该键");
+  assert.equal(res.ok, true);
+});
+
+test("previewMergeFragments: pid 特殊字符经 encodeURIComponent", async () => {
+  let captured;
+  const client = makeClient(async (url, opts) => {
+    captured = { url, opts };
+    return okJson(MERGE_PREVIEW_OK, 200);
+  });
+  await previewMergeFragments(client, "p/1?a", {
+    fragmentIds: ["a1", "b1"],
+    commandId: "cmd-1",
+  });
+  assert.equal(
+    captured.url,
+    "http://test.local/api/studio/projects/" +
+      encodeURIComponent("p/1?a") +
+      "/fragments/merge",
+  );
+});
+
+test("previewMergeFragments: merged_name 附加（非空时 body.merged_name === 传入值）", async () => {
+  let captured;
+  const client = makeClient(async (url, opts) => {
+    captured = { url, opts };
+    return okJson(MERGE_PREVIEW_OK, 200);
+  });
+  await previewMergeFragments(client, "p1", {
+    fragmentIds: ["a1", "b1"],
+    mergedName: "合并片段",
+    commandId: "cmd-1",
+  });
+  const body = JSON.parse(captured.opts.body);
+  assert.equal(body.merged_name, "合并片段", "merged_name === 传入值");
+  assert.equal(body.command_id, "cmd-1", "command_id === 传入值");
+});
+
+test("previewMergeFragments: 200（恰 4 字段 {preview_id, kind:'fragment_merge', baseline:{fragment_a, fragment_b, range_set}, impact}）→ ok、data.preview_id/data.baseline 可用", async () => {
+  const client = makeClient(async () => okJson(MERGE_PREVIEW_OK, 200));
+  const res = await previewMergeFragments(client, "p1", {
+    fragmentIds: ["a1", "b1"],
+    commandId: "cmd-1",
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.data.preview_id, "preview-5");
+  assert.equal(res.data.kind, "fragment_merge");
+  assert.deepEqual(norm(res.data.baseline), {
+    fragment_a: { kind: "fragment", id: "frag-a", revision: 2 },
+    fragment_b: { kind: "fragment", id: "frag-b", revision: 3 },
+    range_set: { id: "rs-1", cas: 5 },
+  });
+  assert.equal(res.data.impact.affected.length, 1);
+  assert.equal(res.data.impact.needs_review.length, 1);
+  assert.equal(res.data.impact.preservable.length, 1);
+});
+
+test("previewMergeFragments: 422 validation_failed（violations，fragment_ids rule=cardinality）→ 不重试（请求恰 1 次）、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "validation_failed",
+        message: "请求校验失败。",
+        details: {
+          violations: [
+            {
+              field: "fragment_ids",
+              rule: "cardinality",
+              message: "fragment_ids 必须恰好包含两个片段 ID。",
+            },
+          ],
+        },
+      },
+    });
+  });
+  const res = await previewMergeFragments(client, "p1", {
+    fragmentIds: ["a1"],
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "validation_failed");
+  assert.equal(res.details.violations.length, 1);
+  assert.equal(res.details.violations[0].field, "fragment_ids");
+  assert.equal(res.details.violations[0].rule, "cardinality");
+});
+
+test("previewMergeFragments: 422 validation_failed（violations，fragment_ids rule=duplicate）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "validation_failed",
+        message: "请求校验失败。",
+        details: {
+          violations: [
+            {
+              field: "fragment_ids",
+              rule: "duplicate",
+              message: "fragment_ids 中的两个片段 ID 不能相同。",
+            },
+          ],
+        },
+      },
+    });
+  });
+  const res = await previewMergeFragments(client, "p1", {
+    fragmentIds: ["a1", "a1"],
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "validation_failed");
+  assert.equal(res.details.violations.length, 1);
+  assert.equal(res.details.violations[0].field, "fragment_ids");
+  assert.equal(res.details.violations[0].rule, "duplicate");
+});
+
+test('previewMergeFragments: 422 precondition_failed（details.reason === "not_contiguous"）→ 不重试、透传', async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "precondition_failed",
+        message:
+          "两个片段的范围不相接，无法合并：[0, 4) 与 [8, 12)。",
+        details: {
+          reason: "not_contiguous",
+          blocked_by: { kind: "fragment", id: "frag-b", revision: 3 },
+        },
+      },
+    });
+  });
+  const res = await previewMergeFragments(client, "p1", {
+    fragmentIds: ["a1", "b1"],
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "precondition_failed");
+  assert.equal(res.details.reason, "not_contiguous");
+  assert.deepEqual(norm(res.details.blocked_by), {
+    kind: "fragment",
+    id: "frag-b",
+    revision: 3,
+  });
+});
+
+test("previewMergeFragments: 409 range_overlap（details.conflicts 数组）→ 不重试（请求恰 1 次）、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(409, {
+      error: {
+        code: "range_overlap",
+        message: "该范围与已有片段「片段丙」（frag-c）重叠。",
+        details: {
+          conflicts: [
+            {
+              fragment_id: "frag-c",
+              name: "片段丙",
+              start: 4,
+              end: 12,
+            },
+          ],
+        },
+      },
+    });
+  });
+  const res = await previewMergeFragments(client, "p1", {
+    fragmentIds: ["a1", "b1"],
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 409);
+  assert.equal(res.code, "range_overlap");
+  assert.equal(res.details.conflicts.length, 1);
+  assert.equal(res.details.conflicts[0].fragment_id, "frag-c");
+  assert.equal(res.details.conflicts[0].name, "片段丙");
+});
+
+test("previewMergeFragments: 422 validation_failed（violations，rule=reused）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "validation_failed",
+        message: "请求校验失败。",
+        details: {
+          violations: [
+            {
+              field: "command_id",
+              rule: "reused",
+              message: "command_id 已被其他命令使用，请生成新的。",
+            },
+          ],
+        },
+      },
+    });
+  });
+  const res = await previewMergeFragments(client, "p1", {
+    fragmentIds: ["a1", "b1"],
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "validation_failed");
+  assert.equal(res.details.violations.length, 1);
+  assert.equal(res.details.violations[0].field, "command_id");
+  assert.equal(res.details.violations[0].rule, "reused");
+});
+
+test("previewMergeFragments: 404 not_found → 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(404, {
+      error: {
+        code: "not_found",
+        message: "对象不存在或不属于当前项目。",
+        details: { kind: "fragment", id: "a1" },
+      },
+    });
+  });
+  const res = await previewMergeFragments(client, "p1", {
+    fragmentIds: ["a1", "b1"],
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 404);
+  assert.equal(res.code, "not_found");
+  assert.deepEqual(norm(res.details), { kind: "fragment", id: "a1" });
+});
+
+test("previewMergeFragments: network → 不重试、code=network", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    throw new TypeError("Failed to fetch");
+  });
+  const res = await previewMergeFragments(client, "p1", {
+    fragmentIds: ["a1", "b1"],
+    commandId: "cmd-1",
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.code, "network");
+});
+
+// ---------------------------------------------------------------------------
+// applyMergeFragments（mock fetch，同既有 apply* 的 makeClient/okJson/errJson 模式）
+// ---------------------------------------------------------------------------
+
+test("applyMergeFragments: 首发 URL/方法/body（preview_id、command_id === 传入值、expected_revision_a、expected_revision_b、expected_range_set_revision）", async () => {
+  let captured;
+  const client = makeClient(async (url, opts) => {
+    captured = { url, opts };
+    return okJson(MERGE_APPLY_OK, 200);
+  });
+  const res = await applyMergeFragments(client, "p1", {
+    previewId: "preview-5",
+    commandId: "cmd-2",
+    expectedRevisionA: 2,
+    expectedRevisionB: 3,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(
+    captured.url,
+    "http://test.local/api/studio/projects/p1/fragments/merge/apply",
+  );
+  assert.equal(captured.opts.method, "POST");
+  const body = JSON.parse(captured.opts.body);
+  assert.deepEqual(norm(body), {
+    preview_id: "preview-5",
+    command_id: "cmd-2",
+    expected_revision_a: 2,
+    expected_revision_b: 3,
+    expected_range_set_revision: 5,
+  });
+  assert.equal(body.command_id, "cmd-2", "command_id === 传入值");
+  assert.equal(res.ok, true);
+});
+
+test("applyMergeFragments: 200（F10 冻结形状恰 2 字段 {merged:{object_ref(revision=1), range, name}, predecessors:[{object_ref, state:'retired'}×2]}）→ ok、data.merged/data.predecessors 可用", async () => {
+  const client = makeClient(async () => okJson(MERGE_APPLY_OK, 200));
+  const res = await applyMergeFragments(client, "p1", {
+    previewId: "preview-5",
+    commandId: "cmd-2",
+    expectedRevisionA: 2,
+    expectedRevisionB: 3,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.data.merged.object_ref.kind, "fragment");
+  assert.equal(res.data.merged.object_ref.id, "frag-m");
+  assert.equal(res.data.merged.object_ref.revision, 1);
+  assert.deepEqual(norm(res.data.merged.range), { start: 0, end: 8 });
+  assert.equal(res.data.merged.name, "片段甲＋片段乙");
+  assert.equal(res.data.predecessors.length, 2);
+  assert.equal(res.data.predecessors[0].object_ref.id, "frag-a");
+  assert.equal(res.data.predecessors[0].state, "retired");
+  assert.equal(res.data.predecessors[1].object_ref.id, "frag-b");
+  assert.equal(res.data.predecessors[1].state, "retired");
+});
+
+test("applyMergeFragments: 409 preview_stale（details.preview_id + details.conflicts）→ 不重试（请求恰 1 次）、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(409, {
+      error: {
+        code: "preview_stale",
+        message: "预览基准已变化，请重新预览。",
+        details: {
+          preview_id: "preview-5",
+          conflicts: [
+            {
+              object: { kind: "fragment", id: "frag-a" },
+              expected: 2,
+              actual: 3,
+            },
+          ],
+        },
+      },
+    });
+  });
+  const res = await applyMergeFragments(client, "p1", {
+    previewId: "preview-5",
+    commandId: "cmd-2",
+    expectedRevisionA: 2,
+    expectedRevisionB: 3,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 409);
+  assert.equal(res.code, "preview_stale");
+  assert.equal(res.details.preview_id, "preview-5");
+  assert.equal(res.details.conflicts.length, 1);
+  assert.equal(res.details.conflicts[0].object.kind, "fragment");
+});
+
+test('applyMergeFragments: 409 revision_conflict（details.object.kind === "range_set"）→ 不重试、透传', async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(409, {
+      error: {
+        code: "revision_conflict",
+        message: "范围集合版本已变化，请刷新片段列表后重试。",
+        details: {
+          object: { kind: "range_set", id: "rs-1" },
+          expected: 5,
+          actual: 6,
+        },
+      },
+    });
+  });
+  const res = await applyMergeFragments(client, "p1", {
+    previewId: "preview-5",
+    commandId: "cmd-2",
+    expectedRevisionA: 2,
+    expectedRevisionB: 3,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 409);
+  assert.equal(res.code, "revision_conflict");
+  assert.equal(res.details.object.kind, "range_set");
+  assert.equal(res.details.object.id, "rs-1");
+});
+
+test('applyMergeFragments: 409 revision_conflict（details.object.kind === "fragment"）→ 不重试、透传', async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(409, {
+      error: {
+        code: "revision_conflict",
+        message: "片段版本已变化，请刷新片段详情后重试。",
+        details: {
+          object: { kind: "fragment", id: "frag-a" },
+          expected: 2,
+          actual: 3,
+        },
+      },
+    });
+  });
+  const res = await applyMergeFragments(client, "p1", {
+    previewId: "preview-5",
+    commandId: "cmd-2",
+    expectedRevisionA: 2,
+    expectedRevisionB: 3,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 409);
+  assert.equal(res.code, "revision_conflict");
+  assert.equal(res.details.object.kind, "fragment");
+  assert.equal(res.details.object.id, "frag-a");
+});
+
+test("applyMergeFragments: 422 validation_failed（violations，rule=reused）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(422, {
+      error: {
+        code: "validation_failed",
+        message: "请求校验失败。",
+        details: {
+          violations: [
+            {
+              field: "command_id",
+              rule: "reused",
+              message: "command_id 已被其他命令使用，请生成新的。",
+            },
+          ],
+        },
+      },
+    });
+  });
+  const res = await applyMergeFragments(client, "p1", {
+    previewId: "preview-5",
+    commandId: "cmd-2",
+    expectedRevisionA: 2,
+    expectedRevisionB: 3,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.code, "validation_failed");
+  assert.equal(res.details.violations.length, 1);
+  assert.equal(res.details.violations[0].field, "command_id");
+  assert.equal(res.details.violations[0].rule, "reused");
+});
+
+test("applyMergeFragments: 404 not_found（kind=preview）→ 不重试、透传", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return errJson(404, {
+      error: {
+        code: "not_found",
+        message: "对象不存在或不属于当前项目。",
+        details: { kind: "preview", id: "preview-5" },
+      },
+    });
+  });
+  const res = await applyMergeFragments(client, "p1", {
+    previewId: "preview-5",
+    commandId: "cmd-2",
+    expectedRevisionA: 2,
+    expectedRevisionB: 3,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 404);
+  assert.equal(res.code, "not_found");
+  assert.deepEqual(norm(res.details), { kind: "preview", id: "preview-5" });
+});
+
+test("applyMergeFragments: network → 不重试、code=network", async () => {
+  const calls = [];
+  const client = makeClient(async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    throw new TypeError("Failed to fetch");
+  });
+  const res = await applyMergeFragments(client, "p1", {
+    previewId: "preview-5",
+    commandId: "cmd-2",
+    expectedRevisionA: 2,
+    expectedRevisionB: 3,
+    expectedRangeSetRevision: 5,
+  });
+  assert.equal(calls.length, 1, "恰 1 次请求，不重试");
+  assert.equal(res.ok, false);
+  assert.equal(res.code, "network");
+});
+
+// ---------------------------------------------------------------------------
+// FragmentActions.tsx 合并动作字符串断言（项目级，非行级）
+// ---------------------------------------------------------------------------
+
+test("FragmentActions: 合并按钮项目级（非行级，在列表外/上方）", () => {
+  assert.ok(
+    actionsSrc.includes("fragment-actions__merge"),
+    "「合并」按钮缺失",
+  );
+  assert.ok(actionsSrc.includes("合并"), "「合并」按钮文案缺失");
+  // 项目级：合并按钮/表单在列表 ul 之外（fragment-actions__ready 容器内、
+  // fragment-actions__items 之前），不在每行 li 内
+  const readyIdx = actionsSrc.indexOf("fragment-actions__ready");
+  const itemsIdx = actionsSrc.indexOf("fragment-actions__items");
+  const mergeIdx = actionsSrc.indexOf("fragment-actions__merge");
+  assert.ok(
+    readyIdx !== -1 && itemsIdx !== -1 && mergeIdx !== -1,
+    "合并动作区须位于列表上方（fragment-actions__ready 容器）",
+  );
+  assert.ok(
+    mergeIdx < itemsIdx,
+    "合并动作区须在列表（fragment-actions__items）之前（项目级，非行级）",
+  );
+});
+
+test("FragmentActions: 两步显式（阶段 1「预览」→ 阶段 2「确认合并」）+ 确认合并仅 preview 成功后可点击", () => {
+  assert.ok(
+    actionsSrc.includes("fragment-actions__merge-form"),
+    "项目级合并表单容器缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("fragment-actions__merge-preview"),
+    "「预览」按钮缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("fragment-actions__merge-apply"),
+    "「确认合并」按钮缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("fragment-actions__merge-cancel"),
+    "「取消」按钮缺失",
+  );
+  assert.ok(actionsSrc.includes("确认合并"), "「确认合并」按钮文案缺失");
+  assert.ok(
+    actionsSrc.includes('stage === "confirm"'),
+    "阶段 2（确认合并）判定缺失",
+  );
+  assert.ok(
+    actionsSrc.includes('stage === "preview"'),
+    "阶段 1（预览）判定缺失",
+  );
+  const applySrc =
+    actionsSrc.match(/async function handleMergeApply[^{]*\{([\s\S]*?)\n  \}/)?.[1] ??
+    "";
+  assert.ok(
+    applySrc.includes("preview === undefined"),
+    "无 preview（未预览成功）时确认合并不得执行（仅 preview 成功后可点击）",
+  );
+});
+
+test("FragmentActions: 两个片段选择器（下拉框，选项 = candidate/confirmed 片段）+ merged_name 可选输入框", () => {
+  assert.ok(
+    actionsSrc.includes("fragment-actions__merge-select-a"),
+    "片段 A 选择器缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("fragment-actions__merge-select-b"),
+    "片段 B 选择器缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("fragment-actions__merge-name"),
+    "merged_name 输入框缺失",
+  );
+  // 选项 = 当前列表中 state === "candidate" 或 state === "confirmed" 的片段
+  assert.ok(
+    actionsSrc.includes('f.state === "candidate" || f.state === "confirmed"'),
+    "选择器选项须为 candidate/confirmed 片段",
+  );
+  // 选项文本 = 片段名 + 状态标签
+  assert.ok(
+    actionsSrc.includes("fragmentStateLabel(f.state)"),
+    "选项文本须含状态标签",
+  );
+});
+
+test("FragmentActions: 本地校验（a ≠ b，先于 previewMergeFragments 调用）", () => {
+  const previewSrc =
+    actionsSrc.match(/async function handleMergePreview[^{]*\{([\s\S]*?)\n  \}/)?.[1] ??
+    "";
+  assert.ok(previewSrc.length > 0, "handleMergePreview 缺失");
+  assert.ok(previewSrc.includes("aId === bId"), "a ≠ b 判定缺失");
+  const aCheck = previewSrc.indexOf("aId === bId");
+  const call = previewSrc.indexOf("previewMergeFragments");
+  assert.ok(
+    aCheck !== -1 && call !== -1 && aCheck < call,
+    "a ≠ b 判定须先于 previewMergeFragments（本地拦截，不发请求）",
+  );
+  assert.ok(previewSrc.includes("return;"), "本地拦截须提前返回（保留表单）");
+  assert.ok(
+    previewSrc.includes("请选择两个不同的片段。"),
+    "本地提示文案缺失",
+  );
+});
+
+test("FragmentActions: merged_name 空串 → undefined（不附加进 body）", () => {
+  const previewSrc =
+    actionsSrc.match(/async function handleMergePreview[^{]*\{([\s\S]*?)\n  \}/)?.[1] ??
+    "";
+  assert.ok(
+    previewSrc.includes(
+      'mergedName.trim() === "" ? undefined : mergedName.trim()',
+    ),
+    "merged_name 空串须转 undefined（不附加进 body）",
+  );
+});
+
+test("FragmentActions: 显式点击接线（onClick + previewMergeFragments/applyMergeFragments）+ makeCommandId() 每次点击一次", () => {
+  const previewSrc =
+    actionsSrc.match(/async function handleMergePreview[^{]*\{([\s\S]*?)\n  \}/)?.[1] ??
+    "";
+  assert.ok(previewSrc.length > 0, "handleMergePreview 缺失");
+  assert.ok(
+    previewSrc.includes("previewMergeFragments"),
+    "预览须调用 previewMergeFragments",
+  );
+  assert.ok(
+    previewSrc.includes("makeCommandId()"),
+    "预览须每次点击生成一次 commandId",
+  );
+  const applySrc =
+    actionsSrc.match(/async function handleMergeApply[^{]*\{([\s\S]*?)\n  \}/)?.[1] ??
+    "";
+  assert.ok(applySrc.length > 0, "handleMergeApply 缺失");
+  assert.ok(
+    applySrc.includes("applyMergeFragments"),
+    "确认合并须调用 applyMergeFragments",
+  );
+  assert.ok(
+    applySrc.includes("makeCommandId()"),
+    "确认合并须每次点击生成一次 commandId",
+  );
+  assert.ok(
+    actionsSrc.includes("onClick={() => void handleMergePreview()}"),
+    "「预览」按钮 onClick 接线缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("onClick={() => void handleMergeApply()}"),
+    "「确认合并」按钮 onClick 接线缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("onClick={() => handleMergeOpen()}"),
+    "「合并」按钮 onClick 接线缺失",
+  );
+});
+
+test("FragmentActions: 合并 expected_revision_a 取 fragmentA.object_ref.revision；expected_revision_b 取 fragmentB.object_ref.revision；expected_range_set_revision 取 preview.baseline.range_set.cas", () => {
+  const applySrc =
+    actionsSrc.match(/async function handleMergeApply[^{]*\{([\s\S]*?)\n  \}/)?.[1] ??
+    "";
+  assert.ok(
+    applySrc.includes("fragmentA.object_ref.revision"),
+    "expected_revision_a 须取 fragmentA.object_ref.revision（真实服务端值）",
+  );
+  assert.ok(
+    applySrc.includes("fragmentB.object_ref.revision"),
+    "expected_revision_b 须取 fragmentB.object_ref.revision（真实服务端值）",
+  );
+  assert.ok(
+    applySrc.includes("baseline.range_set.cas"),
+    "expected_range_set_revision 须取 preview.baseline.range_set.cas（冻结基准）",
+  );
+});
+
+test("FragmentActions: 合并 impact 摘要展示（affected/needs_review/preservable 计数）", () => {
+  assert.ok(
+    actionsSrc.includes("fragment-actions__merge-impact"),
+    "合并 impact 摘要缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("impact.affected.length"),
+    "impact 摘要 affected 计数缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("impact.needs_review.length"),
+    "impact 摘要 needs_review 计数缺失",
+  );
+  assert.ok(
+    actionsSrc.includes("impact.preservable.length"),
+    "impact 摘要 preservable 计数缺失",
+  );
+});
+
+test("FragmentActions: 合并取消零 API 调用（onCancel 路径无 previewMergeFragments/applyMergeFragments）", () => {
+  const cancelSrc =
+    actionsSrc.match(/function handleMergeCancel[^{]*\{([\s\S]*?)\n  \}/)?.[1] ??
+    "";
+  assert.ok(cancelSrc.length > 0, "handleMergeCancel 缺失");
+  assert.ok(
+    cancelSrc.includes("setMerging"),
+    "取消须以 setMerging 回到按钮态",
+  );
+  assert.ok(
+    !cancelSrc.includes("previewMergeFragments"),
+    "取消不得调用 previewMergeFragments（零 API 调用）",
+  );
+  assert.ok(
+    !cancelSrc.includes("applyMergeFragments"),
+    "取消不得调用 applyMergeFragments（零 API 调用）",
+  );
+  assert.ok(
+    !cancelSrc.includes("clientObj"),
+    "取消不得使用 client",
+  );
+  assert.ok(
+    actionsSrc.includes("onClick={() => handleMergeCancel()}"),
+    "取消按钮 onClick 接线缺失",
+  );
+});
+
+test("FragmentActions: 合并失败保留表单（setMergeError 保留、不退出）", () => {
+  const previewSrc =
+    actionsSrc.match(/async function handleMergePreview[^{]*\{([\s\S]*?)\n  \}/)?.[1] ??
+    "";
+  assert.ok(
+    previewSrc.includes("setMergeError"),
+    "预览失败须 setMergeError 保留行内错误",
+  );
+  const applySrc =
+    actionsSrc.match(/async function handleMergeApply[^{]*\{([\s\S]*?)\n  \}/)?.[1] ??
+    "";
+  assert.ok(
+    applySrc.includes("setMergeError"),
+    "确认合并失败须 setMergeError 保留行内错误",
+  );
+  assert.ok(
+    applySrc.includes("setMergeSubmitting"),
+    "提交态管理缺失",
+  );
+});
+
+test("FragmentActions: 合并成功 → 内部重取（refreshTick）；新快照清除 merging（表单收起）", () => {
+  const applySrc =
+    actionsSrc.match(/async function handleMergeApply[^{]*\{([\s\S]*?)\n  \}/)?.[1] ??
+    "";
+  assert.ok(
+    applySrc.includes("setRefreshTick"),
+    "合并成功须内部重取（refreshTick，a/b 退役、合并新片段出现）",
+  );
+  const effectBlock = actionsSrc.match(
+    /useEffect\(\(\) => \{[\s\S]*?\}, \[[^\]]+\]\)/,
+  );
+  assert.ok(effectBlock, "useEffect 缺失");
+  assert.ok(
+    effectBlock[0].includes("setMerging"),
+    "新快照须清除合并表单（防陈旧表单/错误/预览）",
+  );
+});
+
+test("FragmentActions: 无自动合并（useEffect 内不调 previewMergeFragments/applyMergeFragments）+ 不直接 fetch + 无硬编码样例 + 不导航", () => {
+  const effectBlock = actionsSrc.match(
+    /useEffect\(\(\) => \{[\s\S]*?\}, \[[^\]]+\]\)/,
+  );
+  assert.ok(effectBlock, "useEffect 缺失");
+  assert.ok(
+    !effectBlock[0].includes("previewMergeFragments"),
+    "useEffect 内不得调用 previewMergeFragments（无自动合并）",
+  );
+  assert.ok(
+    !effectBlock[0].includes("applyMergeFragments"),
+    "useEffect 内不得调用 applyMergeFragments（无自动合并）",
   );
   assert.ok(!actionsSrc.includes("fetch("), "组件不直接 fetch，须走 client");
   assert.ok(!actionsSrc.includes("示例"), "无硬编码样例");

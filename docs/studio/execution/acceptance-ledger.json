@@ -2732,12 +2732,46 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "只合并合法范围，旧引用不自动归新对象。",
-      "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "web/features/studio/source/api.ts（纯逻辑追加：MergePreviewParams/MergePreviewDto/previewMergeFragments + MergeApplyParams/MergeApplyDto/applyMergeFragments）、web/features/studio/source/components/FragmentActions.tsx（扩展项目级合并动作）、web/tests/studio/fragment-actions.test.cjs（扩展，既有 121 项保持）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-12",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-12",
+        "contract_version": "2.9",
+        "tested_baseline": "bdc765f + 3 白名单文件（本卡提交）",
+        "scope": "f10_merge_fragment_ui",
+        "checks": [
+          "主模型独立复验（不复用执行器报告）：node --test web/tests/studio/fragment-actions.test.cjs → 152/152（既有 121 + 新增 31）；node --test web/tests/studio/*.test.cjs → 326/326 无回归；cd web && npx tsc --noEmit → exit 0；git status 仅白名单 3 文件。",
+          "F10 preview 协议（diff 逐行核对 + mock fetch 测试）：POST /api/studio/projects/{pid}/fragments/merge（项目级端点，pid 均 encodeURIComponent），body = {fragment_ids:[a_id,b_id]（恰 2），command_id}（merged_name 仅在非空时附加，空串 → undefined 不附加，测试断言 body 不含该键）；200 恰 4 字段 {preview_id, kind:'fragment_merge', baseline:{fragment_a:{kind,id,revision}, fragment_b:{kind,id,revision}, range_set:{id,cas}}, impact:{affected[], needs_review[], preservable[]}}；preview 阶段即校验：fragment_ids cardinality≠2/duplicate、命名派生（缺省派生「左＋右」全角 U+FF0B、strip 后非空且 ≤120）、相接（左.range_end == 右.range_start，message 含两片范围数值定位按请求序报告）、重叠（合并范围再走重叠校验，conflicts 收集全部冲突按 id 排序）；错误透传不重试（422 validation_failed、422 precondition_failed reason=source_revision_inactive/already_retired/not_contiguous、409 range_overlap、404 not_found、network 测试断言请求恰 1 次 + details 逐字段透传）。",
+          "F10 apply 协议（diff 逐行核对 + mock fetch 测试）：POST /api/studio/projects/{pid}/fragments/merge/apply，body = {preview_id, command_id, expected_revision_a, expected_revision_b, expected_range_set_revision}；expected_revision_a 取 a 片段的 object_ref.revision（真实服务端值）；expected_revision_b 取 b 片段的 object_ref.revision；expected_range_set_revision 取 preview 返回的 baseline.range_set.cas（冻结基准，preview 时快照；cas 为 null 时 ?? 0）；200 F10 冻结形状恰 2 字段 {merged:{object_ref(kind,id,revision=1), range{start,end}, name}, predecessors:[{object_ref(kind,id,revision), state:'retired'}×2 请求序]}（a/b 退役不新建其 revision、merged 新 ID 得一行 revision=1 reason='merge' predecessor=[a,b]、range_set cas+1）；错误透传不重试（409 preview_stale{preview_id, conflicts[]}、409 revision_conflict object.kind=fragment/range_set、422 validation_failed rule=mismatch/reused、404 not_found kind=preview、network 测试断言请求恰 1 次 + details 逐字段透传）。",
+          "两步显式操作（卡面\"只合并合法范围\"）：项目级「合并」按钮（非行级，列表上方）→ 阶段 1 两个片段下拉选择器（选项 = 当前列表 candidate/confirmed 片段，文本 = 片段名 + 状态标签）+ 可选合并名输入框 +「预览」+「取消」；本地校验（aId === \"\" || bId === \"\" || aId === bId → 本地 validation_failed「请选择两个不同的片段。」，不发请求、保留表单）；预览成功 → 阶段 2 展示 impact 摘要（「影响：N 项 / 待复核：N 项 / 可保留：N 项」）+「确认合并」+「取消」；确认合并仅 preview 成功后可点击（handleMergeApply 内 preview === undefined 直接 return，字符串断言）；无自动合并（useEffect 内不调 previewMergeFragments/applyMergeFragments，字符串断言）。",
+          "旧引用不自动归新对象（卡面验收 + R11）：merged 新 ID 得一行 revision=1（reason='merge'、predecessor=[a,b] 请求序）、state='candidate'（后端冻结）；前端内部重取（列表中 a/b 退役、合并新片段出现）；不自动改写任何旧引用（后端冻结，前端不干预）。",
+          "刷新结果一致（卡面验收）：apply 成功 → 清除 mergeError + setRefreshTick 内部重取；新取数成功 = 新快照，项目级合并表单（merging）与 mergeError 一并清除（防陈旧预览）。",
+          "过期/断网可恢复（卡面验收）：失败 → mergeError 行内错误（保留表单与 impact 摘要，不退出、不丢错误）；行内错误区统一（确认/改名/退役/边界/拆分/合并共用 rowErrorText）：not_contiguous → error.message（含两片范围数值定位）；range_invalid → error.message（含 canonical 长度）；range_overlap → 列出 details.conflicts 每个冲突（name + 范围）；preview_stale →「预览已过期，请重新预览。」；revision_conflict → 确认/改名「片段版本已变化，请刷新后重试。」、退役/边界/拆分/合并「版本已变化，请刷新后重试。」（RowErrorSource 区分）；precondition_failed →「片段状态已变化，请刷新后重试。」；validation_failed → details.violations 每条 message；其他显示 error.message。",
+          "取消零 API 调用（handleMergeCancel 仅 setMerging/setMergeError，无 previewMergeFragments/applyMergeFragments，字符串断言）；每次显式点击 makeCommandId() 恰一次（既有测试 commandId 断言更新为 10 处：确认/保存/预览影响/确认退役/预览边界/确认调整/预览拆分/确认拆分/预览合并/确认合并各一次，crypto.randomUUID 仍恰 1 处）；提交中对应按钮 disabled（防双击）。",
+          "SOURCE-14-a/b/c/d/e 已验收行为不变（diff 核对）：确认按钮仅 candidate、显式点击、重取、行内错误；改名/退役/边界/拆分按钮仅 candidate/confirmed、两步表单、impact 摘要；既有 121 项断言全部保持通过。",
+          "组件不直接 fetch（走 client）、不导航（无 router.push/window.location）、无硬编码样例文本、styled-jsx 作用域独立（.fragment-actions__merge*）。"
+        ],
+        "evidence": [
+          "web/features/studio/source/api.ts（第 795 行起追加：MergePreviewParams/MergePreviewDto/previewMergeFragments + MergeApplyParams/MergeApplyDto/applyMergeFragments）",
+          "web/features/studio/source/components/FragmentActions.tsx（扩展：项目级合并按钮 + 两步表单 + 本地校验 + impact 摘要 + 统一行内错误区 merge 分支）",
+          "web/tests/studio/fragment-actions.test.cjs（152 项：既有 121 + 新增 31）"
+        ],
+        "limitations": [
+          "浏览器实测（真实点击合并交互）待 GATE-02 关键浏览器连续操作门验收；本轮以纯逻辑 vm 测试 + 组件字符串断言为准（与 SOURCE-12/13/14-a/b/c/d/e 同一验收深度）。",
+          "FragmentActions 尚未接入工作台壳（与 FragmentList/SourceReader 同为独立组件），接入归 UI 批次。"
+        ]
+      }
     },
     {
       "id": "SOURCE-14-g",

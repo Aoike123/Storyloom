@@ -795,3 +795,132 @@ export function applySplitFragment(
     { commandId: params.commandId },
   );
 }
+
+// ---------------------------------------------------------------------------
+// SOURCE-14 · 片段合并（契约 v2.9，附录 02 §2 F10）
+// ---------------------------------------------------------------------------
+
+/** F10 合并预览参数。 */
+export interface MergePreviewParams {
+  fragmentIds: string[];
+  mergedName?: string;
+  commandId: string;
+}
+
+/**
+ * F10 合并预览响应（附录 00 §5.1：恰 4 字段，preview 是一次幂等写，
+ * 记录 state=pending 不外露；命名派生/边界相接/合并范围重叠均在
+ * preview 阶段即校验——F10 行冻结）。
+ */
+export interface MergePreviewDto {
+  preview_id: string;
+  kind: string;
+  baseline: {
+    fragment_a: { kind: string; id: string; revision: number };
+    fragment_b: { kind: string; id: string; revision: number };
+    range_set: { id: string | null; cas: number | null };
+  };
+  impact: {
+    affected: Array<{
+      object_ref: { kind: string; id: string; revision: number | null };
+    }>;
+    needs_review: Array<{
+      object_ref: { kind: string; id: string; revision: number | null };
+    }>;
+    preservable: Array<{
+      object_ref: { kind: string; id: string; revision: number | null };
+    }>;
+  };
+}
+
+/**
+ * F10 预览片段合并（附录 02 §2 F10；preview 是一次幂等写，记录
+ * state=pending 不外露；幂等重放命中 → 200 原 result_payload，零写零 commit）。
+ *
+ * - POST /api/studio/projects/{pid}/fragments/merge，body =
+ *   { fragment_ids, command_id }（command_id 由 client.post 合并进 body）；
+ *   merged_name 仅在非空时附加（params.mergedName !== undefined）；
+ * - 成功（200，含幂等重放）返回 res（恰 4 字段 {preview_id, kind,
+ *   baseline, impact}）；
+ * - 一切错误原样透传（不重试、不改写）：422 validation_failed
+ *   （violations：fragment_ids cardinality/duplicate、merged_name
+ *   required/max_length、command_id rule=reused）、422 precondition_failed
+ *   （details.reason：source_revision_inactive | already_retired |
+ *   not_contiguous）、409 range_overlap（details.conflicts）、
+ *   404 not_found、network。
+ */
+export function previewMergeFragments(
+  client: StudioClient,
+  pid: string,
+  params: MergePreviewParams,
+): Promise<StudioApiResponse<MergePreviewDto>> {
+  const path = `/api/studio/projects/${encodeURIComponent(pid)}/fragments/merge`;
+  const body: Record<string, unknown> = {
+    fragment_ids: params.fragmentIds,
+  };
+  if (params.mergedName !== undefined) body.merged_name = params.mergedName;
+  return client.post<MergePreviewDto>(path, body, {
+    commandId: params.commandId,
+  });
+}
+
+/** F10 合并应用参数。 */
+export interface MergeApplyParams {
+  previewId: string;
+  commandId: string;
+  expectedRevisionA: number;
+  expectedRevisionB: number;
+  expectedRangeSetRevision: number;
+}
+
+/**
+ * F10 合并应用响应（F10 冻结形状恰 2 字段：merged object_ref(revision=1)
+ * +range+name、predecessors 各 object_ref+state='retired'×2 请求序）。
+ */
+export interface MergeApplyDto {
+  merged: {
+    object_ref: { kind: string; id: string; revision: number };
+    range: { start: number; end: number };
+    name: string;
+  };
+  predecessors: Array<{
+    object_ref: { kind: string; id: string; revision: number };
+    state: string;
+  }>;
+}
+
+/**
+ * F10 应用片段合并（附录 02 §2 F10；a/b 退役不新建其 revision，merged 新
+ * ID 得一行 revision=1（reason='merge'、predecessor=[a,b] 请求序）、
+ * state='candidate'；range_set 是 CAS 唯一写点之一，cas+1；幂等重放命中
+ * → 200 原 result_payload，零写零 commit）。
+ *
+ * - POST /api/studio/projects/{pid}/fragments/merge/apply，body =
+ *   { preview_id, command_id, expected_revision_a, expected_revision_b,
+ *   expected_range_set_revision }（command_id 由 client.post 合并进 body）；
+ * - 成功（200，含幂等重放）返回 res（MergeApplyDto：merged
+ *   object_ref(revision=1)+range+name、predecessors 各 object_ref+
+ *   state='retired'）；
+ * - 一切错误原样透传（不重试、不改写）：409 preview_stale
+ *   （details.preview_id + details.conflicts）、409 revision_conflict
+ *   （details.object.kind：fragment | range_set）、422 validation_failed
+ *   （violations：mismatch | reused）、422 precondition_failed、
+ *   404 not_found、network。
+ */
+export function applyMergeFragments(
+  client: StudioClient,
+  pid: string,
+  params: MergeApplyParams,
+): Promise<StudioApiResponse<MergeApplyDto>> {
+  const path = `/api/studio/projects/${encodeURIComponent(pid)}/fragments/merge/apply`;
+  return client.post<MergeApplyDto>(
+    path,
+    {
+      preview_id: params.previewId,
+      expected_revision_a: params.expectedRevisionA,
+      expected_revision_b: params.expectedRevisionB,
+      expected_range_set_revision: params.expectedRangeSetRevision,
+    },
+    { commandId: params.commandId },
+  );
+}
