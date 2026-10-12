@@ -370,3 +370,39 @@ export async function createFragmentCandidate(
   }
   return first;
 }
+
+// ---------------------------------------------------------------------------
+// SOURCE-14 · 片段确认（契约 v2.9，附录 02 §2 F6）
+// ---------------------------------------------------------------------------
+
+/** F6 片段确认参数。 */
+export interface ConfirmFragmentParams {
+  expectedRevision: number;
+  commandId: string;
+}
+
+/**
+ * F6 确认片段（附录 02 §2 F6；确认不启动生产、不表示全文覆盖，R04）。
+ *
+ * - POST /api/studio/projects/{pid}/fragments/{fid}/confirm，body =
+ *   { expected_revision, command_id }（command_id 由 client.post 合并进 body）；
+ * - 成功（200，含幂等重放）返回 res；FragmentDto 复用既有接口
+ *   （F3 形状十一键，state='confirmed'）；
+ * - 一切错误原样透传（不重试、不改写）：409 revision_conflict
+ *   （details.object.kind === 'fragment'）、422 precondition_failed
+ *   （details.reason）、422 validation_failed（details.violations）、
+ *   404 not_found、network。
+ */
+export function confirmFragment(
+  client: StudioClient,
+  pid: string,
+  fid: string,
+  params: ConfirmFragmentParams,
+): Promise<StudioApiResponse<FragmentDto>> {
+  const path = `/api/studio/projects/${encodeURIComponent(pid)}/fragments/${encodeURIComponent(fid)}/confirm`;
+  return client.post<FragmentDto>(
+    path,
+    { expected_revision: params.expectedRevision },
+    { commandId: params.commandId },
+  );
+}

@@ -2405,12 +2405,43 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
-      "behavior": "接明确确认命令，选择不确认。",
-      "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
-      "attempts": [],
-      "acceptance": null
+      "allowlist_scope": "web/features/studio/source/api.ts（纯逻辑追加：ConfirmFragmentParams/confirmFragment）、web/features/studio/source/components/FragmentActions.tsx、web/tests/studio/fragment-actions.test.cjs（主模型裁定：父卡白名单 FragmentActions.tsx/SourceChangeReview.tsx/api.ts 中本卡只触及 FragmentActions.tsx + api.ts + 验证文件）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-12",
+          "result": "submitted"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-12",
+        "contract_version": "2.9",
+        "tested_baseline": "242ae18 + 3 白名单文件（本卡提交）",
+        "scope": "f6_confirm_fragment_ui",
+        "checks": [
+          "主模型独立复验（不复用执行器报告）：node --test web/tests/studio/fragment-actions.test.cjs → 15/15；node --test web/tests/studio/*.test.cjs → 189/189（既有 174 无回归）；cd web && npx tsc --noEmit → exit 0；git status 仅白名单 3 文件。",
+          "F6 提交协议（diff 逐行核对 + mock fetch 测试）：POST /api/studio/projects/{pid}/fragments/{fid}/confirm（pid/fid 均 encodeURIComponent），body = {expected_revision, command_id}（command_id 经 client.post 合并）；expected_revision 取该行 fragment.object_ref.revision（真实服务端值）；一切错误原样透传不重试（409 revision_conflict object.kind=fragment、422 precondition_failed reason=not_candidate、422 validation_failed rule=reused、404 not_found、network 测试断言请求恰 1 次 + details 逐字段透传）。",
+          "确认按钮仅 candidate（卡面\"选择不确认\"）：FragmentActions 每行仅 state === \"candidate\" 渲染「确认」按钮，其他状态（confirmed/retired/pending_review）无任何确认动作（字符串断言 + 组件 diff 核对）。",
+          "显式动作可辨认（卡面验收）：仅 onClick 显式点击（无自动确认——useEffect 块内无 confirmFragment 调用，字符串断言）；每次点击 crypto.randomUUID() 恰一次（测试断言源码恰 1 处）；提交中该行按钮 disabled（防双击）。",
+          "刷新结果一致（卡面验收）：成功 → 清除该行错误 + setRefreshTick 内部重取（列表状态标签更新为已确认，已确认行不再显示确认按钮）；新取数成功 = 新快照，旧行内确认错误一并清除（防陈旧错误）。",
+          "过期/断网可恢复（卡面验收）：失败 → 该行 setError(res) 保留行与按钮（不隐藏、不退出）；行内错误三分支——revision_conflict「片段版本已变化，请刷新后重试。」/ precondition_failed「片段状态已变化，请刷新后重试。」/ 其他显示 error.message。",
+          "三态分开（与 FragmentList 一致）：「正在加载片段…」（role=status）/「片段列表读取失败：{message}」+ 重试（role=alert）/「还没有片段。」（空态 ≠ 读失败）；走 fetchAllFragments 全量翻页（不直调单页 listFragments）；状态标签复用 FragmentList 导出的 fragmentStateLabel（候选/已确认/待复核/已退役四值）。",
+          "组件不直接 fetch（走 client）、不导航（无 router.push/window.location）、无硬编码样例文本、styled-jsx 作用域独立（.fragment-actions*）。"
+        ],
+        "evidence": [
+          "web/features/studio/source/api.ts（第 370 行起追加：ConfirmFragmentParams/confirmFragment）",
+          "web/features/studio/source/components/FragmentActions.tsx（新建）",
+          "web/tests/studio/fragment-actions.test.cjs（15 项：9 纯逻辑 + 6 组件字符串断言）"
+        ],
+        "limitations": [
+          "浏览器实测（真实点击确认交互）待 GATE-02 关键浏览器连续操作门验收；本轮以纯逻辑 vm 测试 + 组件字符串断言为准（与 SOURCE-12/13 同一验收深度）。",
+          "FragmentActions 尚未接入工作台壳（与 FragmentList/SourceReader 同为独立组件），接入归 UI 批次。"
+        ]
+      }
     },
     {
       "id": "SOURCE-14-b",
