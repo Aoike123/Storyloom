@@ -1548,6 +1548,60 @@
       }
     },
     {
+      "id": "SOURCE-01-f",
+      "parent_id": "SOURCE-01",
+      "title": "来源版本列表",
+      "kind": "atomic",
+      "owner": "executor",
+      "spec": "execution/tasks/02-source.md",
+      "requires": [
+        "DB-01",
+        "BASE-02",
+        "SOURCE-01-d"
+      ],
+      "product_rules": [
+        "R03",
+        "R04",
+        "R11"
+      ],
+      "status": "accepted",
+      "dispatchable": false,
+      "behavior": "来源版本列表（倒序，含 fragment_count 计算值），纯读。",
+      "allowlist_scope": "backend/studio/sources/{service,api}.py + tests/studio/test_sources.py（追加）",
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-12",
+          "result": "interrupted（执行器在产出文件后耗尽上下文；工作树保留 3 白名单文件变更）"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-12",
+        "contract_version": "2.9",
+        "tested_baseline": "0a4b0ab + 3 白名单文件（本卡提交）",
+        "scope": "source_list_command_s2",
+        "checks": [
+          "主模型独立复验（不复用执行器报告）：.venv/bin/python -m pytest tests/studio/test_sources.py → 27/27（17 既有 S1 + 10 新增 S2）；.venv/bin/python -m pytest tests/studio/ → 371/371 无回归；git status 仅白名单 3 文件（M service.py / M api.py / M test_sources.py）。",
+          "S2 冻结行为逐条（diff 逐行核对 + 测试断言）：GET /projects/{pid}/sources[?cursor=]；200 {items, next_cursor}（倒序，created 降序）；每版本 DTO 恰 9 字段（id/previous_revision_id/raw_hash/canonical_hash/offset_policy/char_length/created_at/is_active/fragment_count）；fragment_count = 该版本未退役片段数（计算值 = count(Fragment where source_revision_id == 该 id AND state != 'retired')）；next_cursor = 末条 id（若无下一页则 null）；纯读（不写任何表、不 commit、不接受 command_id）。",
+          "404 不泄漏存在性（T19/T20）：项目不存在/跨属主 → 404 not_found(kind=project, id=pid)，不区分\"不存在\"与\"属别的项目\"。",
+          "cursor 格式校验（T24）：cursor 非空时必须是合法 ULID（26 字符 Crockford base32，与 make_ulid 同字母表）；非法 → 422 validation_failed(field=cursor, rule=invalid)。",
+          "cursor 分页（T23/T25）：cursor 合法 → 返回 created < cursor 对应修订的 created 的版本（严格小于，避免重复）；cursor 对应修订不存在（跨项目或已删除）→ cursor_rev 为 None → 不过滤，返回全部。",
+          "is_active 指针比对（T22）：项目 active_source_revision_id == 该版本 → is_active = true；否则 false。",
+          "纯读零副作用（T26/T27）：3×GET 零副作用（command_count/revision_count 不变）；service 层无 pending changes。"
+        ],
+        "contract_question_ruling": [
+          "S2 列表路由在任务分解中缺失（SOURCE-01 子卡 a-e 覆盖 P1-P3/S1/S3，无 S2）；本卡补上 S2 后端，填补契约缺口。前端 listSourceRevisions（SOURCE-14-g）已按冻结契约实现，本卡验收后 SourceChangeReview 组件取数不再 404。"
+        ],
+        "evidence": [
+          "backend/studio/sources/service.py（list_source_revisions 函数）",
+          "backend/studio/sources/api.py（GET /projects/{pid}/sources 路由）",
+          "tests/studio/test_sources.py（T18-T27 共 10 项 S2 测试）"
+        ]
+      }
+    },
+    {
       "id": "SOURCE-01",
       "parent_id": null,
       "title": "新项目与来源读写API",
@@ -1561,14 +1615,16 @@
         "SOURCE-01-b",
         "SOURCE-01-c",
         "SOURCE-01-d",
-        "SOURCE-01-e"
+        "SOURCE-01-e",
+        "SOURCE-01-f"
       ],
       "children": [
         "SOURCE-01-a",
         "SOURCE-01-b",
         "SOURCE-01-c",
         "SOURCE-01-d",
-        "SOURCE-01-e"
+        "SOURCE-01-e",
+        "SOURCE-01-f"
       ],
       "product_rules": [
         "R03",

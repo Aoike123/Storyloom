@@ -16,16 +16,17 @@ import hashlib
 import json
 import time
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from ...core.db import make_ulid
+from ...core.db import _CROCKFORD, make_ulid
 from ..contracts.errors import StudioAPIError
 from ..contracts.models import CommandRecord
 from ..projects.models import StudioProject
+from .fragment_models import Fragment
 from .models import SourceRevision
 from .ranges import canonicalize, utf16_len
 
-__all__ = ["import_source", "get_source_revision"]
+__all__ = ["import_source", "get_source_revision", "list_source_revisions"]
 
 # 附录 01 §1：offset_policy 固定常量（响应必回）
 OFFSET_POLICY = "lf-utf16-v1"
@@ -236,3 +237,88 @@ def get_source_revision(session, user, pid, revision_id) -> dict:
         "created_at": rev.created,
         "is_active": project.active_source_revision_id == rev.id,
     }
+
+
+def list_source_revisions(session, user, pid, cursor=None) -> dict:
+    """S2 来源版本列表（附录 01 §2 S2，契约 v2.9）。
+
+    纯读：不写任何表、不 commit、不接受 command_id（附录 00 §3）。
+    行为（冻结）：
+    - 前置：项目不存在或非属主 → 一律 404 not_found（kind=project, id=pid；
+      不泄漏存在性）；
+    - cursor 格式校验：cursor 非空时必须是合法 ULID（26 字符 Crockford
+      base32，与 make_ulid 同字母表）；非法 → 422 validation_failed
+      （field=cursor, rule=invalid）；
+    - 倒序：按 created 降序（最新在前）；cursor 分页：created < cursor 对应
+      修订的 created（严格小于，避免重复）；
+    - 每版本 DTO：id、previous_revision_id、raw_hash、canonical_hash、
+      offset_policy、char_length、created_at（= 模型 created）、is_active
+      （= 项目 active_source_revision_id == 该 id）、fragment_count（该版本
+      未退役片段数，计算值 = count(Fragment where source_revision_id == 该 id
+      AND state != 'retired')）；
+    - 返回 200 {items, next_cursor}：items 为版本列表（倒序）；next_cursor 为
+      下一页 cursor（若无下一页则 null）。
+    """
+    # 1) 项目（属主校验，404 不泄漏存在性）
+    project = session.scalar(select(StudioProject).where(StudioProject.id == pid))
+    if project is None or project.owner_id != user.id:
+        raise StudioAPIError.not_found("project", pid)
+
+    # 2) cursor 格式校验（合法 ULID：26 字符 Crockford base32）
+    if cursor is not None:
+        alphabet = _CROCKFORD.upper()
+        if (
+            not isinstance(cursor, str)
+            or len(cursor) != 26
+            or not all(c in alphabet for c in cursor.upper())
+        ):
+            raise StudioAPIError.validation_failed(
+                [{"field": "cursor", "rule": "invalid", "message": "cursor 格式非法。"}]
+            )
+
+    # 3) 倒序查询（按 created 降序）
+    query = (
+        select(SourceRevision)
+        .where(SourceRevision.project_id == pid)
+        .order_by(SourceRevision.created.desc())
+    )
+    if cursor is not None:
+        # cursor 分页：找到 cursor 对应修订的 created，严格小于（避免重复）
+        cursor_rev = session.scalar(
+            select(SourceRevision).where(SourceRevision.id == cursor)
+        )
+        if cursor_rev is not None:
+            query = query.where(SourceRevision.created < cursor_rev.created)
+        # cursor 对应修订不存在（跨项目或已删除）→ cursor_rev 为 None →
+        # 不过滤，返回全部
+
+    revisions = session.scalars(query).all()
+
+    # 4) 每版本 DTO + fragment_count（未退役片段数，计算值）
+    items = []
+    for rev in revisions:
+        fragment_count = session.scalar(
+            select(func.count())
+            .select_from(Fragment)
+            .where(
+                Fragment.source_revision_id == rev.id,
+                Fragment.state != "retired",
+            )
+        )
+        items.append(
+            {
+                "id": rev.id,
+                "previous_revision_id": rev.previous_revision_id,
+                "raw_hash": rev.raw_hash,
+                "canonical_hash": rev.canonical_hash,
+                "offset_policy": rev.offset_policy,
+                "char_length": rev.char_length,
+                "created_at": rev.created,
+                "is_active": project.active_source_revision_id == rev.id,
+                "fragment_count": fragment_count,
+            }
+        )
+
+    # 5) next_cursor（若无下一页则 null）
+    next_cursor = items[-1]["id"] if len(items) > 0 else None
+    return {"items": items, "next_cursor": next_cursor}

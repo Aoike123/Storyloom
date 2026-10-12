@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from ...core.auth import require_user
 from ...core.db import Session
-from .service import get_source_revision, import_source
+from .service import get_source_revision, import_source, list_source_revisions
 
 router = APIRouter(tags=["studio-sources"])
 
@@ -43,6 +43,21 @@ def import_source_route(
     if result.pop("_replay", None):
         return JSONResponse(status_code=200, content=result)
     return result
+
+
+@router.get("/projects/{pid}/sources")
+def list_source_revisions_route(
+    pid: str,
+    cursor: str | None = None,
+    db=Depends(_session),
+    user=Depends(require_user),
+):
+    """S2 来源版本列表（附录 01 §2）：GET /projects/{pid}/sources[?cursor=]。
+
+    200 {items, next_cursor}（倒序，含 fragment_count 计算值）；404 project；
+    422 cursor 非法。纯读。
+    """
+    return list_source_revisions(db, user, pid, cursor)
 
 
 @router.get("/projects/{pid}/sources/{revision_id}")
