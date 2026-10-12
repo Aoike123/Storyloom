@@ -24,6 +24,7 @@ from .db import (
 from .auth import active_user, assert_owner
 from . import creative, director
 from . import story_sources
+from . import source_ranges
 from .skill_runtime import call_node
 from .production_nodes import (
     NODES,
@@ -251,6 +252,283 @@ def import_project_story(pid: str, body: StoryImportIn):
     return workspace(pid)
 
 
+# ---------------------------------------------------------------------------
+# D03 precise text ranges: candidate/confirm/boundary/delete/full-plan/migrate.
+# Contract: docs/workbench-redesign-2026-10-02/d03-range-contract.md
+# ---------------------------------------------------------------------------
+
+
+def _source_content(db, row):
+    """The project's stored original text and its current revision."""
+    source = db.get(Record, row.data.get("source_id", ""))
+    if not source:
+        return None, None
+    content = source.data.get("content") or ""
+    revision = source.data.get("content_hash") or source_ranges.revision_of(content)
+    return content, revision
+
+
+def _load_fragments(db, row):
+    """All source_fragment records for this project as serialized dicts (for conflict checks)."""
+    fragments = []
+    for rec in db.scalars(
+        select(Record).where(Record.kind == "source_fragment", Record.owner_id == row.owner_id)
+    ):
+        if rec.data.get("work_id") == row.id:
+            fragments.append(source_ranges.fragment_dict(rec))
+    return fragments
+
+
+def _check_revision(body_revision, current_revision):
+    if body_revision != current_revision:
+        raise source_ranges.RangeConflict("正文版本已变化，请刷新后重新划选。")
+
+
+def _derive_name(content, start, end):
+    """A readable fragment name from the first non-empty line of the range (mirrors the frontend)."""
+    text = content[start:end]
+    for line in text.split("\n"):
+        t = line.strip()
+        if t:
+            return (t[:14] + "…") if len(t) > 14 else t
+    return "新片段"
+
+
+def _next_fragment_id(db, row):
+    """Allocate the next stable fragment id from a per-project counter, so deleted ids are never
+    reused (contract §6). The counter is monotonic and survives deletions."""
+    counter = int(row.data.get("fragment_id_counter") or 0)
+    counter += 1
+    row.data = {**row.data, "fragment_id_counter": counter}
+    row.version += 1
+    return f"F{counter:02d}"
+
+
+class FragmentRangeIn(BaseModel):
+    start: int
+    end: int
+
+
+class FragmentCreateIn(BaseModel):
+    range: FragmentRangeIn
+    name: str | None = None
+    expected_revision: str
+
+
+@router.get("/projects/{pid}/source/fragments")
+def list_fragments(pid: str):
+    with Session() as db:
+        row = get_work(db, pid)
+        content, revision = _source_content(db, row)
+        fragments = _load_fragments(db, row)
+        for f in fragments:
+            f["stale"] = bool(f["revision"] and f["revision"] != revision)
+    return {"revision": revision, "fragments": fragments}
+
+
+@router.post("/projects/{pid}/source/fragments")
+def create_fragment(pid: str, body: FragmentCreateIn):
+    with Session.begin() as db:
+        row = get_work(db, pid)
+        content, revision = _source_content(db, row)
+        if content is None:
+            raise HTTPException(404, "项目还没有原文，请先导入故事。")
+        _check_revision(body.expected_revision, revision)
+        start, end = body.range.start, body.range.end
+        issues = source_ranges.validate_range(start, end, content)
+        if issues:
+            raise HTTPException(422, "；".join(issues))
+        fragments = _load_fragments(db, row)
+        conflicts = source_ranges.find_conflicts(start, end, fragments)
+        if conflicts:
+            names = "、".join(f"{f['fragment_id']}「{f['name']}」" for f in conflicts)
+            raise source_ranges.RangeConflict(
+                "选区与 " + names + " 重叠，请在未标注文字中重新划选。"
+            )
+        fid = _next_fragment_id(db, row)
+        name = (body.name or "").strip()[:80] or _derive_name(content, start, end)
+        now = time.time()
+        data = {
+            "work_id": row.id,
+            "fragment_id": fid,
+            "name": name,
+            "status": "candidate",
+            "origin": "user_cut",
+            "range": {"start": start, "end": end},
+            "revision": revision,
+            "stale": False,
+            "created": now,
+            "updated": now,
+        }
+        rec = Record(
+            id=uid("frag"),
+            kind="source_fragment",
+            owner_id=row.owner_id,
+            visibility="private",
+            data=data,
+        )
+        db.add(rec)
+    return {"fragment": source_ranges.fragment_dict(rec)}
+
+
+@router.post("/projects/{pid}/source/fragments/{fid}/confirm")
+def confirm_fragment(pid: str, fid: str):
+    with Session.begin() as db:
+        row = get_work(db, pid)
+        rec = _find_fragment(db, row, fid)
+        if rec.data.get("status") == "confirmed":
+            raise HTTPException(409, "该片段已确认。")
+        rec.data = {**rec.data, "status": "confirmed", "updated": time.time()}
+    return {"fragment": source_ranges.fragment_dict(rec)}
+
+
+class FragmentUpdateIn(BaseModel):
+    range: FragmentRangeIn | None = None
+    name: str | None = None
+    expected_revision: str
+
+
+@router.put("/projects/{pid}/source/fragments/{fid}")
+def update_fragment(pid: str, fid: str, body: FragmentUpdateIn):
+    with Session.begin() as db:
+        row = get_work(db, pid)
+        content, revision = _source_content(db, row)
+        if content is None:
+            raise HTTPException(404, "项目还没有原文，请先导入故事。")
+        _check_revision(body.expected_revision, revision)
+        rec = _find_fragment(db, row, fid)
+        start = body.range.start if body.range else rec.data["range"]["start"]
+        end = body.range.end if body.range else rec.data["range"]["end"]
+        issues = source_ranges.validate_range(start, end, content)
+        if issues:
+            raise HTTPException(422, "；".join(issues))
+        fragments = _load_fragments(db, row)
+        conflicts = [
+            f
+            for f in source_ranges.find_conflicts(start, end, fragments)
+            if f["fragment_id"] != fid
+        ]
+        if conflicts:
+            names = "、".join(f"{f['fragment_id']}「{f['name']}」" for f in conflicts)
+            raise source_ranges.RangeConflict(
+                "新范围与 " + names + " 重叠，请调整边界。"
+            )
+        name = (
+            (body.name or "").strip()[:80]
+            if body.name is not None
+            else rec.data.get("name")
+        )
+        rec.data = {
+            **rec.data,
+            "range": {"start": start, "end": end},
+            "name": name,
+            "revision": revision,
+            "stale": False,
+            "updated": time.time(),
+        }
+    return {"fragment": source_ranges.fragment_dict(rec)}
+
+
+@router.delete("/projects/{pid}/source/fragments/{fid}")
+def delete_fragment(pid: str, fid: str):
+    with Session.begin() as db:
+        row = get_work(db, pid)
+        rec = _find_fragment(db, row, fid)
+        db.delete(rec)
+    return {"ok": True}
+
+
+class FragmentPlanIn(BaseModel):
+    fragments: list[FragmentRangeIn]
+    expected_revision: str
+    production_start: int | None = None
+    production_end: int | None = None
+
+
+@router.post("/projects/{pid}/source/fragments/plan")
+def submit_plan(pid: str, body: FragmentPlanIn):
+    """Full-cut submission check: order + head/tail coverage + trim/out-of-range, separate from the
+    per-candidate check. It validates and reports; it does not persist (candidate/confirm own the
+    write path). The production range defaults to the whole stored text."""
+    with Session() as db:
+        row = get_work(db, pid)
+        content, revision = _source_content(db, row)
+        if content is None:
+            raise HTTPException(404, "项目还没有原文，请先导入故事。")
+        _check_revision(body.expected_revision, revision)
+        plan_fragments = [
+            {"fragment_id": f"F{i + 1:02d}", "range": {"start": r.start, "end": r.end}}
+            for i, r in enumerate(body.fragments)
+        ]
+        report = source_ranges.check_full_plan(
+            plan_fragments,
+            content,
+            production_start=body.production_start or 0,
+            production_end=body.production_end,
+        )
+    if report["issues"]:
+        raise HTTPException(422, "；".join(report["issues"]))
+    return {"ok": True, "report": report, "fragments": plan_fragments}
+
+
+@router.post("/projects/{pid}/source/fragments/migrate")
+def migrate_fragments(pid: str):
+    """Map legacy paragraph-level source_refs (P numbers) into precise character ranges."""
+    with Session.begin() as db:
+        row = get_work(db, pid)
+        content, revision = _source_content(db, row)
+        if content is None:
+            raise HTTPException(404, "项目还没有原文，请先导入故事。")
+        sid = row.data.get("director_id")
+        current = db.get(Record, sid) if sid else None
+        plan = current.data.get("segments") if current else None
+        segments = (plan or {}).get("segments", [])
+        existing = _load_fragments(db, row)
+        migrated = []
+        for segment in segments:
+            refs = segment.get("source_refs") or []
+            rng = source_ranges.migrate_source_refs(refs, content)
+            if rng is None:
+                continue
+            # idempotent: skip if this exact range was already migrated
+            if any(
+                f["range"] == {"start": rng[0], "end": rng[1]} for f in existing
+            ):
+                continue
+            fid = _next_fragment_id(db, row)
+            data = {
+                "work_id": row.id,
+                "fragment_id": fid,
+                "name": segment.get("title") or "迁移片段",
+                "status": "confirmed",
+                "origin": "migrated",
+                "range": {"start": rng[0], "end": rng[1]},
+                "revision": revision,
+                "stale": False,
+                "created": time.time(),
+                "updated": time.time(),
+            }
+            rec = Record(
+                id=uid("frag"),
+                kind="source_fragment",
+                owner_id=row.owner_id,
+                visibility="private",
+                data=data,
+            )
+            db.add(rec)
+            migrated.append(source_ranges.fragment_dict(rec))
+    return {"migrated": migrated}
+
+
+def _find_fragment(db, row, fid):
+    for rec in db.scalars(
+        select(Record).where(Record.kind == "source_fragment", Record.owner_id == row.owner_id)
+    ):
+        if rec.data.get("work_id") == row.id and rec.data.get("fragment_id") == fid:
+            return rec
+    raise HTTPException(404, "片段不存在。")
+
+
 @router.get("/projects/{pid}")
 def workspace(pid: str):
     with Session() as db:
@@ -273,11 +551,18 @@ def workspace(pid: str):
                     "source_url",
                     "fetched_at",
                     "completeness",
+                    "content_hash",
                 )
             }
             if source
             else None
         )
+        # D03: the current body-text revision and the project's precise source fragments.
+        content, source_revision = _source_content(db, row)
+        data["source_revision"] = source_revision
+        data["fragments"] = _load_fragments(db, row)
+        for f in data["fragments"]:
+            f["stale"] = bool(f["revision"] and f["revision"] != source_revision)
         heartbeat = db.get(Record, "worker_heartbeat")
         data["worker_online"] = bool(
             heartbeat and time.time() - heartbeat.data.get("at", 0) < 120

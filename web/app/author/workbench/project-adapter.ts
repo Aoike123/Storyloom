@@ -2,19 +2,22 @@
 // 纯函数、只读、不写库；缺失字段一律走空态，不伪造记录；示例片段/节点以 isExample 隔离。
 import { type WorkspaceContent } from "./display-model";
 import { type Workspace } from "./workspace-state";
-import { buildSourceModel, type SourceModel } from "./source-model";
+import { buildSourceModel, type ServerFragment, type SourceModel } from "./source-model";
 
 // 现有 work 对象的最小输入形状：只列 mapProject 会触碰的字段，全部可选（缺失即空态）
 export interface WorkInput {
   id?: string;
   title?: string;
   stage?: string;
+  source_revision?: string; // D03：当前正文版本（content_hash）
+  fragments?: ServerFragment[]; // D03：项目真实片段
   source?: {
     work_id?: string;
     title?: string;
     content?: string;
     author_name?: string;
     completeness?: string;
+    content_hash?: string;
   } | null;
   creative?: {
     items?: Array<{
@@ -53,10 +56,14 @@ function sceneOf(shotId?: string): string | undefined {
 export function mapProject(work: WorkInput): WorkbenchContent {
   const source = work.source ?? null;
   const sourceText = source?.content ?? "";
-  const sourceModel = buildSourceModel(
-    sourceText,
-    source?.completeness === "full" ? "import-1" : "import-0",
-  );
+  // D03：正文版本优先取服务端 content_hash；真实片段优先取项目片段（无则按隔离示例）。
+  const revision =
+    work.source_revision ||
+    source?.content_hash ||
+    (source?.completeness === "full" ? "import-1" : "import-0");
+  const sourceModel = buildSourceModel(sourceText, revision, {
+    serverFragments: work.fragments ?? [],
+  });
 
   const cut = empty("cut");
   const script = empty("script");

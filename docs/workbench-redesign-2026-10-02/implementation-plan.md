@@ -153,3 +153,17 @@ F4 通过后，分别讨论故事处理、分镜创建与衔接、人物和场�
 | E（31e791f）  | 项目任务队列弹层（状态由项目 stage 派生）＋来源连线 SVG 覆盖层（区域边缘→节点，rAF 跟随滚动/平移/缩放）                                                        |
 
 验证：每批 `tsc --noEmit` 与 `next build` 通过，`/author/workbench` 首屏 JS 由 61.6→65.8 kB。本开发环境无浏览器截图能力，像素级几何（来源连线对齐、成片时间轴、三区窄屏断点）按交互稿与 React Flow 既有约束实现，**待真机走查确认**；真实片段范围持久化待 D03，对话接入待 D02，剪辑内核/媒体待 D06。
+
+### 7.5 实施进度（D03 · 精确文字范围契约 · 2026-10-11）
+
+定稿并实现 D03 精确文字范围契约（契约见 [d03-range-contract.md](d03-range-contract.md)）：字符计数单位（码点）、换行规范、正文版本（SHA-256）、半开区间 `[start, end)`、冲突校验、旧段落引用迁移与正文变更影响规则。
+
+| 交付 | 说明 |
+| --- | --- |
+| 契约文档 | `docs/workbench-redesign-2026-10-02/d03-range-contract.md`：码点计数、换行、正文版本、半开区间、冲突、迁移、正文变更影响、接口契约 |
+| 后端校验 | `backend/source_ranges.py`：范围合法性（非空/边界/整数）、半开重叠判定、稳定片段 ID 分配、旧 P 编号→字符范围迁移、完整方案检查（顺序＋首尾覆盖＋裁减/范围外） |
+| 后端持久化 | `backend/authors.py`：`source_fragment` 记录（候选/确认/边界/删除/完整方案/迁移）；`GET /projects/{pid}` 附带 `source_revision` 与真实 `fragments`；写入携带 `expected_revision`，版本不匹配返回 409，不悄悄挪动范围 |
+| 前端一致校验 | `web/app/author/workbench/source-model.ts`：码点换算（UTF-16↔码点）、服务端片段映射、API 客户端（候选/确认/边界/删除/完整方案）；划选经码点换算后与同一规则校验 |
+| 前端接入 | `SourceArea.tsx` 真实建立候选（服务端校验＋刷新）、片段列表「确认」按钮；`project-adapter.ts` 用项目真实片段与正文版本构建来源模型 |
+
+验证：`tests/test_source_ranges.py` 25 例全部通过（范围合法性、冲突/相接、ID 不复用、迁移映射、完整方案覆盖、版本匹配与 stale 标记）；`tsc --noEmit` 与 `next build` 通过。像素级几何与真机走查仍待确认；对话接入待 D02，剪辑内核/媒体待 D06。

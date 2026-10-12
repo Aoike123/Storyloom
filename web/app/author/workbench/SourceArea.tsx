@@ -3,8 +3,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, Plus } from "lucide-react";
 import {
   checkRange,
-  deriveFragmentName,
+  codePointAt,
   renderSegments,
+  utf16ToCodePointOffset,
   type FragmentRange,
   type SourceFragment,
   type SourceModel,
@@ -24,7 +25,8 @@ interface Props {
   onCollapse: () => void;
   onJump: (f: SourceFragment) => void;
   onSetPending: (range: FragmentRange | null) => void;
-  onAddCandidate: (f: SourceFragment) => void;
+  onAddCandidate?: (range: FragmentRange) => Promise<void>;
+  onConfirmFragment?: (fragmentId: string) => Promise<void>;
   onImportStory?: (content: string, title: string) => void;
   importBusy?: boolean;
   importError?: string | null;
@@ -52,6 +54,7 @@ export default function SourceArea({
   onJump,
   onSetPending,
   onAddCandidate,
+  onConfirmFragment,
   onImportStory,
   importBusy,
   importError,
@@ -94,11 +97,12 @@ export default function SourceArea({
       }
       return total + nodeOffset;
     };
-    let start = offsetOf(range.startContainer, range.startOffset);
-    let end = offsetOf(range.endContainer, range.endOffset);
+    // TreeWalker 累计的是 UTF-16 码元偏移；契约单位是码点，换算后再做空白裁剪。
+    let start = utf16ToCodePointOffset(source.text, offsetOf(range.startContainer, range.startOffset));
+    let end = utf16ToCodePointOffset(source.text, offsetOf(range.endContainer, range.endOffset));
     if (start > end) [start, end] = [end, start];
-    while (start < end && /\s/.test(source.text[start])) start++;
-    while (end > start && /\s/.test(source.text[end - 1])) end--;
+    while (start < end && /\s/.test(codePointAt(source.text, start) ?? "")) start++;
+    while (end > start && /\s/.test(codePointAt(source.text, end - 1) ?? "")) end--;
     return start < end ? { start, end } : null;
   }
 
@@ -147,23 +151,24 @@ export default function SourceArea({
     return () => clearTimeout(t);
   }, [conflict]);
 
-  function handleCreate() {
-    if (!pendingRange) return;
-    const text = source.text.slice(pendingRange.start, pendingRange.end);
-    const n = fragments.length + 1;
-    onAddCandidate({
-      id: "F" + String(n).padStart(2, "0"),
-      name: deriveFragmentName(text, "新片段 " + String(n).padStart(2, "0")),
-      status: "待确认",
-      origin: "用户切分",
-      progress: "片段边界待确认",
-      task: "script",
-      range: { ...pendingRange },
-      revision: source.revision,
-      isExample: true,
-    });
-    clearPending();
-    window.getSelection()?.removeAllRanges();
+  async function handleCreate() {
+    if (!pendingRange || !onAddCandidate) return;
+    try {
+      await onAddCandidate({ ...pendingRange });
+      clearPending();
+      window.getSelection()?.removeAllRanges();
+    } catch (e) {
+      setConflict(e instanceof Error ? e.message : "建立片段失败，请重试。");
+    }
+  }
+
+  async function handleConfirm(f: SourceFragment) {
+    if (!onConfirmFragment) return;
+    try {
+      await onConfirmFragment(f.id);
+    } catch (e) {
+      setConflict(e instanceof Error ? e.message : "确认片段失败，请重试。");
+    }
   }
 
   const jumpTo = (f: SourceFragment) => {
@@ -353,34 +358,48 @@ export default function SourceArea({
                   </div>
                 ) : (
                   fragments.map((f, i) => (
-                    <button
+                    <div
                       key={f.id}
-                      type="button"
                       className={
                         "workbench-fragment" +
                         (activeId === f.id ? " is-active" : "")
                       }
-                      onClick={() => jumpTo(f)}
                     >
-                      <span className="workbench-fragment-index">{i + 1}</span>
-                      <span className="workbench-fragment-body">
-                        <strong>{f.name}</strong>
-                        <small>
-                          {f.origin} · {f.progress}
-                        </small>
-                        <span
-                          className={
-                            "workbench-fragment-status is-" +
-                            (f.status === "已确认" ? "done" : "todo")
-                          }
-                        >
-                          {f.status}
+                      <button
+                        type="button"
+                        className="workbench-fragment-main"
+                        onClick={() => jumpTo(f)}
+                      >
+                        <span className="workbench-fragment-index">{i + 1}</span>
+                        <span className="workbench-fragment-body">
+                          <strong>{f.name}</strong>
+                          <small>
+                            {f.origin} · {f.progress}
+                          </small>
+                          <span
+                            className={
+                              "workbench-fragment-status is-" +
+                              (f.status === "已确认" ? "done" : "todo")
+                            }
+                          >
+                            {f.status}
+                          </span>
                         </span>
-                      </span>
-                      {f.isExample ? (
-                        <em className="workbench-fragment-example">示例</em>
+                        {f.isExample ? (
+                          <em className="workbench-fragment-example">示例</em>
+                        ) : null}
+                      </button>
+                      {f.status === "待确认" && !f.isExample ? (
+                        <button
+                          type="button"
+                          className="workbench-fragment-confirm"
+                          title="确认该片段"
+                          onClick={() => handleConfirm(f)}
+                        >
+                          确认
+                        </button>
                       ) : null}
-                    </button>
+                    </div>
                   ))
                 )}
               </div>

@@ -98,6 +98,8 @@ interface Props {
   onImportStory?: (content: string, title: string) => void;
   importBusy?: boolean;
   importError?: string | null;
+  onAddCandidate?: (range: { start: number; end: number }) => Promise<void>;
+  onConfirmFragment?: (fragmentId: string) => Promise<void>;
 }
 
 // 以「项目」为核心：项目顶栏 + 五个工作标签 + 三区主体（左：来源区｜中：任务画布/成片｜右：属性面板）。
@@ -116,6 +118,8 @@ export default function WorkbenchShell({
   onImportStory,
   importBusy,
   importError,
+  onAddCandidate,
+  onConfirmFragment,
 }: Props) {
   const active = view.activeWorkspace;
   const activeView = view.byWorkspace[active];
@@ -285,9 +289,8 @@ export default function WorkbenchShell({
               onSetPending={(r) =>
                 dispatch({ type: "SET_PENDING_RANGE", range: r })
               }
-              onAddCandidate={(f) =>
-                dispatch({ type: "ADD_CANDIDATE_FRAGMENT", fragment: f })
-              }
+              onAddCandidate={onAddCandidate}
+              onConfirmFragment={onConfirmFragment}
               onImportStory={onImportStory}
               importBusy={importBusy}
               importError={importError}

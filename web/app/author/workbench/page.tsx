@@ -1,9 +1,14 @@
 "use client";
-import { useEffect, useReducer, useMemo, useState } from "react";
+import { useCallback, useEffect, useReducer, useMemo, useState } from "react";
 import WorkbenchShell from "./WorkbenchShell";
 import { createWorkbenchState, workbenchReducer } from "./workspace-state";
 import { mapProject, type WorkInput } from "./project-adapter";
-import { buildSourceModel, type SourceModel } from "./source-model";
+import {
+  buildSourceModel,
+  confirmFragment,
+  createFragment,
+  type SourceModel,
+} from "./source-model";
 import { authHeaders } from "../../auth";
 import "./workbench.css";
 
@@ -66,16 +71,53 @@ export default function AuthorWorkbench() {
 
   const content = useMemo(() => (work ? mapProject(work) : null), [work]);
 
-  // 生效的来源模型：沿用项目原文；本会话刚导入自己的故事时走干净空白（不预置示例片段）。
+  // 生效的来源模型：沿用项目原文与真实片段（D03）；本会话刚导入自己的故事时走干净空白（不预置示例片段）。
   const source = useMemo<SourceModel | null>(() => {
     if (!work) return null;
     const text = work.source?.content ?? "";
     const revision =
-      work.source?.completeness === "full" ? "import-1" : "import-0";
+      work.source_revision ||
+      work.source?.content_hash ||
+      (work.source?.completeness === "full" ? "import-1" : "import-0");
     return buildSourceModel(text, revision, {
+      serverFragments: work.fragments ?? [],
       withExamples: !importedInSession,
     });
   }, [work, importedInSession]);
+
+  // 重新拉取项目（片段写入后刷新来源模型与真实片段）。
+  const refreshWork = useCallback(async () => {
+    const pid = state.projectId;
+    if (!pid) return;
+    const r = await fetch("/api/author/projects/" + encodeURIComponent(pid));
+    if (!r.ok) return;
+    const d = await r.json().catch(() => null);
+    if (d && typeof d === "object") setWork(d as WorkInput);
+  }, [state.projectId]);
+
+  // D03：真实建立候选片段（服务端校验范围合法、非空、不重叠、版本匹配），成功后刷新。
+  async function addCandidate(range: { start: number; end: number }) {
+    const pid = state.projectId;
+    if (!pid || !source) return;
+    try {
+      await createFragment(pid, range, source.revision);
+      await refreshWork();
+    } catch (e) {
+      throw e;
+    }
+  }
+
+  // D03：确认候选片段（独立操作），成功后刷新。
+  async function confirmFragmentById(fragmentId: string) {
+    const pid = state.projectId;
+    if (!pid) return;
+    try {
+      await confirmFragment(pid, fragmentId);
+      await refreshWork();
+    } catch (e) {
+      throw e;
+    }
+  }
 
   // 真实导入原文：POST /projects/{pid}/story（owner-scoped，带 Authorization 头）。
   // 成功返回刷新后的 workspace（含 source）；导入后落「切分」并停用示例片段预置。
@@ -123,6 +165,8 @@ export default function AuthorWorkbench() {
       onImportStory={importStory}
       importBusy={importBusy}
       importError={importError}
+      onAddCandidate={addCandidate}
+      onConfirmFragment={confirmFragmentById}
     />
   );
 }

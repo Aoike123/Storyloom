@@ -1,12 +1,17 @@
-// 来源区数据模型（A1）：正文版本 + 段落 + 故事片段（连续、非空、不重叠的荧光区域）。
-// 本轮无正式精确文字范围契约（D03 待细化）：真实原文来自 work.source.content；
-// 片段在缺失后端结构时用隔离示例推导（isExample=true，绝不写入项目），仅用于确认交互。
+// 来源区数据模型（A1/D03）：正文版本 + 段落 + 故事片段（连续、非空、不重叠的荧光区域）。
+// D03 契约（docs/workbench-redesign-2026-10-02/d03-range-contract.md）：
+//   - 字符偏移一律以 Unicode 码点计数（JS 字符串索引是 UTF-16 码元，需换算）；
+//   - 正文版本 = 存储正文的 SHA-256 摘要（服务端 content_hash）；
+//   - 范围是半开区间 [start, end)，非空、不重叠（边界相接允许）；
+//   - 候选/确认状态、稳定片段 ID（F01…，永不复用）由服务端权威。
+// 真实片段来自项目数据（work.fragments）；缺失时用隔离示例推导（isExample=true，绝不写入项目）。
 import { type Workspace } from "./workspace-state";
+import { authHeaders } from "../../auth";
 
 export type SourceView = "original" | "fragments";
 
 export interface FragmentRange {
-  start: number; // 半开区间 [start, end)，正文字符偏移
+  start: number; // 半开区间 [start, end)，正文字符偏移（码点）
   end: number;
 }
 
@@ -20,14 +25,26 @@ export interface SourceFragment {
   range: FragmentRange;
   revision: string; // 正文版本
   isExample?: boolean;
+  stale?: boolean; // 正文版本变化后待复核（D03）
 }
 
 export interface SourceModel {
-  revision: string; // 正文版本（导入原稿 hash 派生 / 'import-1'）
+  revision: string; // 正文版本（服务端 content_hash）
   text: string; // 完整原文（连续）
   paragraphs: string[]; // 按空行切分的段落（保留内部换行）
   fragments: SourceFragment[]; // 已标注的荧光区域（按来源顺序）
   isExample: boolean; // 整组片段是否为示例（真实项目无片段结构时为 true）
+}
+
+// 服务端返回的片段形状（D03 接口契约）
+export interface ServerFragment {
+  fragment_id: string;
+  name: string;
+  status: "candidate" | "confirmed";
+  origin: string;
+  range: { start: number; end: number };
+  revision: string;
+  stale?: boolean;
 }
 
 interface Span {
@@ -36,7 +53,49 @@ interface Span {
   end: number;
 }
 
-// 按“空行（连续 ≥2 换行）”切分正文，返回每段的原文与其在全文中的半开字符区间。
+// ---------------------------------------------------------------------------
+// 码点换算（契约单位 = Unicode 码点；JS 字符串索引 = UTF-16 码元）
+// ---------------------------------------------------------------------------
+
+// 把 UTF-16 偏移（JS 字符串索引）换算成码点偏移（契约单位）。
+export function utf16ToCodePointOffset(text: string, utf16Offset: number): number {
+  let cp = 0;
+  for (let i = 0; i < utf16Offset && i < text.length; i++) {
+    cp++;
+    const code = text.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) i++; // 跳过低代理项
+  }
+  return cp;
+}
+
+// 把码点偏移换算成 UTF-16 偏移。
+export function codePointToUtf16Offset(text: string, cpOffset: number): number {
+  let utf16 = 0;
+  let cp = 0;
+  while (utf16 < text.length && cp < cpOffset) {
+    cp++;
+    const code = text.charCodeAt(utf16);
+    if (code >= 0xd800 && code <= 0xdbff) utf16++;
+    utf16++;
+  }
+  return utf16;
+}
+
+// 取某码点偏移处的字符（用于码点空间的空白判断）。
+export function codePointAt(text: string, cpOffset: number): string | undefined {
+  const utf16 = codePointToUtf16Offset(text, cpOffset);
+  if (utf16 >= text.length) return undefined;
+  return text[utf16];
+}
+
+// 按码点偏移切取正文（契约单位）。
+export function sliceCodePoints(text: string, start: number, end: number): string {
+  const utf16Start = codePointToUtf16Offset(text, start);
+  const utf16End = codePointToUtf16Offset(text, end);
+  return text.slice(utf16Start, utf16End);
+}
+
+// 按“空行（连续 ≥2 换行）”切分正文，返回每段的原文与其在全文中的半开字符区间（码点）。
 // 不用 display 段号或 DOM 坐标——偏移是全文真实字符位置（与 D03 范围契约方向一致）。
 export function splitParagraphSpans(text: string): Span[] {
   const spans: Span[] = [];
@@ -62,6 +121,26 @@ export function deriveFragmentName(spanText: string, fallback: string): string {
   const t = line.trim();
   if (!t) return fallback;
   return t.length > 14 ? t.slice(0, 14) + "…" : t;
+}
+
+// 把服务端片段映射为工作台展示模型（真实片段，非示例）。
+export function mapServerFragments(
+  serverFragments: ServerFragment[],
+  text: string,
+  revision: string,
+): SourceFragment[] {
+  return serverFragments.map((f) => ({
+    id: f.fragment_id,
+    name: f.name,
+    status: f.status === "confirmed" ? "已确认" : "待确认",
+    origin: f.origin === "migrated" ? "迁移" : "用户切分",
+    progress: f.status === "confirmed" ? "已确认" : "片段边界待确认",
+    task: "script",
+    range: { start: f.range.start, end: f.range.end },
+    revision: f.revision || revision,
+    isExample: false,
+    stale: f.stale,
+  }));
 }
 
 // 用连续段落组推导隔离示例片段：每次 2 段为一块，最多 3 块（覆盖正文前部，尾部留作未标注，
@@ -98,28 +177,31 @@ export function computeExampleFragments(spans: Span[]): SourceFragment[] {
 }
 
 // 从完整原文构造 SourceModel：真实正文 + 段落 + 片段。
-// withExamples 默认 true（沿用隔离示例片段演示片段→节点流程）；用户刚导入自己的故事时传 false，
-// 得到干净空白（不预置示例），由用户在原文中划选建立真实片段。
+// 优先使用服务端真实片段（serverFragments）；无真实片段时按 withExamples 决定是否预置隔离示例。
 export function buildSourceModel(
   text: string,
   revision: string,
-  opts?: { withExamples?: boolean },
+  opts?: { withExamples?: boolean; serverFragments?: ServerFragment[] },
 ): SourceModel {
-  const trimmed = (text ?? "").trim();
-  const spans = splitParagraphSpans(trimmed);
+  const spans = splitParagraphSpans(text ?? "");
+  const serverFragments = opts?.serverFragments ?? [];
   const fragments =
-    opts?.withExamples === false ? [] : computeExampleFragments(spans);
+    serverFragments.length > 0
+      ? mapServerFragments(serverFragments, text, revision)
+      : opts?.withExamples === false
+        ? []
+        : computeExampleFragments(spans);
   return {
     revision,
-    text: trimmed,
+    text: text ?? "",
     paragraphs: spans.map((s) => s.text),
     fragments,
-    isExample: fragments.length > 0,
+    isExample: fragments.length > 0 && fragments.every((f) => f.isExample),
   };
 }
 
-// 划选范围校验（A2 用）：连续、非空、边界合法，且与已有片段不重叠（重复/部分相交/包含都阻止，
-// 边界相接允许）。前端即时反馈与服务端最终校验方向一致。
+// 划选范围校验（A2/D03 用）：连续、非空、边界合法，且与已有片段不重叠（重复/部分相交/包含都阻止，
+// 边界相接允许）。前端即时反馈与服务端最终校验一致（码点单位）。
 export function checkRange(
   range: FragmentRange | null,
   text: string,
@@ -140,7 +222,7 @@ export function checkRange(
       conflicts: [],
     };
   }
-  if (!text.slice(range.start, range.end).trim()) {
+  if (!sliceCodePoints(text, range.start, range.end).trim()) {
     return { valid: false, reason: "选区不能为空白。", conflicts: [] };
   }
   const conflicts = existing.filter(
@@ -190,13 +272,125 @@ export function renderSegments(
   let cursor = 0;
   for (const m of marks) {
     if (m.start < cursor) continue; // 已被前一块覆盖，跳过
-    if (m.start > cursor) out.push({ text: text.slice(cursor, m.start) });
+    if (m.start > cursor) out.push({ text: sliceCodePoints(text, cursor, m.start) });
     out.push({
-      text: text.slice(m.start, m.end),
+      text: sliceCodePoints(text, m.start, m.end),
       region: { id: m.id, kind: m.kind },
     });
     cursor = m.end;
   }
-  if (cursor < text.length) out.push({ text: text.slice(cursor) });
+  if (cursor < text.length) out.push({ text: sliceCodePoints(text, cursor, text.length) });
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// D03 API 客户端（真实持久化：候选/确认/边界调整/删除/完整方案）
+// ---------------------------------------------------------------------------
+
+async function _json(r: Response): Promise<any> {
+  return r.json().catch(() => ({}));
+}
+
+function _detail(r: Response, body: any, fallback: string): string {
+  return typeof body?.detail === "string" ? body.detail : fallback;
+}
+
+export interface FragmentCreateResult {
+  fragment: ServerFragment;
+}
+
+// 建立候选片段（服务端校验范围合法、非空、不重叠、版本匹配）。
+export async function createFragment(
+  pid: string,
+  range: FragmentRange,
+  expectedRevision: string,
+  name?: string,
+): Promise<ServerFragment> {
+  const r = await fetch(`/api/author/projects/${encodeURIComponent(pid)}/source/fragments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      range: { start: range.start, end: range.end },
+      name: name || null,
+      expected_revision: expectedRevision,
+    }),
+  });
+  const d = await _json(r);
+  if (!r.ok) throw new Error(_detail(r, d, "建立片段失败，请重试。"));
+  return d.fragment;
+}
+
+// 确认候选片段（独立操作，不因建立/浏览/AI 返回自动确认）。
+export async function confirmFragment(
+  pid: string,
+  fragmentId: string,
+): Promise<ServerFragment> {
+  const r = await fetch(
+    `/api/author/projects/${encodeURIComponent(pid)}/source/fragments/${encodeURIComponent(fragmentId)}/confirm`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: "{}",
+    },
+  );
+  const d = await _json(r);
+  if (!r.ok) throw new Error(_detail(r, d, "确认片段失败，请重试。"));
+  return d.fragment;
+}
+
+// 调整片段边界/名称（整组冲突校验 + 版本匹配）。
+export async function updateFragment(
+  pid: string,
+  fragmentId: string,
+  range: FragmentRange,
+  expectedRevision: string,
+  name?: string,
+): Promise<ServerFragment> {
+  const r = await fetch(
+    `/api/author/projects/${encodeURIComponent(pid)}/source/fragments/${encodeURIComponent(fragmentId)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        range: { start: range.start, end: range.end },
+        name: name || null,
+        expected_revision: expectedRevision,
+      }),
+    },
+  );
+  const d = await _json(r);
+  if (!r.ok) throw new Error(_detail(r, d, "调整片段失败，请重试。"));
+  return d.fragment;
+}
+
+// 删除片段（稳定 ID 永不复用）。
+export async function deleteFragment(
+  pid: string,
+  fragmentId: string,
+): Promise<void> {
+  const r = await fetch(
+    `/api/author/projects/${encodeURIComponent(pid)}/source/fragments/${encodeURIComponent(fragmentId)}`,
+    { method: "DELETE", headers: { ...authHeaders() } },
+  );
+  const d = await _json(r);
+  if (!r.ok) throw new Error(_detail(r, d, "删除片段失败，请重试。"));
+}
+
+// 完整切分方案检查（顺序 + 首尾覆盖 + 裁减/范围外），与候选检查分开。
+export async function submitPlan(
+  pid: string,
+  ranges: FragmentRange[],
+  expectedRevision: string,
+): Promise<{ ok: boolean; report: any }> {
+  const r = await fetch(`/api/author/projects/${encodeURIComponent(pid)}/source/fragments/plan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      fragments: ranges.map((x) => ({ start: x.start, end: x.end })),
+      expected_revision: expectedRevision,
+    }),
+  });
+  const d = await _json(r);
+  if (!r.ok) throw new Error(_detail(r, d, "完整方案校验失败，请重试。"));
+  return d;
 }
