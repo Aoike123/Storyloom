@@ -12,9 +12,9 @@
 
 ## 运行来源与入口
 
-- 实测 `http://127.0.0.1:3001/` 返回新项目首页，3001 的 Next 进程目录为 `/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web`。本次所见页面来自主目录新代码。
+- 实测 `http://127.0.0.1:3001/` 返回新项目首页，3001 的 Next 进程目录为当时的 `/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web`（机器迁移后该绝对路径已失效，以下实现证据统一改用仓库相对路径）。本次所见页面来自主目录新代码。
 - `/author` 和 `/author/workbench` 都仍可访问。旧页面实际显示“返回故事市场”“微小说”等旧文案。
-- [ProjectHome.tsx](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/ProjectHome.tsx:126)的新建、继续操作进入新工作台；[旧作者页](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/page.tsx:37)保留生产进度订阅及制作操作；[新工作台入口](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/page.tsx:10)则明确选择与旧生产流程并存。
+- [ProjectHome.tsx](../../../web/app/ProjectHome.tsx:126)的新建、继续操作进入新工作台；[旧作者页](../../../web/app/author/page.tsx:37)保留生产进度订阅及制作操作；[新工作台入口](../../../web/app/author/workbench/page.tsx:10)则明确选择与旧生产流程并存。
 - 因此“新旧混用”不是观察错觉，也没有证据表明是浏览器随机切换版本：两套路由与职责确实同时存在。新页面没有提供完成制作的统一路径；这里只确认能力分布，没有声称它会自动跳转到旧页面。
 - 当前 Codex 工作树停在 `eccfa99`，主目录已到 `d43b51f`，另有设计文档未提交。这是后续实施需处理的版本风险，但不是 3001 当前页面偏差的运行原因。
 
@@ -22,16 +22,16 @@
 
 | 优先级 | 问题与实际影响 | 实现证据 |
 | --- | --- | --- |
-| P1 | **真实项目加载示例片段。** 刚导入时片段为空，重新初始化却默认按两段一组生成最多三个 Fxx 片段，带“用户切分”“AI 建议·用户确认”“已确认”等预置状态。后端已有 Gxx 切分不参与来源列表。示例标记并未阻止它们占用原文选区或参与跳转。 | [page.tsx:61](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/page.tsx:61)、[source-model.ts:67](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/source-model.ts:67) |
-| P1 | **来源状态无法稳定恢复。** 用户新建候选只存于 reducer，刷新不保留，没有候选确认操作；更换正文只更换数据和起始标签，旧候选、范围及上下文仍留下。正文版本用 completeness 派生的 import-1/import-0 代替真实身份，不同正文无法据此区分。 | [workspace-state.ts:110](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/workspace-state.ts:110)、[SourceArea.tsx:141](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/SourceArea.tsx:141)、[page.tsx:65](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/page.tsx:65) |
-| P1 | **画布收不到后续节点变化。** React Flow 节点只从初始 props 建立一次，异步项目数据和新候选不能更新实际画布；节点计数却使用最新 props。外部传入的 selectedId 也未消费，来源跳转与画布选中不一致。 | [CanvasViewport.tsx:83](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/CanvasViewport.tsx:83) |
-| P1 | **来源连线不存在，也未实现确认的关系结构。** 查找了实际 DOM 中不存在的节点 ID；即使修复查找，也只有一条直线，没有整块高亮的单一起点、共同主干及动作/对白分支。资产出现引用的连线没有接入。 | [SourceLines.tsx:35](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/SourceLines.tsx:35)、[WorkbenchShell.tsx:97](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/WorkbenchShell.tsx:97) |
-| P1 | **成片来源跳转会离开剪辑，返回后本地编辑丢失。** JUMP_FRAGMENT 无成片例外，按片段 task 切到其他标签；FilmEditor 的轨道只存在组件内，卸载后恢复初始样例。左侧列表也没有真正承担视频资源选用，而是在主体内再造一份资源列表。 | [workspace-state.ts:114](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/workspace-state.ts:114)、[FilmEditor.tsx:31](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/FilmEditor.tsx:31) |
-| P1 | **真实资产、镜头、视频被削成轻量卡片。** 适配器仅保留少量 ID、标题和 group，忽略 segments、episodes、jobs，丢弃媒体与采用版本。剧本/裁减字段只是只读 span，成片预览只是图标和名称；生产能力没有迁入新工作台。 | [project-adapter.ts:8](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/project-adapter.ts:8)、[PreviewNode.tsx:26](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/PreviewNode.tsx:26)、[FilmEditor.tsx:96](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/FilmEditor.tsx:96) |
-| P1 | **属性和步骤对话未接到统一对象上下文。** 成片选中状态只在 FilmEditor 内，属性面板仍读画布状态；其他对象的“归属”可能只是名称或角色分类，来源、版本大量缺失。对话发送永久禁用，没有历史；成片分支根本没有对话入口。 | [WorkbenchShell.tsx:219](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/WorkbenchShell.tsx:219)、[ContextPanel.tsx:32](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/ContextPanel.tsx:32)、[ConversationBar.tsx:29](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/ConversationBar.tsx:29) |
-| P2 | **“任务队列”只是固定阶段列表。** 之前阶段标完成、当前阶段标进行中，不能表达真实任务的失败、重试、目标与返回上下文。新工作台只在挂载时读取项目，后台任务完成不会主动同步。 | [TaskQueue.tsx:25](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/TaskQueue.tsx:25)、[page.tsx:23](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/author/workbench/page.tsx:23) |
+| P1 | **真实项目加载示例片段。** 刚导入时片段为空，重新初始化却默认按两段一组生成最多三个 Fxx 片段，带“用户切分”“AI 建议·用户确认”“已确认”等预置状态。后端已有 Gxx 切分不参与来源列表。示例标记并未阻止它们占用原文选区或参与跳转。 | [page.tsx:61](../../../web/app/author/workbench/page.tsx:61)、[source-model.ts:67](../../../web/app/author/workbench/source-model.ts:67) |
+| P1 | **来源状态无法稳定恢复。** 用户新建候选只存于 reducer，刷新不保留，没有候选确认操作；更换正文只更换数据和起始标签，旧候选、范围及上下文仍留下。正文版本用 completeness 派生的 import-1/import-0 代替真实身份，不同正文无法据此区分。 | [workspace-state.ts:110](../../../web/app/author/workbench/workspace-state.ts:110)、[SourceArea.tsx:141](../../../web/app/author/workbench/SourceArea.tsx:141)、[page.tsx:65](../../../web/app/author/workbench/page.tsx:65) |
+| P1 | **画布收不到后续节点变化。** React Flow 节点只从初始 props 建立一次，异步项目数据和新候选不能更新实际画布；节点计数却使用最新 props。外部传入的 selectedId 也未消费，来源跳转与画布选中不一致。 | [CanvasViewport.tsx:83](../../../web/app/author/workbench/CanvasViewport.tsx:83) |
+| P1 | **来源连线不存在，也未实现确认的关系结构。** 查找了实际 DOM 中不存在的节点 ID；即使修复查找，也只有一条直线，没有整块高亮的单一起点、共同主干及动作/对白分支。资产出现引用的连线没有接入。 | [SourceLines.tsx:35](../../../web/app/author/workbench/SourceLines.tsx:35)、[WorkbenchShell.tsx:97](../../../web/app/author/workbench/WorkbenchShell.tsx:97) |
+| P1 | **成片来源跳转会离开剪辑，返回后本地编辑丢失。** JUMP_FRAGMENT 无成片例外，按片段 task 切到其他标签；FilmEditor 的轨道只存在组件内，卸载后恢复初始样例。左侧列表也没有真正承担视频资源选用，而是在主体内再造一份资源列表。 | [workspace-state.ts:114](../../../web/app/author/workbench/workspace-state.ts:114)、[FilmEditor.tsx:31](../../../web/app/author/workbench/FilmEditor.tsx:31) |
+| P1 | **真实资产、镜头、视频被削成轻量卡片。** 适配器仅保留少量 ID、标题和 group，忽略 segments、episodes、jobs，丢弃媒体与采用版本。剧本/裁减字段只是只读 span，成片预览只是图标和名称；生产能力没有迁入新工作台。 | [project-adapter.ts:8](../../../web/app/author/workbench/project-adapter.ts:8)、[PreviewNode.tsx:26](../../../web/app/author/workbench/PreviewNode.tsx:26)、[FilmEditor.tsx:96](../../../web/app/author/workbench/FilmEditor.tsx:96) |
+| P1 | **属性和步骤对话未接到统一对象上下文。** 成片选中状态只在 FilmEditor 内，属性面板仍读画布状态；其他对象的“归属”可能只是名称或角色分类，来源、版本大量缺失。对话发送永久禁用，没有历史；成片分支根本没有对话入口。 | [WorkbenchShell.tsx:219](../../../web/app/author/workbench/WorkbenchShell.tsx:219)、[ContextPanel.tsx:32](../../../web/app/author/workbench/ContextPanel.tsx:32)、[ConversationBar.tsx:29](../../../web/app/author/workbench/ConversationBar.tsx:29) |
+| P2 | **“任务队列”只是固定阶段列表。** 之前阶段标完成、当前阶段标进行中，不能表达真实任务的失败、重试、目标与返回上下文。新工作台只在挂载时读取项目，后台任务完成不会主动同步。 | [TaskQueue.tsx:25](../../../web/app/author/workbench/TaskQueue.tsx:25)、[page.tsx:23](../../../web/app/author/workbench/page.tsx:23) |
 
-后端[项目读取接口](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/backend/authors.py:164)已经提供 jobs、production_steps、segments、episodes 和 creative 数据。新 UI 的部分缺口是未适配这些现有字段；精确文字范围、版本迁移、对话和剪辑内核则确实仍需正式契约，不能把两种原因混在一起。
+后端[项目读取接口](../../../backend/authors.py:164)已经提供 jobs、production_steps、segments、episodes 和 creative 数据。新 UI 的部分缺口是未适配这些现有字段；精确文字范围、版本迁移、对话和剪辑内核则确实仍需正式契约，不能把两种原因混在一起。
 
 ## 浏览器复现记录
 
@@ -49,7 +49,7 @@
 
 实测公开项目接口返回 HTTP 200、项目数为 0，首页空态在这次观察中对应真实空列表。没有证据把它归为接口报错或缓存问题；本次也未核实文档所述历史数据重置是否发生。
 
-同时，[D09 主页设计](../archive/pre-rebuild/workbench/d09-project-entry-design.md)包含封面、搜索、主题切换和同项目多成片；[当前主页](/home/aoike/Project/Agent_Orchestration/workflow/Storyloom/web/app/ProjectHome.tsx:201)主要是文字卡片和单 release 入口，未达到文档列出的界面范围。
+同时，[D09 主页设计](../archive/pre-rebuild/workbench/d09-project-entry-design.md)包含封面、搜索、主题切换和同项目多成片；[当前主页](../../../web/app/ProjectHome.tsx:201)主要是文字卡片和单 release 入口，未达到文档列出的界面范围。
 
 工作台已有连续原文、两种来源视图，以及非成片工作区的拖动/平移/缩放基础。阅读区仍被压在默认 288px 栏内，顶部按钮挤压标题，1280px 测试视口中“故事来源”已换行；主体重复资源栏和常驻属性面板又压缩了成片编辑空间。更关键的落差是缺少真实来源与对象关系、片段上下文和步骤对话，不能只用颜色、间距或卡片样式调整解决。
 

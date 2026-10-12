@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "plan_version": "2.1",
+  "plan_version": "2.2",
   "contract_version": "2.9",
   "product_version": "2.0",
-  "updated": "2026-10-04",
+  "updated": "2026-10-13",
   "authority": "root_acceptance_only",
   "implementation": {
     "root": "/home/aoike/Project/Agent_Orchestration/workflow/Storyloom",
@@ -65,13 +65,21 @@
       "repeat_user_confirmation_required": false
     },
     "legacy_workflow_is_implementation_standard": false,
-    "new_workflow_basis": "当前产品R规则及ROOT-02/04重新冻结的命令/任务/提案操作表；旧节点、prompt payload、阶段门槛与旧专用测试不构成验收依据。"
+    "new_workflow_basis": "当前产品R规则及ROOT-02/04重新冻结的命令/任务/提案操作表；旧节点、prompt payload、阶段门槛与旧专用测试不构成验收依据。",
+    "dispatch": {
+      "max_parallel_subtasks": 3,
+      "scope": "运行中的实现、只读和返修子任务；不含主模型",
+      "requires": "全部依赖 accepted、契约冻结、文件白名单无交集、可变资源隔离",
+      "integration": "主模型逐项审查、复验、提交和入账；执行器不得提交或改变共享 Git 状态",
+      "shared_checkout": "只检查自己的白名单；其他已分配任务的无关改动可存在；HEAD 前移由主模型通知并核对",
+      "rules": "execution/implementation-plan.md §3"
+    }
   },
   "counts": {
     "parents": 90,
-    "families": 28,
-    "children": 108,
-    "leaves": 170
+    "families": 29,
+    "children": 110,
+    "leaves": 171
   },
   "tasks": [
     {

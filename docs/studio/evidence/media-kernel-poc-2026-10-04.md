@@ -1,6 +1,6 @@
 # 剪辑内核 PoC 证据 · 2026-10-04
 
-ROOT-03 实测记录。基线：studio-rebuild 分支（PoC 提交见 git log）；运行时 `.venv/bin/python 3.12.14`；ffmpeg `7.0.2-static`（johnvansickle 静态构建，经 imageio-ffmpeg 0.6.0 提供，已在 requirements.txt）。脚本：[scripts/media_kernel_poc.py](../../scripts/media_kernel_poc.py)。
+ROOT-03 实测记录。基线：studio-rebuild 分支（PoC 提交见 git log）；运行时 `.venv/bin/python 3.12.14`；ffmpeg `7.0.2-static`（johnvansickle 静态构建，经 imageio-ffmpeg 0.6.0 提供，已在 requirements.txt）。脚本：[scripts/media_kernel_poc.py](../../../scripts/media_kernel_poc.py)。
 
 ## 素材（确定性生成，已提交 fixture）
 
