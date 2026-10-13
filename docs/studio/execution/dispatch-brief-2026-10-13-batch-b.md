@@ -52,3 +52,6 @@
 
 同批次 A 惯例：执行器 submitted → 主模型审 diff + 跑该卡测试 + 独立负向复验 → 单卡单提交 →
 账本 acceptance（tested_baseline=当前 HEAD）→ Wave 2 → 整批收尾全量 `pytest tests/studio`。
+
+两卡实现已落盘未验收（工作树）；从下一会话接续的完整清单、实测结论与裁定建议见
+[批次 B 接续单](handoff-2026-10-13-batch-b.md)——**在新开的顶层 task 中执行**（子代理白名单只在顶层会话创建时采样一次）。
