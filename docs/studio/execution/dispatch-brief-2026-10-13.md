@@ -28,6 +28,7 @@
 | `e2b8b8d` | **预接线待交付域子路由**：`router.py` 对 storyboard/scripts/assets/media/edits/conversations 的 `api.py` 采用“文件存在即挂载”（文件存在性 + `find_spec`，不用 try/except）。**域卡因此不许改 `router.py`**，交付后路由自动挂载 |
 | `33bc09f` | wip：ASSET-01-a 实现与测试（20/20 通过，**未验收**） |
 | `f33c301` | fix(tests)：auth 夹具 drop 时关闭外键（修复测试顺序依赖，暴露原因是新的 assets 测试留下引用行） |
+| `11cddd5` | 本交接单 |
 
 新会话注意：
 - 每次派发前后不要跑全量 `pytest tests/studio`（约 3 分钟）。域内单卡只跑自己的测试文件；
@@ -116,7 +117,7 @@
 | 卡 | 状态 | 白名单 |
 | --- | --- | --- |
 | ASSET-01-a | 已落盘待**验收**（20/20 绿） | 已提交 |
-| SCRIPT-01-a | 缺 `api.py` + `test_scripts.py` | `backend/studio/scripts/{service,api}.py`、`tests/studio/test_scripts.py` |
+| SCRIPT-01-a | 服务层已落盘，缺 `api.py` + `test_scripts.py` | `backend/studio/scripts/{service,api}.py`、`tests/studio/test_scripts.py` |
 | MEDIA-01 | 未开始 | `backend/studio/media/store.py`、`backend/infrastructure/media/probe.py`、`tests/studio/test_media.py` |
 | EDIT-01 | 未开始 | `backend/studio/edits/{service,api}.py`、`tests/studio/test_edits.py` |
 | CHAT-01 | 未开始 | `backend/studio/conversations/{service,api}.py`、`tests/studio/test_conversations.py` |
