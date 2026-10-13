@@ -13,6 +13,8 @@
 
 三卡文件集互不重叠，可并行；`tests/studio/conftest.py`、`backend/studio/router.py`、`backend/studio/*/models.py`、`backend/studio/contracts/**` 均为**只读**，任何一卡不得修改（需改路由挂载时报告主模型）。
 
+主模型预接线（2026-10-13）：`backend/studio/router.py` 的「存在即挂载」清单原先缺 `relations.api`（REL-02 的路由会被静默丢弃），已由主模型补入；`scripts.api` 早已在清单内，SCRIPT-02 无需接线；MEDIA-01 无 HTTP 路由。
+
 ## 通用冻结约定（三卡共同）
 
 - 鉴权 `core.auth.require_user`；错误一律走 `StudioAPIError`（`backend/studio/contracts/errors.py`）冻结形状 `{"error":{"code","message","details"}}`（附录 00 §4）。

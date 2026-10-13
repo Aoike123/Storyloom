@@ -63,6 +63,7 @@ for _pending in (
     "storyboard.api",
     "scripts.api",
     "assets.api",
+    "relations.api",
     "media.api",
     "edits.api",
     "conversations.api",
