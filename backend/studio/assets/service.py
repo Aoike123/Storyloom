@@ -1,9 +1,11 @@
 """Storyloom Studio — 资产域服务层（附录 05 §2 命令的服务端实现）。
 
-ASSET-01-a（创建人物身份，产品规则 R05/R07/R11）逐子卡填充：本卡只实现
-AS1 POST /assets —— 建立**稳定身份**（Asset）与其 revision=1 规格
-（AssetRevision），**不做**改名（AS3）、新版本（AS4/AS5/AS6）、审核（AS7）、
-切换当前版本（AS8）、采用（AS9）、costume_required 修改（AS10）。
+ASSET-01 逐子卡填充：AS1 POST /assets（ASSET-01-a）—— 建立**稳定身份**
+（Asset）与其 revision=1 规格（AssetRevision）；AS10 POST
+/assets/{aid}/costume-required（ASSET-01-b）—— character 的
+costume_required 可**明确**置 false（自然体表角色，bare 模式无需图），
+不用空图冒充服装。**不做**改名（AS3）、新版本（AS4/AS5/AS6）、审核
+（AS7）、切换当前版本（AS8）、采用（AS9）。
 
 实现约束（冻结）：
 - 所有写命令走 command_id 幂等（附录 00 §3，studio_command_records）；
@@ -34,7 +36,7 @@ from ..contracts.models import CommandRecord
 from ..projects.models import StudioProject
 from .models import Asset, AssetRevision
 
-__all__ = ["create_asset"]
+__all__ = ["create_asset", "set_costume_required"]
 
 TYPES = ("character", "costume", "scene")
 _BODY_TYPES = ("natural", "clothed")
@@ -315,6 +317,141 @@ def create_asset(
         with session.begin():
             session.add(asset)
             session.add(revision)
+            session.add(
+                CommandRecord(
+                    id=make_ulid(),
+                    owner_id=user.id,
+                    project_id=pid,
+                    command_id=command_id,
+                    result_payload=json.dumps(response, ensure_ascii=False),
+                    created_at=now,
+                )
+            )
+    except IntegrityError:
+        # UQ(owner_id, command_id) 竞态：并发赢家已提交 → 返回其首次结果（重放语义）；
+        # 其他完整性冲突（本卡不应出现）→ 冻结 internal_error，不泄露细节
+        session.rollback()
+        record = session.scalar(
+            select(CommandRecord).where(
+                CommandRecord.owner_id == user.id,
+                CommandRecord.command_id == command_id,
+            )
+        )
+        if record is not None:
+            payload = json.loads(record.result_payload) if record.result_payload else {}
+            return dict(payload, _replay=True)
+        raise StudioAPIError.internal()
+
+    return response
+
+
+def _current_revision_no(session, asset: Asset) -> int:
+    """资产当前 revision 号（= current_revision_id 行的 revision）。
+
+    current_revision_id 为 NOT NULL FK，理论必命中；缺失 = 数据损坏，
+    按冻结协议映射 internal_error，不泄露细节。
+    """
+    rev = session.get(AssetRevision, asset.current_revision_id)
+    if rev is None:  # 理论上不可达
+        raise StudioAPIError.internal()
+    return rev.revision
+
+
+def set_costume_required(
+    session, user, pid, aid, value, expected_revision, command_id
+) -> dict:
+    """AS10 明确设置 character 的 costume_required（附录 05 §2，契约 v2.9）。
+
+    语义：自然体表角色可**明确**置 false（bare 模式无需图），不用空图
+    冒充服装；value 与现值相同也算成功（显式确认语义），照常落写。
+    本命令只改 Asset 行的 costume_required/updated_at：**不新建
+    AssetRevision、不动 current_revision_id、不动 review_status、
+    不写 occurrence/binding**。
+
+    校验顺序（冻结，按序短路）：
+    1. 项目不存在/非属主 → 404 not_found(kind=project)（不泄漏存在性）；
+    2. 资产不存在/跨项目 → 404 not_found(kind=asset)（两情形同形状）；
+    3. 资产 type != 'character' → 422 precondition_failed
+       （reason=not_character，blocked_by={kind:asset, id, revision=当前}）；
+    4. expected_revision != 当前 revision → 409 revision_conflict
+       （object={kind:asset,id}，expected/actual=真实当前值，附录 00 §4 形状）；
+    5. 幂等（附录 00 §3，校验之后、写之前）：(owner, command_id) 记录存在
+       且 result_payload 逐项等于本次有效载荷 → 重放：返回首次
+       result_payload（附内部标记 ``_replay=True``，本命令成功码即 200，
+       重放亦 200），零写零 commit；不一致 → 422 validation_failed
+       （field=command_id, rule=reused）。
+
+    写事务（单事务）：UPDATE Asset.costume_required/updated_at + INSERT
+    CommandRecord（result_payload=完整 200 体），同一 ``session.begin()``；
+    IntegrityError（UQ(owner_id, command_id) 并发竞态）→ 回滚重读赢家，
+    映射重放语义。
+
+    成功体（恰 2 字段）：
+    ``{"object_ref": {"kind":"asset","id":aid,"revision":当前 revision},
+    "costume_required": <bool>}``
+    """
+    # 1) 项目（属主校验，404 不泄漏存在性）
+    project = session.scalar(select(StudioProject).where(StudioProject.id == pid))
+    if project is None or project.owner_id != user.id:
+        raise StudioAPIError.not_found("project", pid)
+
+    # 2) 资产（不存在/跨项目同形状 404，不泄漏存在性）
+    asset = session.scalar(select(Asset).where(Asset.id == aid))
+    if asset is None or asset.project_id != pid:
+        raise StudioAPIError.not_found("asset", aid)
+    current = _current_revision_no(session, asset)
+
+    # 3) 仅人物身份可设置 costume_required
+    if asset.type != "character":
+        raise StudioAPIError.precondition_failed(
+            "not_character",
+            {"kind": "asset", "id": aid, "revision": current},
+            f"只有人物身份可以设置 costume_required（该资产 type={asset.type}）。",
+        )
+
+    # 4) CAS：expected_revision 必须等于当前 revision
+    if expected_revision != current:
+        raise StudioAPIError.revision_conflict("asset", aid, expected_revision, current)
+
+    # 5) 幂等（读查询，先于写事务）：同 command_id 同载荷 → 重放
+    record = session.scalar(
+        select(CommandRecord).where(
+            CommandRecord.owner_id == user.id,
+            CommandRecord.command_id == command_id,
+        )
+    )
+    if record is not None:
+        payload = json.loads(record.result_payload) if record.result_payload else {}
+        stored_ref = payload.get("object_ref") or {}
+        if (
+            stored_ref.get("kind") == "asset"
+            and stored_ref.get("id") == aid
+            and payload.get("costume_required") == value
+            and isinstance(payload.get("costume_required"), bool)
+        ):
+            # 重放：返回首次 result_payload，零写零 commit
+            return dict(payload, _replay=True)
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "command_id",
+                    "rule": "reused",
+                    "message": "command_id 已被其他命令使用，请生成新的。",
+                }
+            ]
+        )
+    session.commit()  # 结束读事务；写阶段另起事务
+
+    # 6) 写事务：UPDATE 资产行 + INSERT CommandRecord，同一事务
+    now = time.time()
+    response = {
+        "object_ref": {"kind": "asset", "id": aid, "revision": current},
+        "costume_required": value,
+    }
+    try:
+        with session.begin():
+            asset.costume_required = value
+            asset.updated_at = now
             session.add(
                 CommandRecord(
                     id=make_ulid(),

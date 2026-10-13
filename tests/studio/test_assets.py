@@ -726,3 +726,236 @@ def test_t20_two_projects_isolated_ids_and_spec(db, client):
     with Session() as s:
         assert s.scalar(select(func.count(StudioProject.id))) == 2
         assert s.scalar(select(func.count(Asset.id))) == 2
+
+
+# ── AS10 costume-required（ASSET-01-b：bare 模式明确无需图）─────────────────
+
+def _mk_character(client, token, pid, name="人物X") -> str:
+    r = _mk_asset(
+        client, token, pid, type_="character", name=name, spec={"appearance": "a"}
+    )
+    assert r.status_code == 201, r.text
+    return r.json()["object_ref"]["id"]
+
+
+def _costume_required(client, pid, aid, *, value, expected_revision=1,
+                      command_id=None, token=None):
+    body = {
+        "value": value,
+        "expected_revision": expected_revision,
+        "command_id": command_id or _cmd(),
+    }
+    headers = _auth(token) if token is not None else {}
+    return client.post(
+        f"/api/studio/projects/{pid}/assets/{aid}/costume-required",
+        json=body,
+        headers=headers,
+    )
+
+
+def test_t21_set_false_then_true_200(db, client):
+    """200 翻转 true→false→true：响应恰 2 字段、DB 落库、updated_at 推进。"""
+    token = _register(client, "a21_alice")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+
+    with Session() as s:
+        before = s.get(Asset, aid)
+        assert before.costume_required is True
+        updated0 = before.updated_at
+
+    # true → false（bare 模式明确无需图）
+    r1 = _costume_required(client, pid, aid, value=False, token=token)
+    assert r1.status_code == 200, r1.text
+    body1 = r1.json()
+    assert set(body1) == {"object_ref", "costume_required"}  # 恰 2 字段
+    assert body1["object_ref"] == {"kind": "asset", "id": aid, "revision": 1}
+    assert body1["costume_required"] is False
+    with Session() as s:
+        a = s.get(Asset, aid)
+        assert a.costume_required is False
+        assert a.updated_at > updated0  # 落写推进 updated_at
+        updated1 = a.updated_at
+
+    # false → true（改回）
+    r2 = _costume_required(client, pid, aid, value=True, token=token)
+    assert r2.status_code == 200, r2.text
+    assert r2.json() == {
+        "object_ref": {"kind": "asset", "id": aid, "revision": 1},
+        "costume_required": True,
+    }
+    with Session() as s:
+        a = s.get(Asset, aid)
+        assert a.costume_required is True
+        assert a.updated_at > updated1
+
+
+def test_t22_same_value_explicit_confirm_no_revision_side_effects(db, client):
+    """value 与现值相同也算成功（显式确认语义），照常落写（updated_at 推进）；
+    无新 AssetRevision 行、current_revision_id 不变、review_status 不变。"""
+    token = _register(client, "a22_bob")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+    with Session() as s:
+        a0 = s.get(Asset, aid)
+        current0 = a0.current_revision_id
+        updated0 = a0.updated_at
+    counts0 = _counts()
+
+    r = _costume_required(client, pid, aid, value=True, token=token)  # 同值
+    assert r.status_code == 200, r.text
+    assert r.json()["costume_required"] is True
+    with Session() as s:
+        a = s.get(Asset, aid)
+        assert a.costume_required is True
+        assert a.current_revision_id == current0  # 不动 current 指针
+        assert a.updated_at > updated0  # 照常落写
+        rev = s.get(AssetRevision, current0)
+        assert rev.review_status == "unreviewed"  # 不动 review_status
+    counts1 = _counts()
+    # 只多 1 条 CommandRecord；assets/revisions 行数不变，无 occurrence/binding
+    assert counts1["revisions"] == counts0["revisions"]
+    assert counts1["assets"] == counts0["assets"]
+    assert counts1["commands"] == counts0["commands"] + 1
+    assert counts1["occurrences"] == 0 and counts1["bindings"] == 0
+
+
+def test_t23_non_character_422_not_character(db, client):
+    """costume / scene 调用 → 422 precondition_failed reason=not_character，零副作用。"""
+    token = _register(client, "a23_carol")
+    pid = _mk_project(client, token)
+    cid = _mk_character(client, token, pid)
+    rcost = _mk_asset(
+        client, token, pid, type_="costume", name="K", character_id=cid,
+        spec={"description": "d"},
+    )
+    rscene = _mk_asset(
+        client, token, pid, type_="scene", name="S",
+        spec={"location": "l", "description": "d"},
+    )
+    counts0 = _counts()
+    for r_asset in (rcost, rscene):
+        aid = r_asset.json()["object_ref"]["id"]
+        r = _costume_required(client, pid, aid, value=False, token=token)
+        assert r.status_code == 422, r.text
+        err = r.json()["error"]
+        assert err["code"] == "precondition_failed"
+        assert err["details"]["reason"] == "not_character"
+        assert err["details"]["blocked_by"] == {
+            "kind": "asset", "id": aid, "revision": 1,
+        }
+    assert _counts() == counts0  # 零副作用（无命令记录落库）
+
+
+def test_t24_expected_revision_mismatch_409(db, client):
+    """expected_revision 错误 → 409 revision_conflict，actual=真实当前 revision。"""
+    token = _register(client, "a24_dave")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+    counts0 = _counts()
+    for bad_expected in (0, 2, 99):
+        r = _costume_required(
+            client, pid, aid, value=False, expected_revision=bad_expected,
+            token=token,
+        )
+        assert r.status_code == 409, (bad_expected, r.text)
+        err = r.json()["error"]
+        assert err["code"] == "revision_conflict"
+        assert err["details"]["object"] == {"kind": "asset", "id": aid}
+        assert err["details"]["expected"] == bad_expected
+        assert err["details"]["actual"] == 1  # 真实当前 revision
+    assert _counts() == counts0
+    with Session() as s:
+        assert s.get(Asset, aid).costume_required is True  # 未写
+
+
+def test_t25_asset_and_project_404_same_shape(db, client):
+    """资产 404：幽灵 id 与跨项目 id 同形状；项目 404：幽灵与非属主同形状。"""
+    token = _register(client, "a25_erin")
+    pid = _mk_project(client, token)
+    pid_b = _mk_project(client, token, "B")
+    aid_b = _mk_character(client, token, pid_b)  # B 项目的资产
+
+    # 资产不存在 / 跨项目 → 同形状 404（不泄漏存在性）
+    for ghost in ("01" * 13, aid_b):
+        r = _costume_required(client, pid, ghost, value=False, token=token)
+        assert r.status_code == 404, (ghost, r.text)
+        err = r.json()["error"]
+        assert err["code"] == "not_found"
+        assert err["details"] == {"kind": "asset", "id": ghost}
+
+    # 项目不存在 / 非属主 → 同形状 404
+    other = _register(client, "a25_frank")
+    pid_c = _mk_project(client, other, "C")
+    for ghost_pid in ("02" * 13, pid_c):
+        r = _costume_required(client, ghost_pid, "03" * 13, value=False, token=token)
+        assert r.status_code == 404, (ghost_pid, r.text)
+        err = r.json()["error"]
+        assert err["code"] == "not_found"
+        assert err["details"] == {"kind": "project", "id": ghost_pid}
+
+
+def test_t26_no_token_401(db, client):
+    r = _costume_required(client, "01" * 13, "02" * 13, value=False)
+    assert r.status_code == 401, r.text
+    assert r.json()["error"]["code"] == "unauthenticated"
+
+
+def test_t27_value_not_strict_bool_and_missing_fields_422(db, client):
+    """value 非严格布尔（"false"/1/null）→ 422；缺字段 → 422；均零副作用。"""
+    token = _register(client, "a27_grace")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+    counts0 = _counts()
+    for bad_value in ("false", 1, None):
+        r = _costume_required(client, pid, aid, value=bad_value, token=token)
+        assert r.status_code == 422, (bad_value, r.text)
+    # 缺字段（value / expected_revision / command_id 均必填）
+    full = {"value": False, "expected_revision": 1, "command_id": _cmd()}
+    for drop in ("value", "expected_revision", "command_id"):
+        body = {k: v for k, v in full.items() if k != drop}
+        r = client.post(
+            f"/api/studio/projects/{pid}/assets/{aid}/costume-required",
+            json=body, headers=_auth(token),
+        )
+        assert r.status_code == 422, (drop, r.text)
+    assert _counts() == counts0  # 请求体形态校验拦截，零副作用
+    with Session() as s:
+        assert s.get(Asset, aid).costume_required is True
+
+
+def test_t28_replay_200_and_reused_422(db, client):
+    """幂等：同 command_id 同内容 → 200 同 payload、commands 行数不变、
+    updated_at 不二次推进；同 command_id 不同 value → 422 reused 零副作用。"""
+    token = _register(client, "a28_heidi")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+    cmd = _cmd()
+
+    r1 = _costume_required(client, pid, aid, value=False, command_id=cmd, token=token)
+    assert r1.status_code == 200, r1.text
+    first = r1.json()
+    with Session() as s:
+        updated1 = s.get(Asset, aid).updated_at
+    counts0 = _counts()
+
+    # 重放：同 command_id 同内容（AS10 不推进 revision，expected=1 仍成立）
+    r2 = _costume_required(client, pid, aid, value=False, command_id=cmd, token=token)
+    assert r2.status_code == 200, (r2.status_code, r2.text)
+    assert r2.json() == first  # 原样返回首次 result_payload
+    assert _counts() == counts0  # 零写：无新 CommandRecord
+    with Session() as s:
+        assert s.get(Asset, aid).updated_at == updated1  # 不二次推进
+
+    # 同 command_id 不同 value → 422 validation_failed(field=command_id, rule=reused)
+    r3 = _costume_required(client, pid, aid, value=True, command_id=cmd, token=token)
+    assert r3.status_code == 422, r3.text
+    err = r3.json()["error"]
+    assert err["code"] == "validation_failed"
+    v0 = err["details"]["violations"][0]
+    assert v0["field"] == "command_id" and v0["rule"] == "reused"
+    assert _counts() == counts0
+    with Session() as s:
+        a = s.get(Asset, aid)
+        assert a.costume_required is False  # 零副作用
+        assert a.updated_at == updated1
