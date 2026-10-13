@@ -86,7 +86,8 @@ def _validate_spec(type_: str, spec: dict) -> list[dict[str, str]]:
     2026-10-13 主模型裁定按附录收紧并回报）：
     - character：``appearance``(string) 必填非空；可选 body_type/height_cm/notes 按声明类型校验；
     - costume：``description``(string) 必填非空；
-    - scene：``location``(string)、``description``(string) 均必填非空。
+    - scene：``location``(string)、``description``(string) 均必填非空；
+      可选 time_of_day/weather 非 None 时必须是字符串。
 
     缺席的必填键逐个报 violation（field=``spec.<key>``, rule=``required``），
     使调用方能一次看到全部缺口。
@@ -154,6 +155,24 @@ def _validate_spec(type_: str, spec: dict) -> list[dict[str, str]]:
                     "field": "spec.description",
                     "rule": "required",
                     "message": "场景规格必含非空 description（字符串）。",
+                }
+            )
+        time_of_day = spec.get("time_of_day")
+        if time_of_day is not None and not isinstance(time_of_day, str):
+            violations.append(
+                {
+                    "field": "spec.time_of_day",
+                    "rule": "invalid",
+                    "message": "time_of_day 必须是字符串。",
+                }
+            )
+        weather = spec.get("weather")
+        if weather is not None and not isinstance(weather, str):
+            violations.append(
+                {
+                    "field": "spec.weather",
+                    "rule": "invalid",
+                    "message": "weather 必须是字符串。",
                 }
             )
     return violations

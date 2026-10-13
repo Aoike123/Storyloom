@@ -7,6 +7,7 @@ spec 必填键与 body_type、type/name 非法、跨项目/无 token、command_i
 丢弃库由 tests/studio/conftest.py 在 session 级统一设定（engine 是进程单例）；
 本文件不改写 STUDIO_* env。db fixture 照抄 tests/studio/test_projects.py。
 """
+import json
 import re
 import uuid
 
@@ -18,6 +19,7 @@ from backend.studio.assets.models import Asset, AssetRevision
 from backend.studio.contracts.models import CommandRecord
 from backend.studio.relations.models import AssetBinding, AssetOccurrence
 from backend.studio.projects.models import StudioProject
+from backend.studio.storyboard.models import Scene, Shot
 
 
 @pytest.fixture
@@ -959,3 +961,146 @@ def test_t28_replay_200_and_reused_422(db, client):
         a = s.get(Asset, aid)
         assert a.costume_required is False  # 零副作用
         assert a.updated_at == updated1
+
+
+# ── ASSET-01-c 物理场景资产 vs 叙事场（studio_scenes）分离 ──────────────────
+
+def _all_keys(obj):
+    """DTO 内所有键（递归 dict/list），用于"无 scene_id"断言。"""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            yield k
+            yield from _all_keys(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            yield from _all_keys(item)
+
+
+def test_t29_scene_optional_keys_type_validation(db, client):
+    """scene 可选键 time_of_day/weather：非 None 必须 string（rule=invalid）；
+    None/字符串通过；自由扩展键仍允许。character 可选键行为不变（回归）。"""
+    token = _register(client, "a29_iris")
+    pid = _mk_project(client, token)
+    # 非字符串 → 422 validation_failed rule=invalid（逐个报出）
+    for bad in (123, True, {}):
+        r = _mk_asset(
+            client, token, pid, type_="scene", name="S1",
+            spec={"location": "l", "description": "d", "time_of_day": bad},
+        )
+        assert r.status_code == 422, (bad, r.text)
+        err = r.json()["error"]
+        assert err["code"] == "validation_failed"
+        v = err["details"]["violations"][0]
+        assert v["field"] == "spec.time_of_day" and v["rule"] == "invalid"
+        assert len(err["details"]["violations"]) == 1  # 必填键齐备，仅报可选键
+    for bad in (123, True, {}):
+        r = _mk_asset(
+            client, token, pid, type_="scene", name="S2",
+            spec={"location": "l", "description": "d", "weather": bad},
+        )
+        assert r.status_code == 422, (bad, r.text)
+        err = r.json()["error"]
+        assert err["code"] == "validation_failed"
+        v = err["details"]["violations"][0]
+        assert v["field"] == "spec.weather" and v["rule"] == "invalid"
+    # None 或字符串 → 通过
+    r = _mk_asset(
+        client, token, pid, type_="scene", name="S3",
+        spec={"location": "l", "description": "d", "time_of_day": None, "weather": "rain"},
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["current_revision"]["spec"] == {
+        "location": "l", "description": "d", "time_of_day": None, "weather": "rain",
+    }
+    # 两键同时非法 → 两条 violation 一次报出
+    r = _mk_asset(
+        client, token, pid, type_="scene", name="S4",
+        spec={"location": "l", "description": "d", "time_of_day": 1, "weather": 2},
+    )
+    assert r.status_code == 422, r.text
+    fields = {v["field"] for v in r.json()["error"]["details"]["violations"]}
+    assert fields == {"spec.time_of_day", "spec.weather"}
+    # 自由扩展键（未声明键）仍允许
+    r = _mk_asset(
+        client, token, pid, type_="scene", name="S5",
+        spec={"location": "l", "description": "d", "mood": "压抑"},
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["current_revision"]["spec"]["mood"] == "压抑"
+    # 回归：character 可选键校验行为不变（notes 非字符串 422；合法组合 201）
+    r = _mk_asset(
+        client, token, pid, type_="character", name="C",
+        spec={"appearance": "a", "notes": 3},
+    )
+    assert r.status_code == 422, r.text
+    v = r.json()["error"]["details"]["violations"][0]
+    assert v["field"] == "spec.notes" and v["rule"] == "invalid"
+    r = _mk_asset(
+        client, token, pid, type_="character", name="C",
+        spec={"appearance": "a", "body_type": "natural", "height_cm": 170, "notes": "n"},
+    )
+    assert r.status_code == 201, r.text
+
+
+def test_t30_create_scene_asset_writes_no_storyboard_rows(db, client):
+    """创建 scene 资产后，叙事场/镜头表（studio_scenes/studio_shots）零行：
+    物理场景资产只写 assets/asset_revisions/command_records。"""
+    token = _register(client, "a30_jack")
+    pid = _mk_project(client, token)
+    r = _mk_asset(
+        client, token, pid, type_="scene", name="旧仓库",
+        spec={"location": "城郊旧仓库", "description": "堆满木箱", "time_of_day": "night"},
+    )
+    assert r.status_code == 201, r.text
+    with Session() as s:
+        assert s.scalar(select(func.count(Scene.id))) == 0
+        assert s.scalar(select(func.count(Shot.id))) == 0
+        c = _counts()
+        assert c["assets"] == 1 and c["revisions"] == 1
+
+
+def test_t31_narrative_scene_rows_do_not_leak_into_asset_dto(db, client):
+    """分离性：叙事场行（直接向 studio_scenes 插行）不干扰资产——
+    资产 DTO 键集合恰为冻结 8 键、无任何 scene_id；scene 与 character
+    DTO 同键集合；叙事场行原样保留、不被资产命令触碰。"""
+    token = _register(client, "a31_karl")
+    pid = _mk_project(client, token)
+    # 直接向叙事场表插一行（模拟已存在的叙事场）
+    narrative_id = "04" * 13
+    with Session() as s:
+        s.add(Scene(id=narrative_id, project_id=pid, name="叙事场一", seq=1))
+        s.commit()
+    with Session() as s:
+        assert s.scalar(select(func.count(Scene.id))) == 1
+
+    r_scene = _mk_asset(
+        client, token, pid, type_="scene", name="物理场景A",
+        spec={"location": "l", "description": "d", "weather": "rain"},
+    )
+    assert r_scene.status_code == 201, r_scene.text
+    scene_body = r_scene.json()
+    r_char = _mk_asset(
+        client, token, pid, type_="character", name="人物A",
+        spec={"appearance": "a"},
+    )
+    assert r_char.status_code == 201, r_char.text
+    char_body = r_char.json()
+
+    # DTO 键集合恰为冻结 8 键，且 scene 与 character 同形状（同键集合）
+    expected = {
+        "object_ref", "type", "name", "character",
+        "current_revision", "versions", "occurrences", "bindings",
+    }
+    assert set(scene_body) == expected
+    assert set(char_body) == expected
+    # 无任何 scene_id（递归）：DTO 不携带叙事场引用
+    assert "scene_id" not in set(_all_keys(scene_body))
+    assert "scene_id" not in set(_all_keys(char_body))
+    # 叙事场 id 不出现在任何 DTO 值中
+    assert narrative_id not in json.dumps(scene_body)
+    assert narrative_id not in json.dumps(char_body)
+    # 资产命令未触碰叙事场表：行原样保留
+    with Session() as s:
+        row = s.get(Scene, narrative_id)
+        assert row is not None and row.name == "叙事场一" and row.seq == 1
+        assert s.scalar(select(func.count(Shot.id))) == 0
