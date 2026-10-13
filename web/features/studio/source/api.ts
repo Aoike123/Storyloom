@@ -1063,3 +1063,75 @@ export function listSourceRevisions(
     `/api/studio/projects/${encodeURIComponent(pid)}/sources${query}`,
   );
 }
+
+// ---------------------------------------------------------------------------
+// SOURCE-14-h · 完整制作范围（F11/F12，附录 02 §2）
+// ---------------------------------------------------------------------------
+
+/**
+ * F11/F12 范围 DTO（backend/studio/sources/scopes.py _to_dto，恰 6 字段；
+ * revision 恒 null——范围行只追加不改版；excluded_ranges 为 UTF-16 半开
+ * 区间 [{start,end}]、start 升序）。
+ */
+export interface ProductionScopeDto {
+  object_ref: { kind: "production_scope"; id: string; revision: null };
+  source_revision_id: string;
+  fragment_ids: string[];
+  covered: boolean;
+  excluded_ranges: Array<{ start: number; end: number }>;
+  created_at: number;
+}
+
+/**
+ * F11 提交参数。fragmentIds 省略（undefined）= 全部已确认片段（body 不带
+ * fragment_ids 键）；空数组照传（后端 422 validation_failed rule=required）。
+ */
+export interface CreateProductionScopeParams {
+  fragmentIds?: string[];
+  commandId: string;
+}
+
+/**
+ * F11 完整制作范围提交：POST /api/studio/projects/{pid}/production-scopes。
+ *
+ * - pid 经 encodeURIComponent；fragmentIds === undefined 时 body 不带
+ *   fragment_ids 键（= 全部已确认片段）；
+ * - res.ok 即返回 DTO（201 首发与 200 幂等重放同等处理，均为范围 DTO）；
+ * - 一切错误原样透传（不重试、不改写）：404 not_found(kind=project)、
+ *   422 validation_failed（fragment_ids required / duplicate /
+ *   command_id reused）、422 precondition_failed（no_active_source /
+ *   not_confirmed / source_revision_inactive，details.blocked_by）、
+ *   422 duplicate_scope（details.scope_ref）、network。
+ */
+export function createProductionScope(
+  client: StudioClient,
+  pid: string,
+  params: CreateProductionScopeParams,
+): Promise<StudioApiResponse<ProductionScopeDto>> {
+  const body: { fragment_ids?: string[] } = {};
+  if (params.fragmentIds !== undefined) {
+    body.fragment_ids = params.fragmentIds;
+  }
+  return client.post<ProductionScopeDto>(
+    `/api/studio/projects/${encodeURIComponent(pid)}/production-scopes`,
+    body,
+    { commandId: params.commandId },
+  );
+}
+
+/**
+ * F12 当前制作范围：GET /api/studio/projects/{pid}/production-scopes/current。
+ *
+ * - pid 经 encodeURIComponent；200 返回同一范围 DTO；
+ * - 一切错误原样透传（不重试、不改写）：404 not_found
+ *   （kind=production_scope 表示尚未提交制作范围，由组件层判空态；
+ *   kind=project 为项目不存在）、network。
+ */
+export function getCurrentProductionScope(
+  client: StudioClient,
+  pid: string,
+): Promise<StudioApiResponse<ProductionScopeDto>> {
+  return client.get<ProductionScopeDto>(
+    `/api/studio/projects/${encodeURIComponent(pid)}/production-scopes/current`,
+  );
+}

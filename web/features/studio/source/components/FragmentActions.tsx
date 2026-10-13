@@ -143,6 +143,35 @@
 //   fragmentAId, fragmentBId, mergedName, preview? }），与 14-a/b/c/d/e 的
 //   行级 state 并列；新取数成功（新快照）时一并清除（防陈旧表单/错误/
 //   预览）。
+// - 制作范围（F11/F12，本卡 14-h）：项目级区块（放片段列表上方，与
+//   「合并」同层），独立于候选创建（本组件不含任何候选创建调用）。自取数据：片段取数链
+//   （fetchAllFragments）成功后顺带 getCurrentProductionScope(client,
+//   projectId)；404 且 error.code === "not_found" → 空态「尚未提交
+//   制作范围。」（不算错误态）；其他失败 → 行内错误「制作范围读取
+//   失败：{message}」+ 重试按钮（retryTick 重走整条取数链）。当前范围
+//   展示（有范围时）：covered === true 显示「完整覆盖正文」；否则显示
+//   「范围外段落」清单（每段 [start, end) 与长度 end - start）；
+//   「覆盖片段清单」列出 fragment_ids 逐个映射当前片段列表中的片段名
+//   （id 在当前列表找不到时直接显示 id），并显示片段数量。提交表单：
+//   项目级按钮「提交制作范围」→ 展开表单：复选框清单（选项仅为当前
+//   列表中 state === "confirmed" 的片段，候选/退役不出现——独立于
+//   候选创建；默认全选）+「全部已确认片段」开关（开启 = 不勾选具体
+//   片段，提交时省略 fragment_ids）+「提交」+「取消」。本地校验：关闭
+//   「全部」开关且勾选为零 → 本地提示「请至少选择一个已确认片段。」，
+//   不发请求、保留表单。「取消」→ 回到按钮态（零 API 调用）。「提交」：
+//   每次点击 makeCommandId() 恰一次 → createProductionScope(client, pid,
+//   { fragmentIds: all ? undefined : 勾选的 id 列表, commandId })；提交中
+//   「提交」按钮 disabled（防双击）；成功（res.ok，201 首发与 200 幂等
+//   重放同等处理）→ 清除行内错误与表单 + 内部重取（refreshTick，片段 +
+//   当前范围）；失败（!res.ok）→ 行内错误（保留表单与勾选，不退出）。
+//   行内错误区：duplicate_scope →「相同片段覆盖的制作范围已提交过，历史
+//   只追加不重复。」；precondition_failed → error.message；
+//   validation_failed → details.violations 每条 message；其他 →
+//   error.message。
+// - 项目级制作范围表单用 state（scoping: { open, all, selected:
+//   Record<string, boolean>, submitting, error? }），与 14-a/b/c/d/e/f
+//   的 errors/submitting/renaming/retiring/boundary/splitting/merging
+//   并列；新取数成功（新快照）时一并清除（防陈旧表单/错误）。
 // - 组件不直接 fetch（走 client）；不 import 旧组件；无硬编码占位文本；
 //   不导航（不跳转页面）。
 
@@ -155,7 +184,9 @@ import {
   applyRetireFragment,
   applySplitFragment,
   confirmFragment,
+  createProductionScope,
   fetchAllFragments,
+  getCurrentProductionScope,
   previewBoundaryFragment,
   previewMergeFragments,
   previewRetireFragment,
@@ -167,6 +198,7 @@ import type {
   FragmentDto,
   MergeApplyDto,
   MergePreviewDto,
+  ProductionScopeDto,
   RetirePreviewDto,
   SplitApplyDto,
   SplitPreviewDto,
@@ -247,6 +279,19 @@ type MergingForm = {
   preview?: MergePreviewDto;
 };
 
+/** 制作范围行内错误（F11/F12；仅错误分支，含本地校验构造的 validation_failed）。 */
+type ScopeError = StudioApiResponse<ProductionScopeDto> & { ok: false };
+
+/** 项目级制作范围表单状态（展开态 + 「全部已确认片段」开关 + 逐片段勾选 +
+ * 提交态 + 行内错误）。 */
+type ScopingForm = {
+  open: boolean;
+  all: boolean;
+  selected: Record<string, boolean>;
+  submitting: boolean;
+  error?: ScopeError;
+};
+
 /** 每次点击生成一次 commandId（显式点击，无自动提交）。 */
 function makeCommandId(): string {
   return crypto.randomUUID();
@@ -276,6 +321,16 @@ export default function FragmentActions({
   });
   const [mergeError, setMergeError] = useState<RowErrorEntry | null>(null);
   const [mergeSubmitting, setMergeSubmitting] = useState(false);
+  // 制作范围（F12 当前范围 / F11 提交表单）：null = 尚未提交（空态，不算
+  // 错误态）；scopeError 仅存 404 not_found 之外的读取失败
+  const [scope, setScope] = useState<ProductionScopeDto | null>(null);
+  const [scopeError, setScopeError] = useState<ScopeError | null>(null);
+  const [scoping, setScoping] = useState<ScopingForm>({
+    open: false,
+    all: true,
+    selected: {},
+    submitting: false,
+  });
 
   useEffect(() => {
     let alive = true;
@@ -304,6 +359,22 @@ export default function FragmentActions({
       });
       setMergeError(null);
       setMergeSubmitting(false);
+      // 新快照一并清除制作范围表单（防陈旧表单/错误）
+      setScoping({ open: false, all: true, selected: {}, submitting: false });
+      // 片段取数链成功后顺带 F12 当前范围（404 not_found = 空态，不算错误）
+      const scopeRes = await getCurrentProductionScope(clientObj, projectId);
+      if (!alive) return;
+      if (scopeRes.ok) {
+        setScope(scopeRes.data);
+        setScopeError(null);
+      } else if (scopeRes.status === 404 && scopeRes.code === "not_found") {
+        // 尚未提交制作范围（空态，不算错误态）
+        setScope(null);
+        setScopeError(null);
+      } else {
+        setScope(null);
+        setScopeError(scopeRes);
+      }
     })();
     return () => {
       alive = false;
@@ -923,6 +994,110 @@ export default function FragmentActions({
     }
   }
 
+  /** 点击「提交制作范围」：展开项目级制作范围表单（复选框默认全选当前
+   * 已确认片段；「全部已确认片段」开关默认开启）。 */
+  function handleScopeOpen(): void {
+    const items = state.kind === "ready" ? state.items : [];
+    const selected: Record<string, boolean> = {};
+    for (const f of items) {
+      if (f.state === "confirmed") {
+        selected[f.object_ref.id] = true;
+      }
+    }
+    setScoping({ open: true, all: true, selected, submitting: false });
+  }
+
+  /** 点击「取消」：回到按钮态（零 API 调用）。 */
+  function handleScopeCancel(): void {
+    setScoping({ open: false, all: true, selected: {}, submitting: false });
+  }
+
+  /** 切换「全部已确认片段」开关（开启 = 提交时省略 fragment_ids）。 */
+  function handleScopeAllToggle(checked: boolean): void {
+    setScoping((prev) => ({ ...prev, all: checked }));
+  }
+
+  /** 切换单个已确认片段的勾选。 */
+  function handleScopeToggle(fid: string, checked: boolean): void {
+    setScoping((prev) => ({
+      ...prev,
+      selected: { ...prev.selected, [fid]: checked },
+    }));
+  }
+
+  /** 点击「提交」：本地校验（关闭「全部」开关且勾选为零 → 本地提示，不发
+   * 请求、保留表单）→ 每次点击生成一次 commandId → createProductionScope
+   * （all 时省略 fragment_ids）。 */
+  async function handleScopeSubmit(): Promise<void> {
+    const selectedIds = Object.keys(scoping.selected).filter(
+      (id) => scoping.selected[id],
+    );
+    if (!scoping.all && selectedIds.length === 0) {
+      // 本地拦截：零勾选不发请求，保留表单（文案与服务端 rule=required 一致）
+      setScoping((prev) => ({
+        ...prev,
+        error: {
+          ok: false,
+          code: "validation_failed",
+          message: "请至少选择一个已确认片段。",
+          details: {
+            violations: [
+              {
+                field: "fragment_ids",
+                rule: "required",
+                message: "请至少选择一个已确认片段。",
+              },
+            ],
+          },
+        },
+      }));
+      return;
+    }
+    setScoping((prev) => ({ ...prev, submitting: true }));
+    try {
+      // 每次点击生成一次 commandId（显式点击，无自动提交）
+      const res = await createProductionScope(clientObj, projectId, {
+        fragmentIds: scoping.all ? undefined : selectedIds,
+        commandId: makeCommandId(),
+      });
+      if (res.ok) {
+        // 成功（201 首发与 200 幂等重放同等处理）：清除行内错误与表单 +
+        // 内部重取（片段 + 当前范围）
+        setScoping({ open: false, all: true, selected: {}, submitting: false });
+        setRefreshTick((t) => t + 1);
+      } else {
+        // 失败：行内错误（保留表单与勾选，不退出）
+        setScoping((prev) => ({ ...prev, error: res }));
+      }
+    } finally {
+      setScoping((prev) => ({ ...prev, submitting: false }));
+    }
+  }
+
+  /** 制作范围行内错误文案：duplicate_scope → 固定文案；precondition_failed
+   * → error.message；validation_failed → violations 每条 message；其他 →
+   * error.message。 */
+  function scopeErrorText(error: ScopeError): string {
+    if (error.code === "duplicate_scope") {
+      return "相同片段覆盖的制作范围已提交过，历史只追加不重复。";
+    }
+    if (error.code === "precondition_failed") {
+      return error.message;
+    }
+    if (error.code === "validation_failed") {
+      const details = error.details as Record<string, unknown> | undefined;
+      const violations = (details?.violations ?? []) as Array<{
+        message?: string;
+      }>;
+      const messages = violations
+        .map((v) => v.message)
+        .filter((m): m is string => typeof m === "string" && m !== "");
+      if (messages.length > 0) return messages.join(" ");
+      return error.message;
+    }
+    return error.message;
+  }
+
   /**
    * 行内错误文案（确认/改名/退役/边界/拆分/合并统一）：validation_failed →
    * violations 每条 message；range_invalid → error.message（含 canonical
@@ -1014,8 +1189,130 @@ export default function FragmentActions({
     const mergeableFragments = state.items.filter(
       (f) => f.state === "candidate" || f.state === "confirmed",
     );
+    // 项目级制作范围动作区（列表上方，与「合并」同层）：复选框选项仅为
+    // 当前列表中 state === "confirmed" 的片段（候选/退役不出现）
+    const scopableFragments = state.items.filter(
+      (f) => f.state === "confirmed",
+    );
     body = (
       <div className="fragment-actions__ready">
+        <div className="fragment-actions__scope">
+          {scopeError !== null ? (
+            <div
+              className="fragment-actions__scope-read-error"
+              role="alert"
+            >
+              <p>制作范围读取失败：{scopeError.message}</p>
+              <button
+                type="button"
+                className="fragment-actions__scope-retry"
+                onClick={() => setRetryTick((t) => t + 1)}
+              >
+                重试
+              </button>
+            </div>
+          ) : scope === null ? (
+            <p className="fragment-actions__scope-empty">
+              尚未提交制作范围。
+            </p>
+          ) : (
+            <div className="fragment-actions__scope-current">
+              <p className="fragment-actions__scope-count">
+                覆盖片段清单（共 {scope.fragment_ids.length} 个片段）
+              </p>
+              {scope.covered ? (
+                <p className="fragment-actions__scope-covered">
+                  完整覆盖正文
+                </p>
+              ) : (
+                <div className="fragment-actions__scope-excluded">
+                  <p>范围外段落</p>
+                  <ul className="fragment-actions__scope-excluded-list">
+                    {scope.excluded_ranges.map((r) => (
+                      <li key={`${r.start}-${r.end}`}>
+                        [{r.start}, {r.end}) · 长度 {r.end - r.start}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <ul className="fragment-actions__scope-fragments">
+                {scope.fragment_ids.map((id) => {
+                  const named = state.items.find(
+                    (it) => it.object_ref.id === id,
+                  );
+                  return <li key={id}>{named !== undefined ? named.name : id}</li>;
+                })}
+              </ul>
+            </div>
+          )}
+          {scoping.open ? (
+            <div className="fragment-actions__scope-form">
+              <label className="fragment-actions__scope-all">
+                <input
+                  type="checkbox"
+                  className="fragment-actions__scope-all-input"
+                  checked={scoping.all}
+                  onChange={(e) => handleScopeAllToggle(e.target.checked)}
+                />
+                全部已确认片段
+              </label>
+              {!scoping.all && (
+                <ul className="fragment-actions__scope-choices">
+                  {scopableFragments.map((f) => (
+                    <li key={f.object_ref.id}>
+                      <label className="fragment-actions__scope-choice">
+                        <input
+                          type="checkbox"
+                          className="fragment-actions__scope-choice-input"
+                          checked={scoping.selected[f.object_ref.id] === true}
+                          onChange={(e) =>
+                            handleScopeToggle(
+                              f.object_ref.id,
+                              e.target.checked,
+                            )
+                          }
+                        />
+                        {f.name}
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <button
+                type="button"
+                className="fragment-actions__scope-submit"
+                disabled={scoping.submitting}
+                onClick={() => void handleScopeSubmit()}
+              >
+                提交
+              </button>
+              <button
+                type="button"
+                className="fragment-actions__scope-cancel"
+                onClick={() => handleScopeCancel()}
+              >
+                取消
+              </button>
+              {scoping.error !== undefined && (
+                <div
+                  className="fragment-actions__scope-error"
+                  role="alert"
+                >
+                  <p>{scopeErrorText(scoping.error)}</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="fragment-actions__scope-open"
+              onClick={() => handleScopeOpen()}
+            >
+              提交制作范围
+            </button>
+          )}
+        </div>
         {merging.open ? (
           <div className="fragment-actions__merge-form">
             {merging.stage === "confirm" &&
@@ -1834,6 +2131,120 @@ export default function FragmentActions({
           font-size: 0.85rem;
           color: #fa5252;
           line-height: 1.5;
+        }
+        .fragment-actions__scope {
+          margin: 0 0 0.5rem;
+          padding: 0.5rem 0;
+          border-bottom: 1px solid #e9ecef;
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 0.5rem;
+        }
+        .fragment-actions__scope-empty {
+          margin: 0;
+          font-size: 0.85rem;
+          color: #868e96;
+        }
+        .fragment-actions__scope-current {
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+          font-size: 0.85rem;
+          color: #495057;
+        }
+        .fragment-actions__scope-current p {
+          margin: 0;
+        }
+        .fragment-actions__scope-covered {
+          color: #1b4d24;
+        }
+        .fragment-actions__scope-excluded-list,
+        .fragment-actions__scope-fragments,
+        .fragment-actions__scope-choices {
+          list-style: none;
+          margin: 0;
+          padding: 0 0 0 1rem;
+        }
+        .fragment-actions__scope-form {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        .fragment-actions__scope-all,
+        .fragment-actions__scope-choice {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.3rem;
+          font-size: 0.85rem;
+          color: #1a1a1a;
+        }
+        .fragment-actions__scope-choices {
+          flex-basis: 100%;
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+        }
+        .fragment-actions__scope-open {
+          flex-shrink: 0;
+          padding: 0.2rem 0.7rem;
+          border: 1px solid #7048e8;
+          border-radius: 4px;
+          background: #fff;
+          color: #7048e8;
+          cursor: pointer;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__scope-submit {
+          flex-shrink: 0;
+          padding: 0.2rem 0.7rem;
+          border: 1px solid #7048e8;
+          border-radius: 4px;
+          background: #7048e8;
+          color: #fff;
+          cursor: pointer;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__scope-submit:disabled {
+          cursor: not-allowed;
+          opacity: 0.45;
+        }
+        .fragment-actions__scope-cancel {
+          flex-shrink: 0;
+          padding: 0.2rem 0.7rem;
+          border: 1px solid #adb5bd;
+          border-radius: 4px;
+          background: #fff;
+          cursor: pointer;
+          font-size: 0.85rem;
+        }
+        .fragment-actions__scope-error {
+          flex-basis: 100%;
+          margin: 0;
+          font-size: 0.85rem;
+          color: #fa5252;
+          line-height: 1.5;
+        }
+        .fragment-actions__scope-read-error {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 0.5rem;
+          font-size: 0.85rem;
+          color: #fa5252;
+        }
+        .fragment-actions__scope-read-error p {
+          margin: 0;
+        }
+        .fragment-actions__scope-retry {
+          flex-shrink: 0;
+          padding: 0.2rem 0.7rem;
+          border: 1px solid #adb5bd;
+          border-radius: 4px;
+          background: #fff;
+          cursor: pointer;
+          font-size: 0.85rem;
         }
         .fragment-actions__status {
           margin: 1rem 0;
