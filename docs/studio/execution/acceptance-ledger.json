@@ -2940,12 +2940,47 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "明确覆盖/裁减/范围外清单，独立于候选创建。",
       "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
-      "attempts": [],
-      "acceptance": null
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-13",
+          "result": "submitted",
+          "note": "执行器交付 +483 行纯追加（api.ts +72 / FragmentActions.tsx +411 / 新建 production-scope.test.cjs 24 例）；实际落 3 文件（SourceChangeReview.tsx 未动，白名单子集）。"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-13",
+        "contract_version": "2.9",
+        "tested_baseline": "ff07efb（本卡提交）",
+        "scope": "f11_f12_production_scope_ui",
+        "checks": [
+          "主模型独立复验（不复用执行器报告）：node --test web/tests/studio/production-scope.test.cjs → 24/24；node --test web/tests/studio/*.test.cjs → 385/385 无回归；web/node_modules/.bin/tsc --noEmit -p web/tsconfig.json → exit 0；git status 仅白名单 3 文件。",
+          "api 层（diff 逐行核对 + mock fetch 测试）：ProductionScopeDto 恰 6 字段（object_ref{kind:production_scope,revision:null}/source_revision_id/fragment_ids/covered/excluded_ranges/created_at）与后端 scopes.py _to_dto 一致；createProductionScope pid encodeURIComponent，fragmentIds===undefined 时 body 恰 {command_id}（不带 fragment_ids 键），空数组照传（后端 422 required）；201 首发与 200 幂等重放同等解析；getCurrentProductionScope 走 F12 current 路由；一切错误原样透传恰 1 次请求不重试（404/422 required/reused/precondition_failed not_confirmed/duplicate_scope/network 逐字段断言）。",
+          "区块位置与空态（diff 逐行核对）：项目级 fragment-actions__scope 区块放片段列表上方、与「合并」同层（ready 非空分支内）；片段取数链成功后顺带 getCurrentProductionScope；404 且 code===\"not_found\" → 空态「尚未提交制作范围。」（不算错误态）；其他读取失败 →「制作范围读取失败：{message}」+ 重试（retryTick 重走整条链）。",
+          "覆盖/裁减/范围外清单（卡面行为，字符串断言）：covered →「完整覆盖正文」；否则「范围外段落」清单（每段 [start, end) + 长度 end-start）；「覆盖片段清单（共 N 个片段）」逐 id 映射当前片段名，找不到显示 id。",
+          "提交表单（字符串断言）：复选框清单仅 state===\"confirmed\"（候选/退役不出现，独立于候选创建——组件全文无 createFragmentCandidate）；打开时默认全选；「全部已确认片段」开关开启 → 提交省略 fragment_ids；零勾选 → 本地提示不发请求保留表单；每次点击 makeCommandId() 恰一次（crypto.randomUUID 恰 1 处，既有计数断言不变）；提交中 disabled；成功清表单 + setRefreshTick 内部重取；失败保留表单与勾选不退出。",
+          "行内错误映射（字符串断言）：duplicate_scope →「相同片段覆盖的制作范围已提交过，历史只追加不重复。」；precondition_failed → error.message；validation_failed → details.violations 各条 message；其他 → error.message。",
+          "纪律（字符串断言）：「取消」零 API 调用；useEffect 内无自动提交；无历史列表接口（listProductionScopes 未实现，按卡面排除）；不直接 fetch、不导航、无硬编码样例文本；新快照时 scoping 表单随既有清单一并重置（防陈旧表单/错误）；styled-jsx 作用域独立（fragment-actions__scope*）。"
+        ],
+        "evidence": [
+          "web/features/studio/source/api.ts（第 1067 行起追加：ProductionScopeDto/CreateProductionScopeParams/createProductionScope/getCurrentProductionScope）",
+          "web/features/studio/source/components/FragmentActions.tsx（制作范围区块 + 4 handler + scopeErrorText + 冻结头注释段）",
+          "web/tests/studio/production-scope.test.cjs（24 项：12 api 纯逻辑 + 12 组件字符串断言）",
+          "提交 ff07efb（3 文件，+1144）"
+        ],
+        "limitations": [
+          "浏览器实测（真实点击制作范围交互）待 GATE-02 关键浏览器连续操作门验收；本轮以纯逻辑 vm 测试 + 组件字符串断言为准（与 SOURCE-14-a～g 同一验收深度）。",
+          "FragmentActions 尚未接入工作台壳（与 SourceChangeReview 等独立组件同），接入归 UI 批次。",
+          "F12 空态判定以 code===\"not_found\" 为准（kind 未区分 project/production_scope 展示文案差异）；项目不存在的 404 也会显示为空态而非错误——按派发口径接受（项目级 404 在上层壳处理）。",
+          "GET /production-scopes 历史列表前端未接线（卡面明确排除）；后端端点已存在，后续 UI 卡补。"
+        ]
+      }
     },
     {
       "id": "SOURCE-14",
@@ -2987,11 +3022,24 @@
         "R04",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "allowlist_scope": "web/features/studio/source/components/FragmentActions.tsx、web/features/studio/source/components/SourceChangeReview.tsx、web/features/studio/source/api.ts",
       "attempts": [],
-      "acceptance": null
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-13",
+        "note": "八个子卡（a 片段列表 UI、b 创建候选 UI、c 边界编辑 UI、d 拆分校验 UI、e 合并预览 UI、f 文本编辑 UI、g 正文变更复核 UI、h 完整制作范围 UI）均 accepted；来源域命令与变更复核工具链齐备。h 卡收口后全量前端回归 385/385、tsc 无错。",
+        "evidence": [
+          "web/features/studio/source/api.ts",
+          "web/features/studio/source/components/FragmentActions.tsx",
+          "web/features/studio/source/components/SourceChangeReview.tsx",
+          "web/tests/studio/fragment-actions.test.cjs",
+          "web/tests/studio/source-change-review.test.cjs",
+          "web/tests/studio/production-scope.test.cjs",
+          "子卡入账提交链：SOURCE-14-h = ff07efb"
+        ]
+      }
     },
     {
       "id": "VIEW-01",
