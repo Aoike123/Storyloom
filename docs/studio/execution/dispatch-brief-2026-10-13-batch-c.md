@@ -205,8 +205,8 @@
 | 卡 | 状态 | 说明 |
 | --- | --- | --- |
 | VIEW-01 | **已冻结，见下** | 白名单三文件；WIP 草案已在 `e06939f` 入账 |
-| CHAT-01 | 待冻结 | 附录 10 只给表与语义、无命令表；主模型需先冻 `conversations` 五路由 |
-| EDIT-01 | 待冻结 | 附录 08 §2/11 §2 只给语义；主模型需先冻 `edit` 读写路由与 manifest 校验 |
+| CHAT-01 | **已冻结，见下** | 附录 10 只给表与语义、无命令表；命令面由主模型冻结（五路由） |
+| EDIT-01 | **已冻结，见下** | 附录 08 §2/11 §2 只给语义；读写路由与 manifest 校验由主模型冻结 |
 | RETIRE-01 | 待冻结 | 需主模型先按实施 HEAD 出逐文件退役清单（ROOT-05 盘点不能代替） |
 
 ### VIEW-01 · 新项目工作台状态容器（C2 冻结）
@@ -228,3 +228,73 @@
 **测试**：`web/tests/studio/state.test.cjs` 新建，照 `selection.test.cjs` 的 `vm` + `typescript.transpileModule`（CommonJS）模式加载 `shell/studio-state.ts`，断言：初态；项目隔离（切项目后 selection/view/jobFeed 归初态）；`switchProject`/`hydrate` 载入 DTO 与 active source revision；`normalizeSelectionRef` 四类非法输入归 `null`；`pushJob`/`updateJob` 不改 `view`、cap=10；`clearJobFeed`；未知 action 引用不变。
 
 **验收**：`node --test 'web/tests/studio/*.test.cjs'`（既有 385 例不回归）与 `web/node_modules/.bin/tsc --noEmit -p web/tsconfig.json`（exit 0）。
+
+### CHAT-01 · 会话和消息 API（C2 冻结）
+
+来源：附录 10 §1–§3 + 附录 00 §3/§4/§6。白名单：`backend/studio/conversations/{service,api}.py`、`tests/studio/test_conversations.py`。**本卡不调 LLM、不建 Proposal**（提案由 CHAT-02 处理器产生；「回答本身不保存业务」R10）。
+
+两个冻结 DTO：
+
+```json
+ConversationDto = { "object_ref": {"kind":"conversation","id":..,"revision":null},
+  "scope_kind": "fragment", "scope_id": "..", "title": "", "created_at": <float>, "updated_at": <float> }
+MessageDto = { "object_ref": {"kind":"message","id":..,"revision":null},
+  "conversation_id": "..", "sender": "user|assistant", "content": "..",
+  "refs": [{"kind":"fragment","id":"..","label":".."}] | null,
+  "job_id": null, "created_at": <float> }
+```
+
+路由（均 `/api/studio/projects/{pid}/...`，属主隔离：会话以 `owner_id` 限定，他人会话一律 404 不泄漏）：
+
+1. `GET /conversations?scope_kind=&scope_id=&cursor=` → 200 `{"items":[ConversationDto],"next_cursor":<id|null>}`；只返回 `owner_id==user.id` 的行；过滤项可选；按 `id` 升序；默认 50、上限 200。
+2. `POST /conversations`（**取或建**）请求 `{scope_kind, scope_id, command_id}`：项目 404 → `scope_kind ∉ {project,fragment,scene,shot,asset,edit}` → 422 `validation_failed` field=`scope_kind` rule=`enum` → `scope_kind=="project"` 时 `scope_id` 必须 `== pid`（否则 422 field=`scope_id` rule=`mismatch`），其余 kind 的 `scope_id` 必须存在且属本项目（fragment→`studio_fragments`、scene→`studio_scenes`、shot→`studio_shots`、asset→`studio_assets`、edit→`studio_edit_drafts.edit_id`）否则 404 `not_found` details `{"kind":scope_kind,"id":scope_id}` → 幂等 → **已存在 (project,scope_kind,scope_id,owner) 行 → 200 返回该行 DTO（取或建，不报 duplicate）**；否则 201 新建并返回 DTO。
+3. `GET /conversations/{cid}` → 200 `{...ConversationDto, "messages":[MessageDto × 最近 50 条按 id 升序]}`；不存在/跨项目/非本 owner → 404 `not_found` details `{"kind":"conversation","id":cid}`。
+4. `GET /conversations/{cid}/messages?cursor=&limit=` → 200 `{"items":[MessageDto],"next_cursor":<id|null>}`，按 `id` 升序，默认 50、上限 200。
+5. `POST /conversations/{cid}/messages` 请求 `{sender, content, refs?, job_id?, command_id}` → 201 `MessageDto`。校验序：项目 404 → 会话 404（同形状）→ `sender ∉ {user,assistant}` → 422 field=`sender` rule=`enum` → `content.strip()` 为空 → 422 field=`content` rule=`required`；长度 > 8000 → rule=`too_long`（**主模型补白**）→ `refs` 非 null 时必须是数组且每项 `{kind:非空 str, id:非空 str, label:str}`，否则 422 field=`refs` rule=`invalid`（**主模型补白**）→ `job_id` 非 null 必须存在且属本项目，否则 404 `not_found` details `{"kind":"job","id":job_id}` → 幂等 → 单事务 `INSERT Message` + `UPDATE conversation.updated_at` + `CommandRecord`。`refs` 入库为 JSON 文本，出参解析为数组（`null → null`）。
+
+**禁止**：不写业务表（Fragment/Scene/Shot/Asset/Edit/Job）；不建/改 `Proposal`；不调 LLM、不发网络请求；`title` 本卡固定空串（改名命令属后续卡）。
+
+### EDIT-01 · 项目剪辑草稿读写（C2 冻结）
+
+来源：附录 08 §2（EditManifest v1）/§3（支持范围）、附录 11 §2。白名单：`backend/studio/edits/{service,api}.py`、`tests/studio/test_edits.py`。**本卡不做确认（EDIT-08）与导出**，只做草稿读写。
+
+路由：
+
+1. `GET /api/studio/projects/{pid}/edit` → 200
+
+```json
+{ "edit_id": <str|null>, "edit_revision": <int|null>, "cas_revision": <int|null>,
+  "manifest": <EditManifest v1 object|null>, "manifest_digest": <64hex|null>,
+  "instances": [InstanceDto...],
+  "confirmed": { "object_ref": {"kind":"confirmed_edit","id":..,"revision":<edit_revision>},
+                 "manifest_digest": "..", "output_spec": {...} } | null }
+```
+
+项目无任何草稿行 → `edit_id/edit_revision/cas_revision/manifest/manifest_digest` 全 `null`、`instances: []`、`confirmed: null` —— **空态就是空态，不造样例实例、不造 96 秒假时长**。`instances[]` 来自当前草稿行的 `studio_edit_instances`；`confirmed` 取该 `edit_id` 的 `max(edit_revision)` 确认行。
+
+2. `POST /api/studio/projects/{pid}/edit/draft` 请求 `{edit_id: str|null, manifest, expected_revision: int|null, command_id}` → 200 DraftDto：
+
+```json
+{ "object_ref": {"kind":"edit","id":<edit_id>,"revision":<edit_revision>},
+  "edit_revision": 2, "cas_revision": 2, "manifest": {...},
+  "manifest_digest": "<64hex>",
+  "instances": [ { "object_ref": {"kind":"edit_instance","id":..,"revision":null},
+                   "instance_id": "..", "media_id": "..", "source_in_ms": 0,
+                   "source_out_ms": 1000, "speed": 1.0,
+                   "timeline_start_ms": 0, "track_id": 0 } ],
+  "updated_at": <float> }
+```
+
+- 校验序：项目 404 → `edit_id` 非 null 时草稿必须存在且属本项目（否则 404 `not_found` details `{"kind":"edit","id":edit_id}`，跨项目同形状）→ manifest 校验（**全部 violations 一次报**，422 `validation_failed`）→ 幂等 → CAS。
+- manifest 校验（**主模型冻结**，`field` 用带下标的精确路径）：
+  - `manifest` 非 object、或 `manifest.schema != "storyloom.editmanifest/v1"` → field=`manifest.schema` rule=`invalid`；
+  - `canvas.width`/`canvas.height`/`canvas.fps` 非正整数 → field=`manifest.canvas.<k>` rule=`invalid`；
+  - `instances` 非数组 → field=`manifest.instances` rule=`invalid`；逐项：`id`/`media_id` 非空字符串（rule=`required`）；`track_id == 0`（v1 单轨，rule=`invalid`）；`timeline_start_ms`/`source_in_ms` 非负整数（rule=`invalid`）；`source_out_ms > source_in_ms`（rule=`invalid`）；`0.25 ≤ speed ≤ 4.0`（rule=`invalid`）；
+  - `media_id` 必须存在且属本项目 `studio_media_artifacts`（rule=`not_found`）；
+  - `manifest_digest` 由服务端计算 = `sha256(json.dumps(manifest, sort_keys=True, separators=(",",":"), ensure_ascii=False).encode("utf-8")).hexdigest()`，忽略客户端传入值。
+- 新建（`edit_id` 为 null）时 `expected_revision` 必须为 null，否则 422 field=`expected_revision` rule=`invalid`；已有草稿时 `expected_revision` 必须 `== 当前 cas_revision`，否则 409 `revision_conflict` details `{"object":{"kind":"edit","id":edit_id},"expected","actual"}`。
+- 写（单事务，无半次保存）：`INSERT EditDraft(edit_id, edit_revision=prev+1, manifest, manifest_digest, cas_revision=prev+1, updated_at)` + 为新草稿行 `INSERT EditInstance`（`id=make_ulid()`、`instance_id=manifest.instances[i].id`、`draft_id=新行 id`）+ `CommandRecord`。首次保存 `edit_id=make_ulid()`、`edit_revision=1`、`cas_revision=1`。
+- 幂等：同 `(owner, command_id)` 同 payload → 200 原 payload、零新行；异内容 → 422 `reused`。
+- **禁止**：不写 `ConfirmedEdit`/`Release`；不改 `MediaArtifact`；不删旧草稿行（版本链只追加）；不引入第二套时间单位（一律整数毫秒）。
+
+两者（CHAT-01/EDIT-01）派发前仍需核对：`backend/studio/router.py` 的「存在即挂载」清单已含 `conversations.api` 与 `edits.api`，无需接线改动。
