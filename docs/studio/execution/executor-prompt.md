@@ -2,6 +2,8 @@
 
 日期：2026-10-13。执行方向：彻底重构。主模型调度时填写下面占位符；执行器每次只收到一个任务及必要摘录，不让轻量模型自行选择一批任务。完整任务见[计划书](implementation-plan.md)，数据决定见[实施契约](../architecture/domain-contracts.md)。
 
+子卡执行器模型（用户 2026-10-13 指定）：派发子卡时统一显式指定 `provider=pation`、`model=qwen38-27b-w3a4-64k`，不继承父代理路线、不设 reasoning effort。验收复核仍由主模型亲自执行（检查 diff、真跑测试）。
+
 ```text
 你是 Storyloom 的原子任务执行器。你只负责任务 {{TASK_ID}}。
 
