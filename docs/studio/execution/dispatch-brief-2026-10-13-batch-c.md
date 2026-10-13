@@ -200,6 +200,31 @@
 
 执行器只提交，**不得 `git add/commit`**；主模型审 diff + 真跑本卡测试 + 独立复验 → 单卡提交 → 账本 `acceptance`（`tested_baseline`=该卡提交）→ 整批收尾全量 `pytest tests/studio`。
 
-## 后续波次（C2，待冻结后派发）
+## 后续波次（C2）
 
-`CHAT-01`、`EDIT-01`、`VIEW-01`（WIP `studio-state.ts` 已在 `e06939f` 入账）、`RETIRE-01`（需主模型先出逐文件退役清单）。四者接口面在附录 10 / 附录 08+11 / 03-任务卡之外仍需主模型冻结命令表，故不在 C1 同批派发。
+| 卡 | 状态 | 说明 |
+| --- | --- | --- |
+| VIEW-01 | **已冻结，见下** | 白名单三文件；WIP 草案已在 `e06939f` 入账 |
+| CHAT-01 | 待冻结 | 附录 10 只给表与语义、无命令表；主模型需先冻 `conversations` 五路由 |
+| EDIT-01 | 待冻结 | 附录 08 §2/11 §2 只给语义；主模型需先冻 `edit` 读写路由与 manifest 校验 |
+| RETIRE-01 | 待冻结 | 需主模型先按实施 HEAD 出逐文件退役清单（ROOT-05 盘点不能代替） |
+
+### VIEW-01 · 新项目工作台状态容器（C2 冻结）
+
+基线草案：`web/features/studio/shell/studio-state.ts`（`e06939f`，243 行，未接线未验收）。白名单：`web/features/studio/shell/studio-state.ts`、`web/features/studio/StudioApp.tsx`、`web/tests/studio/state.test.cjs`。
+
+**冻结导出**（后续 VIEW-03/04 与 `state.test.cjs` 依赖，不得改名/改形）：`ObjectRef`、`ProjectDtoSummary`、`StudioView`、`SourceSwitchMode`、`JobStatus`、`JobFeedEntry`、`StudioState`、`StudioAction`、`DEFAULT_VIEW`（`"source"`）、`DEFAULT_SOURCE_SWITCH_MODE`（`"reader"`）、`createInitialState()`、`normalizeSelectionRef(ref)`、`studioReducer(state, action)`。
+
+**语义冻结**：
+
+- 项目隔离：`setProject` / `switchProject` / `hydrate` 一律把 `selection`/`view`/`jobFeed` 重置到新项目初态（旧项目状态不残留）；`switchProject`/`hydrate` 载入 `project` DTO 摘要并把 `sourceSwitch.activeSourceRevisionId` 设为 `project.active_source_revision_id`；`hydrate` 用服务端 DTO 重建（含 `selectionRef`），**不读 localStorage**；
+- 后台 job：`pushJob`/`updateJob`/`clearJobFeed` 只改 `jobFeed`，**永不修改 `view`**（job 不跳标签）；`pushJob` 保留最近 10 条（`JOB_FEED_CAP`）；
+- `setSelection` 经 `normalizeSelectionRef` 归一：空 `kind`/空 `id`/`revision` 非正整数 → `null`；
+- 未知 action → 返回**原引用**（引用相等），不抛错、不新建对象；
+- 无旧 stage/context 兼容分支（R11）。
+
+**StudioApp.tsx 接线**：`useReducer(studioReducer, undefined, createInitialState)`；`projectId` prop 变化 → dispatch `{type:"setProject", projectId}`（`invalid` 或 `projectId===null` 时传 `null`）；保持既有 DOM 结构与 `<style jsx>`，以及 invalid / 未选择 / 空态三分支文案。**约束**：`web/tests/studio/studio-app.test.cjs` 断言 StudioApp.tsx 不得含 `"/api/`、不得出现 `fetch(`、不得 import `app/`、不得引用 `ProjectHome|TaskActivity|reader` —— 本卡**不做网络水合**（项目 DTO 由后续卡经 `hydrate` 注入），不得新增 API 客户端文件（白名单外）。
+
+**测试**：`web/tests/studio/state.test.cjs` 新建，照 `selection.test.cjs` 的 `vm` + `typescript.transpileModule`（CommonJS）模式加载 `shell/studio-state.ts`，断言：初态；项目隔离（切项目后 selection/view/jobFeed 归初态）；`switchProject`/`hydrate` 载入 DTO 与 active source revision；`normalizeSelectionRef` 四类非法输入归 `null`；`pushJob`/`updateJob` 不改 `view`、cap=10；`clearJobFeed`；未知 action 引用不变。
+
+**验收**：`node --test 'web/tests/studio/*.test.cjs'`（既有 385 例不回归）与 `web/node_modules/.bin/tsc --noEmit -p web/tsconfig.json`（exit 0）。
