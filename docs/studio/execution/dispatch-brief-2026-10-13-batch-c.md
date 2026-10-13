@@ -128,14 +128,14 @@
 4. `range` 形状与界（仅当非 null）：缺一/非整数 → 422 `range_invalid` details `{"rule":"non_integer"}`；`start >= end` → `{"rule":"empty"}`；`start < 片段 range_start` 或 `end > 片段 range_end` → `{"rule":"out_of_bounds"}`。**坐标系冻结**：与片段同一套 UTF-16 半开区间绝对偏移（不引入第二套坐标），范围必须落在该片段区间内；
 5. 片段 `source_revision_id != project.active_source_revision_id` → 422 `precondition_failed` reason=`source_revision_inactive`，`blocked_by={"kind":"fragment","id":source_fragment_id,"revision":<片段当前 revision>}`（**不校验 confirmed**，与 SC4 先例一致）；
 6. 幂等（00 §3）：同 `(owner, command_id)` 且首次 payload 等价（`asset_id`/`source_fragment_id`/`range` 全等）→ 200 原 payload（覆盖 201）；异内容 → 422 `reused`；
-7. 唯一冲突：已存在同（`asset_id`,`source_fragment_id`,coalesce(range_start),coalesce(range_end)）行 → 409 `duplicate` details `{"scope_ref":{"kind":"asset_occurrence","asset_id":...,"source_fragment_id":...,"range_start":...,"range_end":...}}`；
+7. 唯一冲突：已存在同（`asset_id`,`source_fragment_id`,coalesce(range_start),coalesce(range_end)）行 → 409 `duplicate` details `{"scope_ref": "<字符串>"}`（**主模型实现时修正**：对齐既有 `StudioAPIError.duplicate(scope_ref: str)` 签名与 projects 域先例，`scope_ref` 为 `asset_occurrence:<asset_id>:<fragment_id>:<start|->:<end|->` 形式的字符串，不用 dict）；
 8. 写（单事务）：`INSERT AssetOccurrence(asset_revision=资产当前 revision, source_fragment_revision=片段当前 revision, ...)` + `INSERT CommandRecord`。
 
 **禁止**：不改 `Asset`/`AssetRevision`；不建 `Fragment`/`FragmentRevision`/`ScriptObject`；不写 `AssetBinding`。
 
 ### 2. `GET /api/studio/projects/{pid}/relations/occurrences?asset_id=&source_fragment_id=&cursor=`（OC2）
 
-200 `{"items":[DTO...],"next_cursor": <id|null>}`：过滤项均可选、只返回本项目的行；按 `id` 升序（ULID 时间有序），默认页 50、上限 200（附录 00 §6）；`items[]` 用与 OC1 相同的 DTO。
+200 `{"items":[DTO...],"next_cursor": <id|null>}`：过滤项均可选、只返回本项目的行；排序 `id DESC`（**主模型实现时修正**：原写 asc，按 P2/P1 已冻结的域倒序惯例与 `list_projects`/`list_fragments` 对齐）；`cursor` 非 `^[0-9a-z]{26}$` → 422 `validation_failed` field=`cursor` rule=`format`（同域惯例）；`limit` 缺省 50、clamp [1,200]；`items[]` 用与 OC1 相同的 DTO。
 
 ### 3. `DELETE /api/studio/projects/{pid}/relations/occurrences/{occurrence_id}`（OC3）
 
@@ -298,3 +298,16 @@ MessageDto = { "object_ref": {"kind":"message","id":..,"revision":null},
 - **禁止**：不写 `ConfirmedEdit`/`Release`；不改 `MediaArtifact`；不删旧草稿行（版本链只追加）；不引入第二套时间单位（一律整数毫秒）。
 
 两者（CHAT-01/EDIT-01）派发前仍需核对：`backend/studio/router.py` 的「存在即挂载」清单已含 `conversations.api` 与 `edits.api`，无需接线改动。
+
+## 执行结果（2026-10-13 晚）
+
+| 卡 | 结果 |
+| --- | --- |
+| REL-02 | **已验收**，提交 `3ed8b58`（12 passed；独立复验 29/29）。由**主模型亲自实现**：两轮执行器均因 64k 上下文超限零产出失败。 |
+| SCRIPT-02 | 执行器失败（同因，零产出），待重派或主模型实现 |
+| MEDIA-01 | 执行器失败（同因，零产出），待重派或主模型实现 |
+| VIEW-01 | 执行器失败（同因，零产出，失败前已完成基线核对），待重派或主模型实现 |
+
+**根因（实测，已写入 `observed_baselines.executor_context_limit_2026_10_13` 与 [执行器提示词](executor-prompt.md)）**：本地端点 `pation/qwen38-27b-w3a4` 的 contextWindow = 65536；五次派发全部在累计 tool 结果 117820~154679 字节时 `400 "Input plus output exceeds 65536 tokens for this model"` 失败且零产出（432 字节的探测会话正常）。批次 A 能通过是因为当时端点还有更大上下文的模型变体。
+
+**重新派发的硬约束**：单卡「阅读量 + 产出量」控制在约 50KB 以内；派发单只给精确行区间/函数名，禁止整读 >400 行文件；超出该预算的卡由主模型实现或先拆成更小的叶卡。

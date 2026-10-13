@@ -45,7 +45,8 @@
   "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1 已随文档精简删除）；不得触碰非本用户占用端口；新 Studio 预览独占 backend=3011 / frontend=3021。2026-10-13 实测 3011/3021 空闲后由主模型临时占用验证并释放。",
   "current_checkout": "/mnt/Code/agent-orchestration/workflow/Storyloom",
   "current_head_at_metadata_update": "d09c43c",
-  "root01_tested_base": "bcb3eb4"
+  "root01_tested_base": "bcb3eb4",
+  "executor_context_limit_2026_10_13": "pation/qwen38-27b-w3a4 contextWindow=65536（本地端点 http://127.0.0.1:18982/v1 只服务该变体）。2026-10-13 批次 C 五次派发实测：累计 tool 结果 117820~154679 字节时全部以 400 \"Input plus output exceeds 65536 tokens for this model\" 失败且零产出；432 字节的探测会话正常。派发须把单卡阅读+产出控制在约 50KB 以内，或恢复更大上下文的模型变体。"
  },
  "policy": {
   "acceptance_requires": [
@@ -3443,11 +3444,59 @@
     "R05",
     "R07"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "allowlist_scope": "backend/studio/relations/service.py、backend/studio/relations/api.py、tests/studio/test_relations.py",
-   "attempts": [],
-   "acceptance": null
+   "attempts": [
+    {
+     "n": 1,
+     "by": "executor",
+     "date": "2026-10-13",
+     "result": "failed（本地执行器模型 64k 上下文超限：400 INVALID_REQUEST，零产出；累计 tool 结果 152867 字节）"
+    },
+    {
+     "n": 2,
+     "by": "executor",
+     "date": "2026-10-13",
+     "result": "failed（同因，零产出；累计 tool 结果 154679 字节，主因是整读 76KB 的 assets/service.py）"
+    },
+    {
+     "n": 3,
+     "by": "root",
+     "date": "2026-10-13",
+     "result": "submitted（两轮执行器失败后按 executor-prompt「一个任务修复两轮仍未通过时由主模型亲自处理」由主模型实现并自验）"
+    }
+   ],
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-13",
+    "contract_version": "2.9",
+    "tested_baseline": "3ed8b58（本卡提交，基于 1c9acf3）",
+    "scope": "asset_occurrence_commands_oc1_oc3",
+    "checks": [
+     "冻结接口：`POST /api/studio/projects/{pid}/relations/occurrences`（OC1，201；同 command_id 重放 200 覆盖 201）、`GET .../occurrences`（OC2，`{items,next_cursor}`）、`DELETE .../occurrences/{occurrence_id}`（OC3，200）。DTO 恰 5 键 `{object_ref,asset,fragment,range,created_at}`，`object_ref.revision` 取 `source_fragment_revision`（与既有 reviews/impact.py 对 asset_occurrence 的发射一致，不新造第二套 revision 约定），asset/fragment 各自带真实 revision 快照（t2 + 独立复验 A2~A4）。",
+     "校验序（冻结，按序短路）：项目 404（不存在/非属主同形状）→ 资产 404（不存在/跨项目同形状）→ 片段 404（不存在/跨项目同形状）→ range 形状与界 → 片段绑定版本非 active 422 precondition_failed(source_revision_inactive，**不校验 confirmed**，与 SC4 先例一致) → 幂等 → 唯一桶 409 duplicate → 单事务写（t7~t10 + 独立复验 E1~E5）。",
+     "range_invalid 三 rule：缺一/非整数（含浮点 1.5/10.5）→ `non_integer`；`start>=end` → `empty`；越出片段区间（含负 start）→ `out_of_bounds`；坐标系与片段同一套 UTF-16 半开绝对偏移（不引入第二套坐标）。边界 [0,10)/[1,10) 合法（t6 + 独立复验 B3/B4）。",
+     "唯一桶：与模型表达式索引 `coalesce(range_start,-1),coalesce(range_end,-1)` 同语义——同 (asset,fragment) 无精确范围桶唯一、同精确范围唯一、不同范围各成一桶；冲突 409 `duplicate` `scope_ref` 为**字符串**（对齐既有 `StudioAPIError.duplicate(scope_ref: str)`，主模型据此修正派发单原写的 dict 形状）（t5 + 独立复验 B1/B2）。",
+     "幂等（00 §3，先于唯一检查与写）：同 command_id 同内容 → 200 逐字段等于首次 payload、occurrences/commands 零增；异内容 → 422 field=command_id rule=reused 零写（t3 + 独立复验 D1/D2）。删除类同 command_id 重放 → 200 原 payload；删掉后换新 command_id → 404 收敛（附录 06 §2 注）（t12 + 独立复验 D3~D5）。",
+     "列表（00 §6）：`{items,next_cursor}`；过滤 asset_id/source_fragment_id 只限本项目；排序 `id DESC`（主模型按 P2/P1 域倒序惯例修正派发单原写的 asc）；cursor 非 `^[0-9a-z]{26}$` → 422 field=cursor rule=format；limit 缺省 50、clamp [1,200]；keyset 分页逐页倒序不重复（t11 + 独立复验 C3~C6）。",
+     "零业务副作用（直查库）：`studio_asset_occurrences` 是唯一新增行；`studio_asset_bindings`/`StudioAsset`/`AssetRevision`/`Fragment`/`FragmentRevision`/`ScriptObject` 行数不变——同资产多片段出现共享同一 asset 身份、不复制资产、不建片段、不承担归属（R05/R07）（t2/t4 + 独立复验 A5/C2）。",
+     "属主与鉴权：无 token 401 unauthenticated；项目/资产/片段 404 均同形状、id 回显请求值、不泄漏存在性（t1/t7/t8/t9 + 独立复验 E1~E3/E6）。",
+     "回归：pytest tests/studio/test_relations.py → 12 passed；tests/studio/test_relation_models.py + test_assets.py + test_fragments.py → 102 passed（关系/资产/片段域零回归）。",
+     "独立复验：data/scratch/verify_rel_02.py（独立数据根 + TestClient 真调接口 + 直查 SQLite）→ 29/29 通过。**注意**：本卡实现由主模型亲自完成（两轮执行器因 64k 上下文超限失败），该脚本是同一作者的第二套独立断言，不等价于跨作者复验。"
+    ],
+    "evidence": [
+     "提交 3ed8b58：backend/studio/relations/service.py、backend/studio/relations/api.py、tests/studio/test_relations.py（3 文件，+936）",
+     "pytest tests/studio/test_relations.py → 12 passed in 9.43s",
+     "pytest tests/studio/test_relation_models.py tests/studio/test_assets.py tests/studio/test_fragments.py → 102 passed in 69.60s",
+     "data/scratch/verify_rel_02.py → 29/29 通过（独立数据根 data/studio-verify-rel02-*）"
+    ],
+    "limitations": [
+     "本卡由主模型亲自实现并自验（executor-prompt：一个任务两轮未过由主模型接手），缺少跨作者独立复验；独立脚本仅提供第二套断言。",
+     "RL（来源关系 RL1~RL3）与 BD（生成绑定 BD1~BD4）不在本卡；`relations/api.py` 目前只挂出现族三路由。",
+     "本地执行器模型 contextWindow 仅 65536，实测五次派发全部在累计 tool 结果 117~155KB 时 `400 INVALID_REQUEST` 失败（批次 A 时期端点尚有更大上下文的变体）。该限制已写入 executor-prompt.md 的上下文预算段；本波其余卡（SCRIPT-02/MEDIA-01/VIEW-01）因此同样失败，需按更小上下文预算重新派发或由主模型实现。"
+    ]
+   }
   },
   {
    "id": "REL-03-a",

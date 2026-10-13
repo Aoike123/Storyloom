@@ -50,6 +50,12 @@
 
 本机命令约定：`pnpm` 包脚本当前不可用（store 缺失），前端类型检查/构建用 `web/node_modules/.bin/tsc --noEmit -p web/tsconfig.json` 与 `web/node_modules/.bin/next build`；`node --test` 传目录会误报失败，须用通配符或逐文件跑。后端测试自带隔离数据根，不要指向 `data/studio`。
 
+**上下文预算（2026-10-13 实测硬限）**：本地执行器模型 contextWindow = 65536 tokens，输入+输出超限直接 `400 INVALID_REQUEST`，会话即失败且零产出（批次 C 首派 SCRIPT-02/REL-02 即因此失败）。派发单与执行器都必须：
+- 不得整读超过约 400 行的文件（例如 `backend/studio/sources/fragment_service.py` 3113 行、`tests/studio/test_scripts.py` 上千行）；先用 `grep -n` 定位，再用 read 的 `offset`/`limit` 只读需要的行区间，**单次 ≤200 行**；
+- 参考实现只读对应函数段，不把整篇读入上下文；实现以派发单的冻结接口文字为准；
+- 追加测试时按用例分批写入，不整读再整体重写大测试文件；
+- 派发单应给出「允许读取的上下文」的**精确行区间或函数名**，而不是整文件路径。
+
 执行器交付格式：
 
 ```text
