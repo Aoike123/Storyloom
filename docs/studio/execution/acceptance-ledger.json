@@ -3100,12 +3100,54 @@
         "R07",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "创建真实动作/对白草稿与出处，不采用。",
       "allowlist_scope": "backend/studio/scripts/service.py、backend/studio/scripts/api.py、tests/studio/test_scripts.py",
-      "attempts": [],
-      "acceptance": null
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-13",
+          "result": "submitted",
+          "note": "执行器产出 scripts/service.py（WIP 提交 33dd68b），未含 api 与测试；同批次交接单在批收尾时被删除前，主模型已据其 §3 冻结接口完成收口。"
+        },
+        {
+          "n": 2,
+          "by": "root",
+          "date": "2026-10-13",
+          "result": "submitted",
+          "note": "主模型补齐 scripts/api.py（POST /projects/{pid}/script-objects，201/replay 200）与 tests/studio/test_scripts.py（16 条行为测试），自验与独立复验通过后验收。"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-13",
+        "contract_version": "2.9",
+        "tested_baseline": "a4e2e25（含 33dd68b 的 service.py + 本提交的 api.py/test_scripts.py）",
+        "scope": "script_object_create_sc1",
+        "checks": [
+          "冻结接口（交接单 §3）：POST /api/studio/projects/{pid}/script-objects，请求 fragment_id/kind/text/speaker?/adaptation_note?/seq?/command_id；201 DTO 键集恰为 {object_ref,kind,text,speaker,adaptation_note,seq,fragment,current_revision}，object_ref.revision=1、fragment ref 指向片段当前 revision、source_fragment_revision 快照=1（tests t2 + 独立复验 7 项）。",
+          "seq 语义：缺省=片段内 max(seq)+1 缺省 1、显式跳号后缺省回到 max+1、跨片段独立计数（t4）；显式占用 → 422 validation_failed field=seq rule=taken 且 violations.message 含占用对象 id、零副作用（t5）。",
+          "字段校验：text 空/全空白→text/required，kind 非 action|dialogue→kind/enum，seq 0/-1→seq/positive；多错一次返回全部 violations（text+kind）；缺必填体字段由请求体形态校验 422 拦截；全部零副作用（t6/t7）。",
+          "片段门禁：不存在与跨项目同形状 422 precondition_failed reason=fragment_not_found（blocked_by.revision=null，不泄漏存在性）；candidate→not_confirmed；F7 真实退役后→retired；绑定正文版本经 S4/S5 真实切走后→source_revision_inactive；blocked_by 形状冻结（t8–t11，门禁链路全部真调接口构造）。",
+          "属主与鉴权：无 token 401 unauthenticated；项目不存在或非属主统一 404 not_found details={kind:project,id}（t1/t12）。",
+          "幂等：同 command_id 同内容 → HTTP 200 且响应体逐字段等于首次 result_payload，objects/revisions/commands 行数不变（t13）；seq 缺省重放不重新分配（t14）；同 command_id 不同内容 → 422 command_id/reused 零副作用（t15）。",
+          "禁止项（diff 逐行核对 + t16）：不写 ScriptAdoption（创建 2 条后表恒空）、不生成媒体、无 stage/状态列写入、对象 retired_at 恒空；current_revision_id↔object_id FK 环 deferrable 事务内落库。",
+          "主模型独立复验（不复用执行器产出自述）：data/scratch/verify_script_01a.py 在全新隔离数据根真调 TestClient（lifespan 建表）+ 直查 SQLite → 17/17 通过。",
+          "回归：pytest tests/studio/test_scripts.py → 16 passed；tests/studio/test_script_models.py + test_fragments.py + test_fragment_changes.py → 94 passed（含本卡新增门禁链路对相关域零回归）。"
+        ],
+        "evidence": [
+          "提交 a4e2e25：backend/studio/scripts/api.py、tests/studio/test_scripts.py（service.py 来自执行器 WIP 33dd68b）",
+          "pytest tests/studio/test_scripts.py → 16 passed in 12.63s",
+          "pytest tests/studio/test_script_models.py tests/studio/test_fragments.py tests/studio/test_fragment_changes.py → 94 passed in 70.96s",
+          "data/scratch/verify_script_01a.py → 17/17（主模型独立复验，独立数据根 data/studio-verify-s1a-*）"
+        ],
+        "limitations": [
+          "3011 后端为旧进程，未重启验证路由挂载；整批收尾时统一重启确认（router 自动挂载 scripts.api 已由应用内测试覆盖）。",
+          "本卡只交付 SC1 单命令；修改/采用/排序（SC2 起）与 ScriptAdoption 关系属 SCRIPT-01 后续子卡与附录 06。"
+        ]
+      }
     },
     {
       "id": "SCRIPT-01-b",
