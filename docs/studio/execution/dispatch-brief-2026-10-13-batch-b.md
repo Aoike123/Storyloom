@@ -24,7 +24,10 @@
 - 校验序：项目 404 → 对象 404（不存在/跨项目同形状）→ 对象 retired 422 → 字段校验
   （text 空白/speaker>80/adaptation_note>300/expected_revision 非正整数）→
   片段非 active（`source_revision_inactive`）或片段 retired 422（**不校验 confirmed**，
-  附录 SC4 只列"片段非 active"）→ CAS 409 `revision_conflict` → 幂等重放/复用 422。
+  附录 SC4 只列"片段非 active"）→ **幂等重放（同 command_id 同内容 → 200 原样返回首次
+  payload；异内容 → 422 `reused`）→ CAS 409 `revision_conflict`**。
+  **幂等先于 CAS**（2026-10-13 裁定 5.1，与 `sources/fragment_service.py` F1/F4/F6/F7/F8
+  先例一致；原派发单此处排序写反，已按实测修正）。
 - 写：新 `ScriptRevision`（revision+1，缺席字段取现值，`source_fragment_revision`=保存时刻
   片段 revision）+ 对象行 `current_revision_id`/`speaker` 镜像/`updated_at` + `CommandRecord`，单事务。
 - 响应 200：与 SC1 DTO 同形，revision 号为新值。**零采用写入**（测试直接查库断言）。

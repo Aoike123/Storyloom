@@ -3215,12 +3215,42 @@
     "R07",
     "R11"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "behavior": "只改当前草稿revision，过期保存拒绝。",
    "allowlist_scope": "backend/studio/scripts/service.py、backend/studio/scripts/api.py、tests/studio/test_scripts.py",
    "attempts": [],
-   "acceptance": null
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-13",
+    "contract_version": "2.9",
+    "tested_baseline": "570489b（本卡提交，基于 b2c4cb5）",
+    "scope": "script_object_revise_sc4",
+    "checks": [
+     "冻结接口（批次 B 交接单）：POST /api/studio/projects/{pid}/script-objects/{oid}/revise，请求 text?/speaker?/adaptation_note?/expected_revision(int 必填)/command_id；成功 200 DTO 与 SC1 同形恰 8 键，object_ref.revision=新值（t17 + 独立复验 A2~A5）。",
+     "缺席 ≠ null：字段缺席=保持现值；speaker/adaptation_note 显式 null=清空（对象行 speaker 镜像同步）；text 显式 null 视同缺席；三者全缺席（含 text null）→ 422 validation_failed field=payload rule=empty（t18~t21/t23/t24 + 独立复验 B1~B8）。",
+     "字段校验一次返回全部 violations：text 去空白后空=blank；speaker>80 / adaptation_note>300=too_long；expected_revision 非正整数=positive；多错并报（t25~t28 + 独立复验 C1~C5/C6），全部零副作用。",
+     "校验序（冻结，按序短路）：项目 404（不存在/非属主同形状）→ 对象 404（不存在/跨项目同形状）→ 对象 retired 422 → 字段校验 → 片段门禁（source_revision_inactive / retired，不校验 confirmed）（t29~t33 + 独立复验 D1~D9 逐项构造，含 retired 优先于全缺席字段校验、state=candidate 仍可修订）。",
+     "幂等先于 CAS（裁定 5.1，保留实现并修正交接单排序文字）：同 command_id 同内容字面重放——即使 expected_revision 仍为首次值——200 且逐字段等于首次 result_payload、revisions/commands 零增（t34/t36 + 独立复验 F1~F3）；同 command_id 异内容（含过期 expected_revision）→ 422 command_id/reused 零写（t35/t37 + F4/F5）。与 sources/fragment_service.py F1/F4/F6/F7/F8 先例一致。",
+     "CAS：expected_revision ≠ 当前草稿 revision → 409 revision_conflict，details.object={kind:script_object,id}、expected/actual 为真实值（t22 + 独立复验 E1/E2），零写。",
+     "写入（单事务直查库，t36 + 独立复验 A6~A10）：新 ScriptRevision（revision+1、缺席取现值、source_fragment_revision=保存时刻片段 revision，D9 以片段 revision=2 实证）+ 对象行 current_revision_id/speaker 镜像/updated_at + CommandRecord；旧 revision 行逐字段不可变。",
+     "零采用写入：studio_script_adoptions 恒 0 行（t36 直查库 + 独立复验 A9/F6）；不启动任何生成。",
+     "Pydantic 哨兵警告修复（裁定 5.2）：api.py 不再以 object() 作字段默认值，改为三字段默认 None + model_fields_set 判定「字段是否出现」后映射 service 的 _UNSET；GET /openapi.json 的 PydanticJsonSchemaWarning 由 2 条降为 0 条，服务层契约不变，缺席/null 语义回归不破。",
+     "已知限制（裁定 5.3，沿用 SCRIPT-01-a 先例）：请求体形态错误（如 text=123）走 FastAPI 原生 422 形状而非契约 validation_failed 信封；数字字符串 expected_revision=\"1\" 被宽松强转为 1 后正常走 CAS（独立复验 E3 实证）。不作为本卡缺陷，登记为全项目已知限制。",
+     "回归：pytest tests/studio/test_scripts.py → 37 passed（含 SCRIPT-01-a 的 t1~t16 无回归）。",
+     "主模型独立复验（不复用执行器自述）：新建 data/scratch/verify_script_01b.py，独立数据根 + TestClient 真调接口 + 直查 SQLite → 47/47 通过。"
+    ],
+    "evidence": [
+     "提交 570489b：backend/studio/scripts/api.py、backend/studio/scripts/service.py、tests/studio/test_scripts.py（3 文件，+840/-1）",
+     "pytest tests/studio/test_scripts.py → 37 passed in 28.52s",
+     "data/scratch/verify_script_01b.py → 47/47 通过（主模型独立复验，独立数据根 data/studio-verify-s1b-*）",
+     "openapi 检查：PydanticJsonSchemaWarning 2 → 0（裁定 5.2 返修后实测）"
+    ],
+    "limitations": [
+     "SC4 只交付修改当前草稿；采用/撤销采用与影响（SC2/SC3）不在本卡，零采用写入为冻结行为。",
+     "请求体形态校验与数字字符串宽松强转沿用项目既有 FastAPI 行为（裁定 5.3），未做契约信封统一。"
+    ]
+   }
   },
   {
    "id": "SCRIPT-01",
@@ -3245,11 +3275,32 @@
     "R07",
     "R11"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "allowlist_scope": "backend/studio/scripts/service.py、backend/studio/scripts/api.py、tests/studio/test_scripts.py",
    "attempts": [],
-   "acceptance": null
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-13",
+    "contract_version": "2.9",
+    "tested_baseline": "570489b（子卡 SCRIPT-01-a=a4e2e25、SCRIPT-01-b=570489b）",
+    "scope": "family_script_draft_commands",
+    "checks": [
+     "子卡齐备且全部 accepted：SCRIPT-01-a（SC1 新建草稿对象，基线 a4e2e25）、SCRIPT-01-b（SC4 修改当前草稿，基线 570489b）。",
+     "父卡验收要求逐条覆盖：同片段多个对象可重读（SC1 t3/t4、跨片段独立排序）；保存不隐式采用/分镜/生成（两卡均以直查库断言 studio_script_adoptions 恒 0 行、无 shot/media/job 写入）；过期写拒绝（SC1 片段门禁 + SC4 CAS 409 revision_conflict）；跨项目不泄漏（两卡 404 not_found 同形状，逐项独立复验）。",
+     "无旧 stage/context 兼容分支（R11）：diff 逐行核对，两卡仅新增命令实现，不读旧 stage/状态列，响应不含衍生状态字段。",
+     "整批收尾无回归：pytest tests/studio → 448 passed（与批次 B 前基线一致）。",
+     "按 policy.family_acceptance=all_children_accepted 收口父卡。"
+    ],
+    "evidence": [
+     "SCRIPT-01-a：a4e2e25 + data/scratch/verify_script_01a.py 17/17",
+     "SCRIPT-01-b：570489b + data/scratch/verify_script_01b.py 47/47",
+     "pytest tests/studio → 448 passed in 232.85s（批次 B 收尾，主模型独立运行）"
+    ],
+    "limitations": [
+     "采用/撤销采用与影响（SC2/SC3）不在本族；由 SCRIPT-02 起承接。"
+    ]
+   }
   },
   {
    "id": "SCRIPT-02",
@@ -4231,12 +4282,40 @@
     "R07",
     "R11"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "behavior": "新revision不自动改旧采用/绑定。",
    "allowlist_scope": "backend/studio/assets/service.py、backend/studio/assets/api.py、tests/studio/test_assets.py",
    "attempts": [],
-   "acceptance": null
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-13",
+    "contract_version": "2.9",
+    "tested_baseline": "36b57d2（本卡提交，基于 570489b）",
+    "scope": "asset_spec_revise_as4",
+    "checks": [
+     "冻结接口：POST /api/studio/projects/{pid}/assets/{aid}/spec，请求 spec/expected_revision/command_id；200 新 revision=当前+1 且自动成为当前（current_revision_id/updated_at），DTO 与 §2 详情读同形 8 键，versions[] 含全部并存版本（revision 升序，含旧行）（t32/t38 + 独立复验 A2/A6/A12）。",
+     "继承语义（以真实 media 行实证）：新 revision 继承上一 revision 的 media_artifact_id 与 generation_input、review_status 回到 unreviewed、spec 整体替换非合并、旧 revision 行逐字段不可变（独立复验先落 studio_media_artifacts 真实行再修订，A10/A11/A13 走非 NULL 路径；修复复验脚本 5.5 的 FK 崩溃后）。",
+     "spec 按资产 type 校验复用 _validate_spec：character 缺 appearance=required、body_type 非法枚举=invalid、scene 缺 location=required、scene 可选键 time_of_day 非字符串仍 422 invalid（继承 ASSET-01-c 校验零回归）（t35/t39 + 独立复验 E1/E2）。",
+     "name/type/character_id 不可经此命令修改（裁定 5.4）：请求体接受三字段后由 service 判定，非 null 出现即 422 validation_failed rule=forbidden field 精确到字段名；显式 null 视为未提供（与「不可修改」语义一致）；api.py docstring 已按裁定改正（t34 + 独立复验 D1/D2）。",
+     "CAS 与 404：expected_revision ≠ 当前 → 409 revision_conflict details.object={kind:asset,id}、expected/actual 真实值；项目 404（不存在/非属主）与资产 404（不存在/跨项目同属主）各自同形状、id 回显请求值、不泄漏存在性；401 unauthenticated（t33/t36 + 独立复验 C1~C3、F1/F1b/F2/F3）。",
+     "幂等先于 CAS（与 SCRIPT-01-b 同裁定 5.1）：同 command_id 同 spec（expected_revision 仍为首次值）→ 200 原样返回首次 payload、零写；同 command_id 异 spec → 422 command_id/reused 零写（t37 + 独立复验 B1~B5）。",
+     "零采用/绑定写入：studio_asset_occurrences / studio_asset_bindings 恒 0 行（t32 直查库 + 独立复验 A15/B5/G3）；不启动任何生成。",
+     "已知限制（裁定 5.3 同项目先例）：spec 缺失/非 object 由请求体形态校验 422 原生形状拦截，非契约 validation_failed 信封；数字字符串 expected_revision 宽松强转（独立复验 D3b 以 \"1\" → 409 实证强转确实发生）。",
+     "回归：pytest tests/studio/test_assets.py → 39 passed（含 t1~t31 无回归）。",
+     "主模型独立复验（不复用执行器自述）：data/scratch/verify_asset_01d_spec.py 修复自身三处缺陷后（5.5 的 FK 崩溃、F1 跨项目构造错误与整包比对过严、D3 对数字字符串的预期错误）→ 44/44 通过。"
+    ],
+    "evidence": [
+     "提交 36b57d2：backend/studio/assets/api.py、backend/studio/assets/service.py、tests/studio/test_assets.py（3 文件，+619/-3）",
+     "pytest tests/studio/test_assets.py → 39 passed in 29.69s",
+     "data/scratch/verify_asset_01d_spec.py → 44/44 通过（主模型独立复验，含真实 media 行继承路径与跨项目/非属主 404 形状）"
+    ],
+    "limitations": [
+     "本卡阶段 media_artifact_id/generation_input 恒 NULL（MEDIA-01 未交付）；继承语义由独立复验直插真实 media 行在非 NULL 路径实证。",
+     "AS2 列表/详情读路由尚未实现，DTO 8 键冻结由创建/修订响应断言覆盖。",
+     "AS5/AS6 媒体与生成、AS7 审核、AS8 切换当前版本、AS9 采用按子卡范围不在本卡。"
+    ]
+   }
   },
   {
    "id": "ASSET-01",
@@ -4265,11 +4344,33 @@
     "R07",
     "R11"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "allowlist_scope": "backend/studio/assets/service.py、backend/studio/assets/api.py、tests/studio/test_assets.py",
    "attempts": [],
-   "acceptance": null
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-13",
+    "contract_version": "2.9",
+    "tested_baseline": "36b57d2（子卡 a=1da88df、b=0da6f54、c=4f8f28f、d=36b57d2）",
+    "scope": "family_asset_spec_commands",
+    "checks": [
+     "子卡齐备且全部 accepted：ASSET-01-a（AS1 创建身份，1da88df）、ASSET-01-b（AS10 costume-required，0da6f54）、ASSET-01-c（物理场景与叙事场分离，4f8f28f）、ASSET-01-d（AS4 修订规格，36b57d2）。",
+     "父卡验收要求逐条覆盖：稳定 ID 与 revision（AS1 revision=1、AS4 revision+1 且旧行不可变）；资产 DTO 8 键冻结（创建与修订响应 + 独立复验逐键核对）；scene 与叙事场分离（studio_scenes/studio_shots 零行、DTO 递归无 scene_id）；保存不采用/不绑定/不生成（occurrences/bindings 零写入、无 media/job 写入）。",
+     "已知缺口显式登记（不掩盖）：AS3 改名暂无子卡归属；AS2 列表/详情读路由未实现，DTO 键集由写路径断言覆盖；media 恒 NULL 阶段由 ASSET-01-d 独立复验直插真实 media 行实证继承语义。",
+     "整批收尾无回归：pytest tests/studio → 448 passed；前端 node --test web/tests/studio/*.test.cjs → 385 passed；web/node_modules/.bin/tsc --noEmit exit 0。",
+     "按 policy.family_acceptance=all_children_accepted 收口父卡。"
+    ],
+    "evidence": [
+     "ASSET-01-a：1da88df + verify_asset_01a.py；ASSET-01-b：0da6f54 + verify_asset_01b.py；ASSET-01-c：4f8f28f + verify_asset_01c_scene.py",
+     "ASSET-01-d：36b57d2 + data/scratch/verify_asset_01d_spec.py 44/44",
+     "pytest tests/studio → 448 passed；node --test → 385 passed；tsc --noEmit exit 0（批次 B 收尾，主模型独立运行）"
+    ],
+    "limitations": [
+     "AS3 改名仍无子卡归属：家族已收口但该操作未交付，需在后续批次裁定补卡或显式豁免（延续 ASSET-01-b/c 的登记）。",
+     "AS2 读路径与 AS5~AS9 媒体/生成/审核/切换/采用不在本族。"
+    ]
+   }
   },
   {
    "id": "ASSET-02-a",
