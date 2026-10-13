@@ -2,7 +2,9 @@
 
 日期：2026-10-13。执行方向：彻底重构。主模型调度时填写下面占位符；执行器每次只收到一个任务及必要摘录，不让轻量模型自行选择一批任务。完整任务见[计划书](implementation-plan.md)，数据决定见[实施契约](../architecture/domain-contracts.md)。
 
-子卡执行器模型（用户 2026-10-13 指定，同日更新为 128k 版）：派发子卡时统一显式指定 `provider=pation`、`model=qwen38-27b-w3a4-128k`，不继承父代理路线、不设 reasoning effort。验收复核仍由主模型亲自执行（检查 diff、真跑测试）。
+子卡执行器模型（用户 2026-10-13 指定，同日按 profile `~/.dsh/profiles/web/cordis.patch.yml` 的实际配置同步）：派发子卡时统一显式指定 `provider=pation`、`model=qwen38-27b-w3a4`，不继承父代理路线、不设 reasoning effort。本地端点 `http://127.0.0.1:18982/v1` 当前只服务这一个模型（contextWindow 65536，默认 reasoning effort=medium）；原先记录的 `-64k`/`-128k` 后缀 id 已不存在，不得再派发。验收复核仍由主模型亲自执行（检查 diff、真跑测试）。
+
+派发前置检查：子代理白名单由 Harness 在**全新顶层会话**创建时采样一次并写入会话投影，之后不再重算（重启服务也不重算）。改过 profile 后必须在新 task 中派发；旧会话只能派发其投影里已允许的路线。
 
 ```text
 你是 Storyloom 的原子任务执行器。你只负责任务 {{TASK_ID}}。
