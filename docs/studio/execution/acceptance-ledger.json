@@ -4069,12 +4069,45 @@
         "R07",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "归属真实身份，bare模式明确无需图。",
       "allowlist_scope": "backend/studio/assets/service.py、backend/studio/assets/api.py、tests/studio/test_assets.py",
-      "attempts": [],
-      "acceptance": null
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-13",
+          "result": "submitted",
+          "note": "执行器交付 AS10（service +147 / api +47 / tests +233，t21~t28）；主模型派发前更正一处冻结措辞——409 details 形状以 contracts/errors.py 工厂 {object,expected,actual} 为准（非 object_ref 包装），执行器按更正实现。"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-13",
+        "contract_version": "2.9",
+        "tested_baseline": "0da6f54（本卡提交，基于 5514058）",
+        "scope": "asset_costume_required_as10",
+        "checks": [
+          "范围裁定（主模型）：AS1 创建三类型已由 ASSET-01-a 交付并验收（含 costume 归属 character 全部前置校验），'归属真实身份'为基线复验；本卡增量 = 'bare模式明确无需图' = 附录 05 AS10（character 的 costume_required 明确置 false，不用空图冒充服装）。",
+          "主模型独立复验（不复用执行器报告，脚本 data/scratch/verify_asset_01b.py）：真调 TestClient 接口 + 直查 SQLite，26/26 通过——200 翻转 true→false→true、响应恰 2 字段{object_ref,costume_required}、object_ref.revision=当前 revision、落库、updated_at 推进、同值显式确认照常落写。",
+          "零版本副作用（独立复验直查库）：AS10 不新建 AssetRevision 行、current_revision_id 不变、review_status 保持 unreviewed、occurrence/binding 零写入；写事务仅 UPDATE Asset.costume_required/updated_at + INSERT CommandRecord 单事务。",
+          "失败路径（独立复验）：非 character（costume/scene 各一）→ 422 precondition_failed reason=not_character 且 blocked_by={kind:asset,id,revision}，零副作用；expected_revision 错误 → 409 revision_conflict details{object:{kind:asset,id},expected,actual}（冻结工厂形状）；幽灵/跨项目资产 404 同形状、幽灵/非属主项目 404 同形状（不泄漏存在性）；未认证 401；StrictBool 拒绝 'false'/1/null 与缺字段 422。",
+          "幂等（独立复验）：同 command_id 同内容重放 → 200 同 payload、commands 行数不变、updated_at 不二次推进（零写零 commit）；同 command_id 不同 value → 422 validation_failed field=command_id rule=reused，零副作用。",
+          "校验序冻结（diff 逐行核对）：项目404 → 资产404 → 非character 422 → CAS 409 → 幂等 → 写；IntegrityError UQ(owner_id,command_id) 竞态 → 回滚重读赢家映射重放。",
+          "回归：.venv/bin/python -m pytest tests/studio/test_assets.py tests/studio/test_asset_models.py → 36 passed（28 资产接口含 t21~t28 + 8 模型；SAWarning 为既有 BK 环告警）。"
+        ],
+        "evidence": [
+          "提交 0da6f54：backend/studio/assets/{service,api}.py、tests/studio/test_assets.py（3 文件，+420/-7）",
+          "pytest tests/studio/test_assets.py tests/studio/test_asset_models.py → 36 passed",
+          "data/scratch/verify_asset_01b.py → 26/26 通过（主模型独立复验脚本，含修正后的幽灵/跨项目 404 同形状断言）"
+        ],
+        "limitations": [
+          "重放判定以 result_payload（object_ref + costume_required）逐项比对为准：同 command_id 同 value 但 expected_revision 不同视为同载荷重放（CAS 为执行期护栏，不计入命令内容），与附录 00 §3 '首次 result_payload 即重放响应'一致。",
+          "AS3 改名暂无子卡归属（-a 已验收、-b/-c/-d 主题不含改名）；家族验收前需裁定补卡或显式豁免。",
+          "3011 后端为旧进程，未重启验证路由挂载；整批收尾时统一重启确认。"
+        ]
+      }
     },
     {
       "id": "ASSET-01-c",
