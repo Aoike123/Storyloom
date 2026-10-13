@@ -1104,3 +1104,339 @@ def test_t31_narrative_scene_rows_do_not_leak_into_asset_dto(db, client):
         row = s.get(Scene, narrative_id)
         assert row is not None and row.name == "叙事场一" and row.seq == 1
         assert s.scalar(select(func.count(Shot.id))) == 0
+
+
+# ── ASSET-01-d 修订规格（AS4）POST /assets/{aid}/spec ───────────────────────
+
+def _revise_spec(client, pid, aid, *, spec, expected_revision,
+                 command_id=None, token=None):
+    body = {
+        "spec": spec,
+        "expected_revision": expected_revision,
+        "command_id": command_id or _cmd(),
+    }
+    headers = _auth(token) if token is not None else {}
+    return client.post(
+        f"/api/studio/projects/{pid}/assets/{aid}/spec",
+        json=body,
+        headers=headers,
+    )
+
+
+def _mk_scene(client, token, pid, name="场景X"):
+    r = _mk_asset(
+        client, token, pid, type_="scene", name=name,
+        spec={"location": "l", "description": "d"},
+    )
+    assert r.status_code == 201, r.text
+    return r.json()["object_ref"]["id"]
+
+
+def test_t32_revise_spec_200_new_revision(db, client):
+    """AS4 成功 200：新 revision=当前+1、DTO 8 键、versions[] 含全部版本；
+    直查库：继承 media/generation、review_status=unreviewed、current 指向
+    新行、旧 revision 行逐字段不变、occurrences/bindings 行数不变。"""
+    token = _register(client, "a32_mona")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+
+    # 初始状态：revision=1，media/generation 恒 NULL
+    with Session() as s:
+        old_rev = s.scalars(
+            select(AssetRevision).where(AssetRevision.asset_id == aid)
+        ).first()
+        assert old_rev.revision == 1
+        old_rev_id = old_rev.id
+        old_spec_raw = old_rev.spec
+        old_media = old_rev.media_artifact_id  # NULL
+        old_gen = old_rev.generation_input  # NULL
+        old_review = old_rev.review_status
+        old_created = old_rev.created_at
+        old_asset = s.get(Asset, aid)
+        old_current_id = old_asset.current_revision_id
+        old_updated = old_asset.updated_at
+    counts0 = _counts()
+
+    new_spec = {"appearance": "新外貌", "body_type": "clothed", "height_cm": 175}
+    r = _revise_spec(client, pid, aid, spec=new_spec, expected_revision=1, token=token)
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    # DTO 8 键
+    expected = {
+        "object_ref", "type", "name", "character",
+        "current_revision", "versions", "occurrences", "bindings",
+    }
+    assert set(body) == expected
+    assert body["object_ref"] == {"kind": "asset", "id": aid, "revision": 2}
+    assert body["current_revision"] == {
+        "revision": 2, "spec": new_spec,
+        "media_artifact_id": None, "review_status": "unreviewed",
+    }
+    # versions[] 含全部并存版本（revision 升序）
+    assert [v["revision"] for v in body["versions"]] == [1, 2]
+    assert body["versions"][1]["spec"] == new_spec
+    assert body["occurrences"] == [] and body["bindings"] == []
+
+    # 直查库：新 revision 行
+    with Session() as s:
+        new_rev = s.scalars(
+            select(AssetRevision).where(
+                AssetRevision.asset_id == aid, AssetRevision.revision == 2
+            )
+        ).first()
+        assert new_rev is not None
+        assert json.loads(new_rev.spec) == new_spec
+        # 继承上一 revision 的 media/generation（本阶段恒 NULL）
+        assert new_rev.media_artifact_id == old_media
+        assert new_rev.generation_input == old_gen
+        assert new_rev.review_status == "unreviewed"
+        # current 指向新行
+        asset = s.get(Asset, aid)
+        assert asset.current_revision_id == new_rev.id
+        assert asset.updated_at >= old_updated
+        # 旧 revision 行逐字段不变
+        old_row = s.get(AssetRevision, old_rev_id)
+        assert old_row.revision == 1
+        assert old_row.spec == old_spec_raw
+        assert old_row.media_artifact_id == old_media
+        assert old_row.generation_input == old_gen
+        assert old_row.review_status == old_review
+        assert old_row.created_at == old_created
+        # occurrences/bindings 行数不变
+        assert s.scalar(select(func.count(AssetOccurrence.id))) == counts0["occurrences"]
+        assert s.scalar(select(func.count(AssetBinding.id))) == counts0["bindings"]
+    # 恰新增 1 个 revision 行
+    assert _counts()["revisions"] == counts0["revisions"] + 1
+
+
+def test_t33_expected_revision_stale_409(db, client):
+    """expected_revision 过期（正整数但≠当前）→ 409 revision_conflict，无新 revision 行。"""
+    token = _register(client, "a33_nina")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+    counts0 = _counts()
+    for bad_expected in (2, 99):
+        r = _revise_spec(
+            client, pid, aid, spec={"appearance": "x"},
+            expected_revision=bad_expected, token=token,
+        )
+        assert r.status_code == 409, (bad_expected, r.text)
+        err = r.json()["error"]
+        assert err["code"] == "revision_conflict"
+        assert err["details"]["object"] == {"kind": "asset", "id": aid}
+        assert err["details"]["expected"] == bad_expected
+        assert err["details"]["actual"] == 1  # 真实当前 revision
+    assert _counts() == counts0  # 无新 revision 行
+    with Session() as s:
+        assert s.scalar(
+            select(func.count(AssetRevision.id)).where(AssetRevision.asset_id == aid)
+        ) == 1
+
+
+def test_t34_field_validation_422(db, client):
+    """spec 缺失/非 object、expected_revision 非正整数、请求体含
+    name/type/character_id → 422；均零副作用。"""
+    token = _register(client, "a34_olga")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+    counts0 = _counts()
+
+    # spec 非 object（字符串）→ 422（请求体形态校验）
+    r = client.post(
+        f"/api/studio/projects/{pid}/assets/{aid}/spec",
+        json={"spec": "not-a-dict", "expected_revision": 1, "command_id": _cmd()},
+        headers=_auth(token),
+    )
+    assert r.status_code == 422, r.text
+    # spec 缺失 → 422（请求体形态校验）
+    r = client.post(
+        f"/api/studio/projects/{pid}/assets/{aid}/spec",
+        json={"expected_revision": 1, "command_id": _cmd()},
+        headers=_auth(token),
+    )
+    assert r.status_code == 422, r.text
+
+    # expected_revision 非正整数（0）→ 422 validation_failed
+    r = _revise_spec(client, pid, aid, spec={"appearance": "x"}, expected_revision=0, token=token)
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "validation_failed"
+    v = err["details"]["violations"][0]
+    assert v["field"] == "expected_revision" and v["rule"] == "invalid"
+
+    # 请求体含 name/type/character_id → 422 validation_failed(rule=forbidden)
+    for forbidden_field in ("name", "type", "character_id"):
+        body = {
+            "spec": {"appearance": "x"},
+            "expected_revision": 1,
+            "command_id": _cmd(),
+            forbidden_field: "v",
+        }
+        r = client.post(
+            f"/api/studio/projects/{pid}/assets/{aid}/spec",
+            json=body, headers=_auth(token),
+        )
+        assert r.status_code == 422, (forbidden_field, r.text)
+        err = r.json()["error"]
+        assert err["code"] == "validation_failed"
+        v = err["details"]["violations"][0]
+        assert v["field"] == forbidden_field and v["rule"] == "forbidden"
+
+    assert _counts() == counts0  # 零副作用
+
+
+def test_t35_spec_type_validation_422(db, client):
+    """spec 类型校验失败（character 缺 appearance、scene 缺 location、
+    可选键类型错）→ 422 violations 逐个报出，无新 revision。"""
+    token = _register(client, "a35_paul")
+    pid = _mk_project(client, token)
+    char_id = _mk_character(client, token, pid)
+    scene_id = _mk_scene(client, token, pid)
+    counts0 = _counts()
+
+    # character 缺 appearance → 422 violation(field=spec.appearance, rule=required)
+    r = _revise_spec(client, pid, char_id, spec={"body_type": "clothed"}, expected_revision=1, token=token)
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "validation_failed"
+    v = err["details"]["violations"][0]
+    assert v["field"] == "spec.appearance" and v["rule"] == "required"
+
+    # scene 缺 location → 422 violation(field=spec.location, rule=required)
+    r = _revise_spec(client, pid, scene_id, spec={"description": "d"}, expected_revision=1, token=token)
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    v = err["details"]["violations"][0]
+    assert v["field"] == "spec.location" and v["rule"] == "required"
+
+    # scene 可选键类型错（time_of_day 非字符串）→ 422 violation(rule=invalid)
+    r = _revise_spec(
+        client, pid, scene_id,
+        spec={"location": "l", "description": "d", "time_of_day": 123},
+        expected_revision=1, token=token,
+    )
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    v = err["details"]["violations"][0]
+    assert v["field"] == "spec.time_of_day" and v["rule"] == "invalid"
+
+    assert _counts() == counts0  # 无新 revision
+
+
+def test_t36_ghost_and_cross_project_404_and_401(db, client):
+    """幽灵资产与跨项目资产同形状 404；项目 404；未认证 401。"""
+    token = _register(client, "a36_quinn")
+    pid = _mk_project(client, token)
+    pid_b = _mk_project(client, token, "B")
+    aid_b = _mk_character(client, token, pid_b)  # B 项目的资产
+
+    # 资产不存在 / 跨项目 → 同形状 404（不泄漏存在性）
+    for ghost in ("01" * 13, aid_b):
+        r = _revise_spec(
+            client, pid, ghost, spec={"appearance": "a"},
+            expected_revision=1, token=token,
+        )
+        assert r.status_code == 404, (ghost, r.text)
+        err = r.json()["error"]
+        assert err["code"] == "not_found"
+        assert err["details"] == {"kind": "asset", "id": ghost}
+
+    # 项目不存在 / 非属主 → 同形状 404
+    other = _register(client, "a36_rhea")
+    pid_c = _mk_project(client, other, "C")
+    for ghost_pid in ("02" * 13, pid_c):
+        r = _revise_spec(
+            client, ghost_pid, "03" * 13, spec={"appearance": "a"},
+            expected_revision=1, token=token,
+        )
+        assert r.status_code == 404, (ghost_pid, r.text)
+        err = r.json()["error"]
+        assert err["code"] == "not_found"
+        assert err["details"] == {"kind": "project", "id": ghost_pid}
+
+    # 未认证 → 401
+    r = _revise_spec(client, "01" * 13, "02" * 13, spec={"appearance": "a"}, expected_revision=1)
+    assert r.status_code == 401, r.text
+    assert r.json()["error"]["code"] == "unauthenticated"
+
+
+def test_t37_replay_200_and_reused_422(db, client):
+    """幂等：同 command_id 同 payload → 200 同响应、零新写；
+    同 command_id 不同 payload → 422 rule=reused。"""
+    token = _register(client, "a37_sara")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+    cmd = _cmd()
+    spec1 = {"appearance": "v1"}
+
+    r1 = _revise_spec(client, pid, aid, spec=spec1, expected_revision=1, command_id=cmd, token=token)
+    assert r1.status_code == 200, r1.text
+    first = r1.json()
+    counts0 = _counts()
+
+    # 重放：同 command_id 同 payload（expected_revision 仍为首次值 1）
+    r2 = _revise_spec(client, pid, aid, spec=spec1, expected_revision=1, command_id=cmd, token=token)
+    assert r2.status_code == 200, (r2.status_code, r2.text)
+    assert r2.json() == first  # 原样返回首次 result_payload
+    assert _counts() == counts0  # 零写：无新 CommandRecord/revision
+
+    # 同 command_id 不同 payload → 422 validation_failed(field=command_id, rule=reused)
+    r3 = _revise_spec(client, pid, aid, spec={"appearance": "v2"}, expected_revision=2, command_id=cmd, token=token)
+    assert r3.status_code == 422, r3.text
+    err = r3.json()["error"]
+    assert err["code"] == "validation_failed"
+    v0 = err["details"]["violations"][0]
+    assert v0["field"] == "command_id" and v0["rule"] == "reused"
+    assert _counts() == counts0
+
+
+def test_t38_multiple_revisions_versions_all(db, client):
+    """连续两次修订：versions[] 含全部并存版本（3 版本），current 指向最新。"""
+    token = _register(client, "a38_tara")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+
+    r1 = _revise_spec(client, pid, aid, spec={"appearance": "v1"}, expected_revision=1, token=token)
+    assert r1.status_code == 200, r1.text
+    r2 = _revise_spec(client, pid, aid, spec={"appearance": "v2"}, expected_revision=2, token=token)
+    assert r2.status_code == 200, r2.text
+    body = r2.json()
+    # versions[] 含全部 3 版本（revision 升序）
+    assert [v["revision"] for v in body["versions"]] == [1, 2, 3]
+    assert body["versions"][2]["spec"] == {"appearance": "v2"}
+    assert body["object_ref"]["revision"] == 3
+    assert body["current_revision"]["revision"] == 3
+    # 直查库：3 个 revision 行
+    with Session() as s:
+        assert s.scalar(
+            select(func.count(AssetRevision.id)).where(AssetRevision.asset_id == aid)
+        ) == 3
+
+
+def test_t39_costume_spec_revision_no_attribution_check(db, client):
+    """costume 资产的 spec 修订不校验归属（归属是创建期事实；修订只校验
+    自身 spec 形状）。"""
+    token = _register(client, "a39_uma")
+    pid = _mk_project(client, token)
+    char_id = _mk_character(client, token, pid)
+    # 创建 costume（归属 char_id）
+    r = _mk_asset(
+        client, token, pid, type_="costume", name="服装X",
+        spec={"description": "d"}, character_id=char_id,
+    )
+    assert r.status_code == 201, r.text
+    costume_id = r.json()["object_ref"]["id"]
+
+    # costume spec 修订：只校验自身 spec 形状（description 必填），不重校验归属
+    new_spec = {"description": "新描述", "colors": ["red"]}
+    r = _revise_spec(client, pid, costume_id, spec=new_spec, expected_revision=1, token=token)
+    assert r.status_code == 200, r.text
+    assert r.json()["current_revision"]["spec"] == new_spec
+
+    # costume 缺 description → 422（校验自身 spec 形状）
+    r = _revise_spec(client, pid, costume_id, spec={"colors": ["red"]}, expected_revision=2, token=token)
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    v = err["details"]["violations"][0]
+    assert v["field"] == "spec.description" and v["rule"] == "required"

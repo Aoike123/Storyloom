@@ -4,7 +4,10 @@ ASSET-01 逐子卡填充：AS1 POST /assets（ASSET-01-a）—— 建立**稳定
 （Asset）与其 revision=1 规格（AssetRevision）；AS10 POST
 /assets/{aid}/costume-required（ASSET-01-b）—— character 的
 costume_required 可**明确**置 false（自然体表角色，bare 模式无需图），
-不用空图冒充服装。**不做**改名（AS3）、新版本（AS4/AS5/AS6）、审核
+不用空图冒充服装；AS4 POST /assets/{aid}/spec（ASSET-01-d）—— 只改
+spec 并产生新 revision（revision+1，继承上一 revision 的
+media_artifact_id/generation_input，review_status 回到 unreviewed，
+自动成为当前）。**不做**改名（AS3）、媒体/生成（AS5/AS6）、审核
 （AS7）、切换当前版本（AS8）、采用（AS9）。
 
 实现约束（冻结）：
@@ -36,7 +39,7 @@ from ..contracts.models import CommandRecord
 from ..projects.models import StudioProject
 from .models import Asset, AssetRevision
 
-__all__ = ["create_asset", "set_costume_required"]
+__all__ = ["create_asset", "set_costume_required", "revise_spec"]
 
 TYPES = ("character", "costume", "scene")
 _BODY_TYPES = ("natural", "clothed")
@@ -470,6 +473,233 @@ def set_costume_required(
     try:
         with session.begin():
             asset.costume_required = value
+            asset.updated_at = now
+            session.add(
+                CommandRecord(
+                    id=make_ulid(),
+                    owner_id=user.id,
+                    project_id=pid,
+                    command_id=command_id,
+                    result_payload=json.dumps(response, ensure_ascii=False),
+                    created_at=now,
+                )
+            )
+    except IntegrityError:
+        # UQ(owner_id, command_id) 竞态：并发赢家已提交 → 返回其首次结果（重放语义）；
+        # 其他完整性冲突（本卡不应出现）→ 冻结 internal_error，不泄露细节
+        session.rollback()
+        record = session.scalar(
+            select(CommandRecord).where(
+                CommandRecord.owner_id == user.id,
+                CommandRecord.command_id == command_id,
+            )
+        )
+        if record is not None:
+            payload = json.loads(record.result_payload) if record.result_payload else {}
+            return dict(payload, _replay=True)
+        raise StudioAPIError.internal()
+
+    return response
+
+
+def _to_dto_all_versions(
+    asset: Asset, new_rev: AssetRevision, old_revs: list[AssetRevision]
+) -> dict:
+    """AS4 成功体 = 与 §2 详情读一致的 DTO，``versions[]`` 含**全部**并存版本。
+
+    与 AS1 的 ``_to_dto`` 同 8 键形状；区别仅 ``versions[]`` 列出该资产全部
+    并存版本（revision 升序，含旧版本与新版本），而非只列当前行。
+    """
+    character = (
+        {"kind": "asset", "id": asset.character_id}
+        if asset.character_id is not None
+        else None
+    )
+    versions = []
+    for r in [*old_revs, new_rev]:
+        spec_obj = json.loads(r.spec) if r.spec else {}
+        versions.append(
+            {
+                "revision": r.revision,
+                "spec": spec_obj,
+                "media_artifact_id": r.media_artifact_id,
+                "review_status": r.review_status,
+                "created_at": r.created_at,
+            }
+        )
+    current_rev = {
+        "revision": new_rev.revision,
+        "spec": json.loads(new_rev.spec) if new_rev.spec else {},
+        "media_artifact_id": new_rev.media_artifact_id,
+        "review_status": new_rev.review_status,
+    }
+    return {
+        "object_ref": {"kind": "asset", "id": asset.id, "revision": new_rev.revision},
+        "type": asset.type,
+        "name": asset.name,
+        "character": character,
+        "current_revision": current_rev,
+        "versions": versions,
+        # 出现/绑定是关系域（附录 06）的事实；本命令零写入，恒空
+        "occurrences": [],
+        "bindings": [],
+    }
+
+
+def revise_spec(
+    session, user, pid, aid, spec, expected_revision, command_id,
+    *, name=None, type_=None, character_id=None,
+) -> dict:
+    """AS4 修订资产规格（附录 05 §2，契约 v2.9）：只改 spec 并产生新 revision。
+
+    语义：spec **整体替换**（不是合并），产生 revision+1 的新
+    ``AssetRevision``，**继承上一 revision 的 media_artifact_id 与
+    generation_input**（同媒体、新规格；本阶段二者恒 NULL，继承语义仍落
+    实现），review_status 回到 unreviewed，自动成为当前（更新
+    assets.current_revision_id 与 updated_at）。**不触碰采用/绑定**
+    （studio_asset_occurrences/studio_asset_bindings 零写入），**不启动
+    任何生成**，旧 revision 行不可变。
+
+    校验顺序（冻结，按序短路）：
+    1. 项目不存在/非属主 → 404 not_found(kind=project)（不泄漏存在性）；
+    2. 资产不存在/跨项目 → 404 not_found(kind=asset)（两情形同形状）；
+    3. 请求体字段校验 → 422 validation_failed：spec 缺失/非 object、
+       expected_revision 非正整数、name/type/character_id 出现（本命令
+       不接受这三个字段，rule=forbidden，field 精确到字段名）；
+    4. spec 按资产 type 校验（复用 ``_validate_spec``）→ 422
+       validation_failed（violations 逐个报出）；
+    5. 幂等（附录 00 §3，读查询，先于 CAS 与写）：(owner, command_id)
+       记录存在且 result_payload 的 object_ref.id==aid 且
+       current_revision.spec==spec → 重放：返回首次 result_payload
+       （附内部标记 ``_replay=True``，本命令成功码即 200，重放亦 200），
+       零写零 commit；不一致 → 422 validation_failed（field=command_id,
+       rule=reused）。**幂等先于 CAS**：AS4 推进 revision，若 CAS 先于
+       幂等，同 command_id 同 payload 重放（expected_revision 仍为首次
+       值）会被 CAS 误判为 409，破坏"同 payload 重放 → 200"语义；
+    6. CAS：expected_revision != 当前 revision → 409 revision_conflict
+       （object={kind:asset,id}，expected/actual=真实当前值，附录 00 §4 形状）。
+
+    写事务（单事务）：INSERT 新 AssetRevision（revision+1、新 spec、
+    继承 media_artifact_id/generation_input、review_status=unreviewed）
+    + UPDATE Asset.current_revision_id/updated_at + INSERT CommandRecord，
+    同一 ``session.begin()``；IntegrityError（UQ(owner_id, command_id)
+    并发竞态）→ 回滚重读赢家，映射重放语义。
+
+    成功体 = 与 §2 详情读一致的 8 键 DTO，``versions[]`` 含全部并存版本
+    （revision 升序）。
+    """
+    # 1) 项目（属主校验，404 不泄漏存在性）
+    project = session.scalar(select(StudioProject).where(StudioProject.id == pid))
+    if project is None or project.owner_id != user.id:
+        raise StudioAPIError.not_found("project", pid)
+
+    # 2) 资产（不存在/跨项目同形状 404，不泄漏存在性）
+    asset = session.scalar(select(Asset).where(Asset.id == aid))
+    if asset is None or asset.project_id != pid:
+        raise StudioAPIError.not_found("asset", aid)
+    prev_rev = session.get(AssetRevision, asset.current_revision_id)
+    if prev_rev is None:  # 理论上不可达（current_revision_id NOT NULL）
+        raise StudioAPIError.internal()
+    current = prev_rev.revision
+
+    # 3) 请求体字段校验（先于 spec 类型校验）
+    violations: list[dict[str, str]] = []
+    if not isinstance(spec, dict):
+        violations.append(
+            {"field": "spec", "rule": "invalid", "message": "spec 必须是 object。"}
+        )
+    if (
+        isinstance(expected_revision, bool)
+        or not isinstance(expected_revision, int)
+        or expected_revision < 1
+    ):
+        violations.append(
+            {
+                "field": "expected_revision",
+                "rule": "invalid",
+                "message": "expected_revision 必须是正整数。",
+            }
+        )
+    # name/type/character_id 不可经此命令修改：出现即 422（rule=forbidden，
+    # field 精确到字段名；现有代码无 unknown_field 先例，按主模型裁定用 forbidden）
+    for field_name in ("name", "type", "character_id"):
+        value = {"name": name, "type": type_, "character_id": character_id}[field_name]
+        if value is not None:
+            violations.append(
+                {
+                    "field": field_name,
+                    "rule": "forbidden",
+                    "message": f"{field_name} 不可经此命令修改。",
+                }
+            )
+    if violations:
+        raise StudioAPIError.validation_failed(violations)
+
+    # 4) spec 按资产 type 校验（复用 _validate_spec，含 scene 可选键）
+    spec_violations = _validate_spec(asset.type, spec)
+    if spec_violations:
+        raise StudioAPIError.validation_failed(spec_violations)
+
+    # 5) 幂等（读查询，先于 CAS 与写）：同 command_id 同内容 → 重放
+    record = session.scalar(
+        select(CommandRecord).where(
+            CommandRecord.owner_id == user.id,
+            CommandRecord.command_id == command_id,
+        )
+    )
+    if record is not None:
+        payload = json.loads(record.result_payload) if record.result_payload else {}
+        stored_ref = payload.get("object_ref") or {}
+        stored_spec = (payload.get("current_revision") or {}).get("spec")
+        if (
+            stored_ref.get("kind") == "asset"
+            and stored_ref.get("id") == aid
+            and stored_spec == spec
+        ):
+            # 重放：返回首次 result_payload，零写零 commit
+            return dict(payload, _replay=True)
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "command_id",
+                    "rule": "reused",
+                    "message": "command_id 已被其他命令使用，请生成新的。",
+                }
+            ]
+        )
+
+    # 6) CAS：expected_revision 必须等于当前 revision
+    if expected_revision != current:
+        raise StudioAPIError.revision_conflict("asset", aid, expected_revision, current)
+
+    # 7) 写事务：新 AssetRevision + UPDATE 资产行 + INSERT CommandRecord
+    old_revs = list(
+        session.scalars(
+            select(AssetRevision)
+            .where(AssetRevision.asset_id == aid)
+            .order_by(AssetRevision.revision)
+        ).all()
+    )
+    session.commit()  # 结束读事务；写阶段另起事务
+    now = time.time()
+    new_revision_no = current + 1
+    revision_id = make_ulid()
+    new_rev = AssetRevision(
+        id=revision_id,
+        asset_id=aid,
+        revision=new_revision_no,
+        spec=json.dumps(spec, ensure_ascii=False),
+        # 继承上一 revision 的 media/generation（同媒体、新规格；本阶段恒 NULL）
+        media_artifact_id=prev_rev.media_artifact_id,
+        generation_input=prev_rev.generation_input,
+        review_status="unreviewed",  # 回到 unreviewed（R07）
+        created_at=now,
+    )
+    response = _to_dto_all_versions(asset, new_rev, old_revs)
+    try:
+        with session.begin():
+            session.add(new_rev)
+            asset.current_revision_id = revision_id
             asset.updated_at = now
             session.add(
                 CommandRecord(
