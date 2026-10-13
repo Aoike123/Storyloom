@@ -71,35 +71,30 @@ def _to_dto(asset: Asset, rev: AssetRevision) -> dict:
     }
 
 
-def _is_non_empty(value) -> bool:
-    """spec 键"非空"判定（主模型冻结：costume/scene 至少一个非空键）。
-
-    None / 空串（含全空白）/ 空列表 / 空对象 = 空；0、False 等有值即非空。
-    """
-    if value is None:
-        return False
-    if isinstance(value, str):
-        return bool(value.strip())
-    if isinstance(value, (list, dict)):
-        return len(value) > 0
-    return True
+def _missing_text(spec: dict, key: str) -> bool:
+    """必填字符串键判定：缺失、非字符串或全空白 = 缺失。"""
+    value = spec.get(key)
+    return not isinstance(value, str) or not value.strip()
 
 
 def _validate_spec(type_: str, spec: dict) -> list[dict[str, str]]:
-    """按 type 校验 spec（附录 05 §1 必填键 + 主模型冻结的放宽口径）。
+    """按 type 校验 spec（附录 05 §1 冻结的必填键；自由扩展键允许）。
 
-    主模型针对本卡的冻结口径：
-    - character：必含非空 ``appearance``；可选 body_type/height_cm/notes 按声明类型校验；
-    - costume：至少一个非空键（自定义键允许；不强制 description）；
-    - scene：``location`` 或至少一个非空键（同为"至少一个非空键"）。
+    必填键（附录 05 §1 字面为准；交接单曾放宽为"至少一个非空键"，
+    2026-10-13 主模型裁定按附录收紧并回报）：
+    - character：``appearance``(string) 必填非空；可选 body_type/height_cm/notes 按声明类型校验；
+    - costume：``description``(string) 必填非空；
+    - scene：``location``(string)、``description``(string) 均必填非空。
+
+    缺席的必填键逐个报 violation（field=``spec.<key>``, rule=``required``），
+    使调用方能一次看到全部缺口。
     """
     violations: list[dict[str, str]] = []
     if type_ == "character":
-        appearance = spec.get("appearance")
-        if not isinstance(appearance, str) or not appearance.strip():
+        if _missing_text(spec, "appearance"):
             violations.append(
                 {
-                    "field": "spec",
+                    "field": "spec.appearance",
                     "rule": "required",
                     "message": "人物规格必含非空 appearance（字符串）。",
                 }
@@ -134,21 +129,29 @@ def _validate_spec(type_: str, spec: dict) -> list[dict[str, str]]:
                 }
             )
     elif type_ == "costume":
-        if not any(_is_non_empty(v) for v in spec.values()):
+        if _missing_text(spec, "description"):
             violations.append(
                 {
-                    "field": "spec",
+                    "field": "spec.description",
                     "rule": "required",
-                    "message": "服装规格至少需要一个非空字段（如 description）。",
+                    "message": "服装规格必含非空 description（字符串）。",
                 }
             )
     elif type_ == "scene":
-        if not any(_is_non_empty(v) for v in spec.values()):
+        if _missing_text(spec, "location"):
             violations.append(
                 {
-                    "field": "spec",
+                    "field": "spec.location",
                     "rule": "required",
-                    "message": "场景规格至少需要一个非空字段（如 location）。",
+                    "message": "场景规格必含非空 location（字符串）。",
+                }
+            )
+        if _missing_text(spec, "description"):
+            violations.append(
+                {
+                    "field": "spec.description",
+                    "rule": "required",
+                    "message": "场景规格必含非空 description（字符串）。",
                 }
             )
     return violations

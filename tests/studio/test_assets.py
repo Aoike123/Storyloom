@@ -212,7 +212,11 @@ def test_t4_create_scene_201(db, client):
         pid,
         type_="scene",
         name="旧仓库",
-        spec={"location": "城郊旧仓库", "time_of_day": "night"},
+        spec={
+            "location": "城郊旧仓库",
+            "description": "堆满木箱的旧仓库",
+            "time_of_day": "night",
+        },
     )
     assert r.status_code == 201, r.text
     body = r.json()
@@ -220,13 +224,14 @@ def test_t4_create_scene_201(db, client):
     assert body["character"] is None
     assert body["current_revision"]["spec"] == {
         "location": "城郊旧仓库",
+        "description": "堆满木箱的旧仓库",
         "time_of_day": "night",
     }
     assert body["current_revision"]["media_artifact_id"] is None
 
 
 def test_t5_custom_spec_keys_allowed_costume_and_scene(db, client):
-    """主模型冻结：costume/scene 允许自定义键，只要有非空内容。"""
+    """附录 05 §1：必填键齐备时允许自由扩展键；扩展键原样存取。"""
     token = _register(client, "a5_dave")
     pid = _mk_project(client, token)
     rc = _mk_asset(
@@ -240,13 +245,20 @@ def test_t5_custom_spec_keys_allowed_costume_and_scene(db, client):
         type_="costume",
         name="自定义服装",
         character_id=char_id,
-        spec={"fabric": "silk"},
+        spec={"description": "丝绸长袍", "fabric": "silk"},
     )
     assert r1.status_code == 201, r1.text
+    assert r1.json()["current_revision"]["spec"]["fabric"] == "silk"
     r2 = _mk_asset(
-        client, token, pid, type_="scene", name="自定义场景", spec={"mood": "压抑"}
+        client,
+        token,
+        pid,
+        type_="scene",
+        name="自定义场景",
+        spec={"location": "地下室", "description": "潮湿的地下室", "mood": "压抑"},
     )
     assert r2.status_code == 201, r2.text
+    assert r2.json()["current_revision"]["spec"]["mood"] == "压抑"
 
 
 # ── 归属前置（422 precondition_failed）─────────────────────────────────────
@@ -310,7 +322,7 @@ def test_t7_character_with_character_id_422(db, client):
         pid,
         type_="scene",
         name="S",
-        spec={"location": "l"},
+        spec={"location": "l", "description": "d"},
         character_id=cid,
     )
     assert r2.status_code == 422, r2.text
@@ -337,7 +349,12 @@ def test_t8_costume_character_id_wrong_type_422(db, client):
     )
     assert rcost.status_code == 201, rcost.text
     rscene = _mk_asset(
-        client, token, pid, type_="scene", name="S", spec={"location": "l"}
+        client,
+        token,
+        pid,
+        type_="scene",
+        name="S",
+        spec={"location": "l", "description": "d"},
     )
     assert rscene.status_code == 201, rscene.text
 
@@ -421,7 +438,7 @@ def test_t11_spec_missing_appearance_422(db, client):
         err = r.json()["error"]
         assert err["code"] == "validation_failed"
         v0 = err["details"]["violations"][0]
-        assert v0["field"] == "spec" and v0["rule"] == "required"
+        assert v0["field"] == "spec.appearance" and v0["rule"] == "required"
     # appearance 非字符串
     r = _mk_asset(
         client, token, pid, type_="character", name="C", spec={"appearance": 3}
@@ -430,15 +447,27 @@ def test_t11_spec_missing_appearance_422(db, client):
     assert r.json()["error"]["code"] == "validation_failed"
 
 
-def test_t12_costume_scene_empty_spec_422(db, client):
+def test_t12_required_spec_keys_missing_422(db, client):
+    """附录 05 §1 必填键（2026-10-13 主模型裁定按附录收紧，非"任意非空键"）：
+
+    costume 必填 description；scene 必填 location + description。
+    缺失/非字符串/全空白均 422 validation_failed，逐键报 spec.<key>/required。
+    """
     token = _register(client, "a12_karen")
     pid = _mk_project(client, token)
     rc = _mk_asset(
         client, token, pid, type_="character", name="C", spec={"appearance": "x"}
     )
     cid = rc.json()["object_ref"]["id"]
-    # costume：空 spec / 全空值
-    for bad in ({}, {"description": ""}, {"colors": []}):
+    # costume：description 缺失 / 空串 / 全空白 / 非字符串 —— 只有扩展键也不算数
+    for bad in (
+        {},
+        {"description": ""},
+        {"description": "   "},
+        {"description": 7},
+        {"fabric": "silk"},
+        {"colors": ["black"]},
+    ):
         r = _mk_asset(
             client,
             token,
@@ -451,11 +480,40 @@ def test_t12_costume_scene_empty_spec_422(db, client):
         assert r.status_code == 422, (bad, r.text)
         err = r.json()["error"]
         assert err["code"] == "validation_failed"
-        assert err["details"]["violations"][0]["field"] == "spec"
-    # scene：空 spec
-    r = _mk_asset(client, token, pid, type_="scene", name="S", spec={})
-    assert r.status_code == 422, r.text
-    assert r.json()["error"]["code"] == "validation_failed"
+        assert err["details"]["violations"] == [
+            {
+                "field": "spec.description",
+                "rule": "required",
+                "message": "服装规格必含非空 description（字符串）。",
+            }
+        ], (bad, err)
+    # scene：location 与 description 均必填，缺席逐个报出
+    cases = (
+        ({}, {"spec.location", "spec.description"}),
+        ({"location": "l"}, {"spec.description"}),
+        ({"description": "d"}, {"spec.location"}),
+        ({"location": "  ", "description": ""}, {"spec.location", "spec.description"}),
+        ({"time_of_day": "night"}, {"spec.location", "spec.description"}),
+    )
+    for bad, missing in cases:
+        r = _mk_asset(client, token, pid, type_="scene", name="S", spec=bad)
+        assert r.status_code == 422, (bad, r.text)
+        err = r.json()["error"]
+        assert err["code"] == "validation_failed"
+        fields = {v["field"] for v in err["details"]["violations"]}
+        assert fields == missing, (bad, err)
+        assert all(v["rule"] == "required" for v in err["details"]["violations"])
+
+    # 必填键齐备即通过（含扩展键）
+    ok = _mk_asset(
+        client,
+        token,
+        pid,
+        type_="scene",
+        name="S",
+        spec={"location": "l", "description": "d", "weather": "rain"},
+    )
+    assert ok.status_code == 201, ok.text
 
 
 def test_t13_type_invalid_422(db, client):
@@ -632,7 +690,14 @@ def test_t19_no_occurrence_or_binding_writes(db, client):
         character_id=cid,
         spec={"description": "d"},
     )
-    _mk_asset(client, token, pid, type_="scene", name="S", spec={"location": "l"})
+    _mk_asset(
+        client,
+        token,
+        pid,
+        type_="scene",
+        name="S",
+        spec={"location": "l", "description": "d"},
+    )
     c = _counts()
     # 命令记录 4 条：建项目 1 + 建资产 3（项目创建同样走 command_id 幂等）
     assert c["assets"] == 3 and c["revisions"] == 3 and c["commands"] == 4
