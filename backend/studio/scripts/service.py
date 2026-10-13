@@ -28,10 +28,16 @@ from ..projects.models import StudioProject
 from ..sources.fragment_models import Fragment, FragmentRevision
 from .models import ScriptObject, ScriptRevision
 
-__all__ = ["create_script_object"]
+__all__ = ["create_script_object", "revise_script_object", "_UNSET"]
 
 # 附录 03 §1 CHECK 冻结枚举：动作/对白
 _KINDS = ("action", "dialogue")
+
+# SC4 请求体「缺席 ≠ null」哨兵（api.py 的 Pydantic 模型默认值）：
+# 字段缺席 → 保持原值；显式 null → 清空（speaker/adaptation_note）；
+# text 显式 null 视同缺席（保持原值）。_UNSET 标记「该字段未在请求体出现」，
+# 与显式 None（清空）区分。
+_UNSET = object()
 
 
 def _fragment_gate(session, project, fragment_id: str) -> int:
@@ -333,6 +339,322 @@ def create_script_object(
                     }
                 ]
             )
+        raise StudioAPIError.internal()
+
+    return response
+
+
+def _current_revision_no(session, obj: ScriptObject) -> int:
+    """对象当前草稿 revision 号（= current_revision_id 行的 revision）。
+
+    current_revision_id 为 NOT NULL FK，理论必命中；缺失 = 数据损坏，
+    按冻结协议映射 internal_error，不泄露细节。
+    """
+    rev = session.get(ScriptRevision, obj.current_revision_id)
+    if rev is None:  # 理论上不可达
+        raise StudioAPIError.internal()
+    return rev.revision
+
+
+def _fragment_revise_gate(session, project, fragment_id: str) -> int:
+    """SC4 片段门禁（附录 03 §2 SC4：只列「片段非 active」，不校验 confirmed）。
+
+    校验顺序（冻结，按序短路；命中任一即 422 precondition_failed，
+    details 形状 = {"reason", "blocked_by":{"kind","id","revision"}}）：
+    1. 绑定版本 != 项目 active 正文版本 → reason=source_revision_inactive；
+    2. 已退役 → reason=retired。
+    **不校验 confirmed**（SC4 只列「片段非 active」，candidate/confirmed 均可修订）。
+
+    返回片段当前 revision 号（写入新 ScriptRevision.source_fragment_revision 出处快照）。
+    """
+    frag = session.scalar(select(Fragment).where(Fragment.id == fragment_id))
+    if frag is None:  # 对象行 fragment_id 是 FK，理论必命中；缺失 = 数据损坏
+        raise StudioAPIError.internal()
+    rv = session.get(FragmentRevision, frag.current_revision_id)
+    if rv is None:  # 理论上不可达（current_revision_id NOT NULL FK）
+        raise StudioAPIError.internal()
+    current = rv.revision
+    blocked_by = {"kind": "fragment", "id": fragment_id, "revision": current}
+    if frag.source_revision_id != project.active_source_revision_id:
+        raise StudioAPIError.precondition_failed(
+            "source_revision_inactive",
+            blocked_by,
+            "该片段绑定的正文版本不是项目当前活跃版本，不能修订。",
+        )
+    if frag.state == "retired":
+        raise StudioAPIError.precondition_failed(
+            "retired", blocked_by, "该片段已退役，不能修订。"
+        )
+    return current
+
+
+def _validate_revise(text, speaker, adaptation_note, expected_revision) -> None:
+    """SC4 请求字段校验（附录 03 §2 SC4）：
+
+    - 三者全缺席（text 缺席/null、speaker 缺席、adaptation_note 缺席）→
+      field=payload, rule=empty；
+    - text 非 null 但去空白后为空 → field=text, rule=blank；
+    - speaker 显式提供且 >80 → field=speaker, rule=too_long；
+    - adaptation_note 显式提供且 >300 → field=adaptation_note, rule=too_long；
+    - expected_revision 非正整数（含 bool/非 int/0/负）→ field=expected_revision,
+      rule=positive。
+    一次返回全部 violations（附录 00 §4 validation_failed 形状）。
+    """
+    violations: list[dict[str, str]] = []
+    # 三者全缺席（text 显式 null 视同缺席）→ empty
+    if text is None and speaker is _UNSET and adaptation_note is _UNSET:
+        violations.append(
+            {
+                "field": "payload",
+                "rule": "empty",
+                "message": "至少提供一个要修订的字段（text/speaker/adaptation_note）。",
+            }
+        )
+    # text 显式提供（非 null）但去空白后为空 → blank
+    if text is not None and not text.strip():
+        violations.append(
+            {"field": "text", "rule": "blank", "message": "text 不能为空白。"}
+        )
+    # speaker 显式提供（非 _UNSET 且非 null）且 >80 → too_long
+    if speaker is not _UNSET and speaker is not None and len(speaker) > 80:
+        violations.append(
+            {
+                "field": "speaker",
+                "rule": "too_long",
+                "message": "speaker 长度不能超过 80。",
+            }
+        )
+    # adaptation_note 显式提供（非 _UNSET 且非 null）且 >300 → too_long
+    if (
+        adaptation_note is not _UNSET
+        and adaptation_note is not None
+        and len(adaptation_note) > 300
+    ):
+        violations.append(
+            {
+                "field": "adaptation_note",
+                "rule": "too_long",
+                "message": "adaptation_note 长度不能超过 300。",
+            }
+        )
+    # expected_revision 非正整数（bool 是 int 子类，显式排除；非 int / 0 / 负）
+    if (
+        expected_revision is None
+        or isinstance(expected_revision, bool)
+        or not isinstance(expected_revision, int)
+        or expected_revision < 1
+    ):
+        violations.append(
+            {
+                "field": "expected_revision",
+                "rule": "positive",
+                "message": "expected_revision 必须是正整数。",
+            }
+        )
+    if violations:
+        raise StudioAPIError.validation_failed(violations)
+
+
+def _resolve(current_value, requested):
+    """SC4 缺席/null 语义解析：缺席（_UNSET）取现值；显式 null 清空；显式值取请求值。"""
+    if requested is _UNSET:
+        return current_value
+    if requested is None:
+        return None
+    return requested
+
+
+def _dto_revise(
+    object_id, kind, text, speaker, adaptation_note, seq, fragment_id,
+    fragment_revision, revision,
+) -> dict:
+    """SC4 成功 DTO（与 SC1 同形，revision 号为新值）。"""
+    return {
+        "object_ref": {"kind": "script_object", "id": object_id, "revision": revision},
+        "kind": kind,
+        "text": text,
+        "speaker": speaker,
+        "adaptation_note": adaptation_note,
+        "seq": seq,
+        "fragment": {"kind": "fragment", "id": fragment_id, "revision": fragment_revision},
+        "current_revision": revision,
+    }
+
+
+def _same_command_revise(payload, oid, text, speaker, adaptation_note) -> bool:
+    """SC4 幂等比对（附录 00 §3）：同 command_id 重放时，result_payload 的
+    object_ref.id 与已解析的 text/speaker/adaptation_note 逐项等于本次有效载荷
+    （即与首次一致）= 重放。"""
+    ref = payload.get("object_ref") or {}
+    if ref.get("id") != oid:
+        return False
+    if payload.get("text") != text:
+        return False
+    if payload.get("speaker") != speaker:
+        return False
+    if payload.get("adaptation_note") != adaptation_note:
+        return False
+    return True
+
+
+def revise_script_object(
+    session,
+    user,
+    pid: str,
+    oid: str,
+    text,
+    speaker,
+    adaptation_note,
+    expected_revision: int,
+    command_id: str,
+) -> dict:
+    """SC4 修订当前草稿（附录 03 §2 SC4）：只改当前草稿 revision，过期保存拒绝；
+    **不触碰采用**（零 ScriptAdoption 写入）、不启动任何生成。
+
+    语义（冻结）：
+    - 缺席 ≠ null：text/speaker/adaptation_note 字段缺席 = 保持原值；
+      显式 null = 清空（speaker/adaptation_note）；text 显式 null 视同缺席。
+    - 三者全缺席 → 422 validation_failed(field=payload, rule=empty)。
+    - 新 ScriptRevision（revision=当前+1，缺席字段取现值，
+      source_fragment_revision=保存时刻片段 revision）+ 对象行
+      current_revision_id/speaker 镜像/updated_at + CommandRecord，同一事务。
+
+    校验顺序（冻结，按序短路；**幂等先于 CAS**，与 sources/fragment_service.py
+    F1/F4/F6/F7/F8 先例对齐——字面重试即使 expected_revision 仍为首次值也命中重放）：
+    1. 项目不存在/非属主 → 404 not_found(kind=project)（不泄漏存在性）；
+    2. 对象不存在/跨项目 → 404 not_found(kind=script_object)（两情形同形状）；
+    3. 对象 retired → 422 precondition_failed(reason=retired)；
+    4. 字段校验（text 空白 / speaker>80 / adaptation_note>300 /
+       expected_revision 非正整数；三者全缺席 → payload.empty）；
+    5. 片段门禁（source_revision_inactive / retired；**不校验 confirmed**）；
+    6. 解析缺席/null 语义（读当前草稿 revision，纯读，先于幂等/CAS）；
+    7. 幂等（附录 00 §3，CAS 之前、写之前）：同 command_id 同内容 → 重放
+       返回首次 result_payload（附内部标记 ``_replay=True``，本命令成功码即 200，
+       重放亦 200），零写零 commit；不同内容 → 422 validation_failed
+       （field=command_id, rule=reused）；
+    8. CAS：expected_revision != 当前草稿 revision → 409 revision_conflict
+       （object={kind:script_object,id}，expected/actual=真实当前值，附录 00 §4 形状）。
+
+    成功体（与 SC1 DTO 同形，revision 号为新值）：
+    ``{"object_ref": {"kind":"script_object","id":oid,"revision":新 revision},
+    "kind", "text", "speaker", "adaptation_note", "seq",
+    "fragment": {"kind":"fragment","id":fragment_id,"revision":片段 revision},
+    "current_revision": 新 revision}``
+    """
+    # 1) 项目（属主校验，404 不泄漏存在性）
+    project = session.scalar(select(StudioProject).where(StudioProject.id == pid))
+    if project is None or project.owner_id != user.id:
+        raise StudioAPIError.not_found("project", pid)
+
+    # 2) 对象（不存在/跨项目同形状 404，不泄漏存在性）
+    obj = session.scalar(select(ScriptObject).where(ScriptObject.id == oid))
+    if obj is None or obj.project_id != pid:
+        raise StudioAPIError.not_found("script_object", oid)
+
+    # 3) 对象 retired → 422 precondition_failed
+    if obj.retired_at is not None:
+        raise StudioAPIError.precondition_failed(
+            "retired",
+            {"kind": "script_object", "id": oid, "revision": _current_revision_no(session, obj)},
+            "该对象已退役，不能修订。",
+        )
+
+    # 4) 字段校验（一次返回全部 violations）
+    _validate_revise(text, speaker, adaptation_note, expected_revision)
+
+    # 5) 片段门禁（source_revision_inactive / retired；不校验 confirmed）
+    fragment_revision = _fragment_revise_gate(session, project, obj.fragment_id)
+
+    # 6) 解析缺席/null 语义（纯读，先于幂等/CAS）：基于当前草稿 revision 的现值
+    current = _current_revision_no(session, obj)
+    current_rev = session.get(ScriptRevision, obj.current_revision_id)
+    if current_rev is None:  # 理论上不可达
+        raise StudioAPIError.internal()
+    resolved_text = current_rev.text if text is None else text
+    resolved_speaker = _resolve(current_rev.speaker, speaker)
+    resolved_note = _resolve(current_rev.adaptation_note, adaptation_note)
+
+    # 7) 幂等（读查询，先于 CAS 与写事务；与 F1/F4/F6/F7/F8 先例对齐）：
+    #    同 command_id 同内容 → 重放（字面重试即使 expected_revision 仍为首次值
+    #    也命中重放，不撞 CAS）
+    record = session.scalar(
+        select(CommandRecord).where(
+            CommandRecord.owner_id == user.id,
+            CommandRecord.command_id == command_id,
+        )
+    )
+    if record is not None:
+        payload = json.loads(record.result_payload) if record.result_payload else {}
+        if _same_command_revise(payload, oid, resolved_text, resolved_speaker, resolved_note):
+            # 重放：返回首次 result_payload，零写零 commit
+            return dict(payload, _replay=True)
+        # 同 command_id 不同内容（冻结码表无专用码，validation_failed 承载）
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "command_id",
+                    "rule": "reused",
+                    "message": "command_id 已被其他命令使用，请生成新的。",
+                }
+            ]
+        )
+
+    # 8) CAS：expected_revision 必须等于当前草稿 revision（幂等之后）
+    if expected_revision != current:
+        raise StudioAPIError.revision_conflict("script_object", oid, expected_revision, current)
+
+    session.commit()  # 结束读事务；写阶段另起事务
+
+    # 9) 写事务：新 ScriptRevision + 对象行镜像 + CommandRecord，同一事务
+    now = time.time()
+    new_revision = current + 1
+    revision_id = make_ulid()
+    response = _dto_revise(
+        obj.id, obj.kind, resolved_text, resolved_speaker, resolved_note,
+        obj.seq, obj.fragment_id, fragment_revision, new_revision,
+    )
+    try:
+        with session.begin():
+            session.add(
+                ScriptRevision(
+                    id=revision_id,
+                    object_id=obj.id,
+                    revision=new_revision,
+                    text=resolved_text,
+                    speaker=resolved_speaker,
+                    adaptation_note=resolved_note,
+                    source_fragment_revision=fragment_revision,
+                    created_at=now,
+                )
+            )
+            # 对象行：current_revision_id 指向新 revision；speaker 镜像；updated_at
+            obj.current_revision_id = revision_id
+            obj.speaker = resolved_speaker
+            obj.updated_at = now
+            session.add(
+                CommandRecord(
+                    id=make_ulid(),
+                    owner_id=user.id,
+                    project_id=pid,
+                    command_id=command_id,
+                    result_payload=json.dumps(response, ensure_ascii=False),
+                    created_at=now,
+                )
+            )
+    except IntegrityError:
+        # UQ(object_id, revision) 或 UQ(owner_id, command_id) 并发竞态：
+        # 赢家已提交 → 重读其 CommandRecord 映射重放语义；
+        # 其他完整性冲突（本卡不应出现）→ 冻结 internal_error，不泄露细节
+        session.rollback()
+        record = session.scalar(
+            select(CommandRecord).where(
+                CommandRecord.owner_id == user.id,
+                CommandRecord.command_id == command_id,
+            )
+        )
+        if record is not None:
+            payload = json.loads(record.result_payload) if record.result_payload else {}
+            return dict(payload, _replay=True)
         raise StudioAPIError.internal()
 
     return response
