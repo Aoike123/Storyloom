@@ -3969,12 +3969,45 @@
         "R07",
         "R11"
       ],
-      "status": "planned",
+      "status": "accepted",
       "dispatchable": false,
       "behavior": "建立稳定身份规格，改名/跨场不重复建身份。",
       "allowlist_scope": "backend/studio/assets/service.py、backend/studio/assets/api.py、tests/studio/test_assets.py",
-      "attempts": [],
-      "acceptance": null
+      "attempts": [
+        {
+          "n": 1,
+          "by": "executor",
+          "date": "2026-10-13",
+          "result": "submitted",
+          "note": "执行器产出 assets/{service,api}.py + tests/studio/test_assets.py（20/20）；主模型复验时按附录 05 §1 收紧 spec 必填键并重写相应断言，接口面与 DTO 未改。"
+        }
+      ],
+      "acceptance": {
+        "accepted_by": "root",
+        "date": "2026-10-13",
+        "contract_version": "2.9",
+        "tested_baseline": "1da88df（含 33bc09f 的 assets 三文件 + 本卡收紧提交）",
+        "scope": "asset_identity_create_a_spec_keys",
+        "checks": [
+          "主模型独立复验（不复用执行器报告，脚本 data/scratch/verify_asset_01a.py，data/ 已 gitignore）：真调 TestClient 接口 + 直查 SQLite，20/20 通过——含 DTO 键集合冻结、object_ref revision=1、name trim、media_artifact_id=null、review_status=unreviewed、落库仅 1 行 revision=1 且 current_revision_id 指向它、generation_input 未写。",
+          "幂等（独立脚本）：同 command_id 同内容二次 POST → HTTP 200 且响应体与首次逐字段相同，Asset/AssetRevision/CommandRecord/occurrence/binding 行数完全不变（零副作用）；同 command_id 不同 spec → 422 validation_failed，field=command_id、rule=reused，零新行。",
+          "契约裁定（附录 05 §1 优先于交接单 §3）：交接单曾把 costume/scene 放宽为\"至少一个非空键\"；按附录收紧为 costume 必填非空 description、scene 必填非空 location + description。复验确认 costume {fabric:silk} / {colors:[black]} / {description:''} / {description:7} 与非齐备 scene 全部 422，violations 逐键报 spec.<key>/required；必填键齐备时自由扩展键原样存取（201）。",
+          "归属前置：costume 缺 character_id / character_id 指向非 character / 指向他人项目 character → 422 precondition_failed，details 含 reason 与 blocked_by{kind,id,revision}；character/scene 携带 character_id → 422 reason=character_id_not_allowed。",
+          "属主与鉴权：未登录 401 unauthenticated；项目不存在或非属主统一 404 not_found（不泄漏存在性），响应无副作用。",
+          "禁止项（diff 逐行核对）：不写 ScriptAdoption/关系表，不生成或上传媒体（media_artifact_id 恒 null），不写 stage/状态列，不自动确认（review_status 恒 unreviewed），不加版本/改名能力（属 AS3–AS10，本卡未实现）。",
+          "回归：.venv/bin/python -m pytest tests/studio/test_assets.py → 20 passed（收紧后重跑）。"
+        ],
+        "evidence": [
+          "提交 1da88df：backend/studio/assets/{api,service}.py、tests/studio/test_assets.py",
+          "pytest tests/studio/test_assets.py → 20 passed（21 条既有 SAWarning 为 BK 环 drop 排序告警，非本卡引入）",
+          "data/scratch/verify_asset_01a.py → 20/20 通过（主模型独立复验脚本，输出留档于本卡验收过程）"
+        ],
+        "limitations": [
+          "spec 必填键以附录 05 §1 字面为准；交接单 §3 的放宽口径已被本卡裁定覆盖，交接单未回改（后续派发单不再引用该句）。",
+          "本卡只交付 AS1；改名/新版本/审核/采用（AS3–AS10）与发生/绑定关系属后续子卡与附录 06。",
+          "3011 后端为旧进程，未重启验证路由挂载；整批收尾时统一重启确认。"
+        ]
+      }
     },
     {
       "id": "ASSET-01-b",
