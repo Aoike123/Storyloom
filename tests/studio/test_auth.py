@@ -39,6 +39,7 @@ import pytest  # noqa: E402
 import starlette.requests  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 
 from backend.core import auth as auth_mod  # noqa: E402
 from backend.core.auth import assert_owner  # noqa: E402
@@ -75,8 +76,18 @@ def _ensure_db_file() -> None:
 @pytest.fixture
 def client():
     _ensure_db_file()
-    Base.metadata.drop_all(engine)  # setup 前 drop，保证干净
-    Base.metadata.create_all(engine)
+    # drop 期间关闭外键：领域表已形成 users 等 FK 环（studio_assets →
+    # users/projects），SQLite 不允许带引用直接 DROP TABLE。
+    # 与 test_projects.py/test_assets.py 的 db fixture 同一处理。
+    conn = engine.connect()
+    try:
+        conn.execute(text("PRAGMA foreign_keys=OFF"))
+        Base.metadata.drop_all(conn)  # setup 前 drop，保证干净
+        conn.execute(text("PRAGMA foreign_keys=ON"))
+        Base.metadata.create_all(conn)
+        conn.commit()
+    finally:
+        conn.close()
     yield TestClient(make_app())
     engine.dispose()
 
