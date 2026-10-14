@@ -44,7 +44,7 @@
   "main_at_document_restructure": "c19639d",
   "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1 已随文档精简删除）；不得触碰非本用户占用端口；新 Studio 预览独占 backend=3011 / frontend=3021。2026-10-13 实测 3011/3021 空闲后由主模型临时占用验证并释放。",
   "current_checkout": "/mnt/Code/agent-orchestration/workflow/Storyloom",
-  "current_head_at_metadata_update": "1a93aa2",
+  "current_head_at_metadata_update": "9d466f1",
   "root01_tested_base": "bcb3eb4",
   "executor_context_limit_2026_10_13": "pation/qwen38-27b-w3a4 contextWindow=65536（本地端点 http://127.0.0.1:18982/v1 只服务该变体）。2026-10-13 批次 C 五次派发实测：累计 tool 结果 117820~154679 字节时全部以 400 \"Input plus output exceeds 65536 tokens for this model\" 失败且零产出；432 字节的探测会话正常。派发须把单卡阅读+产出控制在约 50KB 以内，或恢复更大上下文的模型变体。",
   "batch_c3_closing_regression_2026_10_15": "批次 C3 收尾全量回归（MEDIA-01/CHAT-01/EDIT-01/SCRIPT-02 四卡提交后，HEAD 1a93aa2）：.venv/bin/python -m pytest tests/studio/ -q → **574 passed, exit 0**（551s）。开工基线 460 passed → 净增 114 例（MEDIA-01 31 + CHAT-01 47 + EDIT-01 21 + SCRIPT-02 52，含既有 SCRIPT-01 用例并入同文件后的计数）。并发纪律：本批四卡执行器曾各自并发跑 pytest，共用进程单例测试库（conftest 的 STUDIO_DATA_DIR）导致一次偶发失败（CHAT-01 test_t47 '_IncludedRouter' object has no attribute 'path'），独占重跑与本次收尾全量回归均全绿——确认非实现缺陷，已在批次 C3 派发单确立「验收测试一律串行回收后执行」纪律。"
@@ -6647,11 +6647,48 @@
     "R01",
     "R11"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
-   "allowlist_scope": "一个依赖检查脚本、新代码测试规则及相应测试；逐文件退役清单由主模型维护",
-   "attempts": [],
-   "acceptance": null
+   "allowlist_scope": "scripts/check_legacy_deps.py、tests/studio/test_retire_guard.py；逐文件退役清单由主模型另行维护（architecture 退役清单，见 limitations）",
+   "attempts": [
+    {
+     "n": 1,
+     "by": "主模型",
+     "date": "2026-10-15",
+     "result": "主模型亲自实现——本卡要求「主模型设规则并冻结检查口径」，规则（禁止集/允许集/fail-closed 边界）属设计决策；实现与测试由主模型完成并独立复验"
+    }
+   ],
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-15",
+    "contract_version": "2.9",
+    "tested_baseline": "9d466f1（本卡提交，基于 2fcad48）",
+    "scope": "legacy_dependency_guard",
+    "checks": [
+     "主模型独立复验：.venv/bin/python -m pytest tests/studio/test_retire_guard.py → **38 passed**；真实仓库实测 `scripts/check_legacy_deps.py` → exit 0（零违规），且该次扫描**包含四张在途并行卡的全部新产物**（providers/media/storyboard/canvas），证明守卫对新代码即时生效。",
+     "实现口径（AST 而非正则）：ast.parse + ast.walk 取 Import/ImportFrom，**不做文本匹配**，因此注释与文档字符串里提到旧模块名不会误判为依赖；相对 import（level>0）天然放行；语法错误文件被**报告**而非静默跳过（否则守卫可被「写坏一个文件」绕过）。",
+     "禁止集（FORBIDDEN_MODULES，24 项，逐项据 ROOT-05 只读盘点）：app/authors/consistency/creative/diagnostics/director/image_errors/image_messages/image_provider/llm_stream/preproduction/production_nodes/provider_usage/providers/reader_branch/reference_image_model/skill_runtime/story_sources/task_activity/video_files/video_storage/worker/workflows。**保守子集**：不收「待提取基础设施」为禁止项，避免误伤 JOB-01 在 backend/infrastructure/providers/ 的纯协议重写（重写不 import 旧文件）。",
+     "允许集（ALLOWED_NEW_MODULES）：backend.core.accounts / backend.core.db / backend.core.auth / backend.core.config 四个 ROOT-01/DB-01 冻结基础设施；以及新命名空间内部（backend.studio.*/backend.core.*/backend.infrastructure.*）与相对 import。",
+     "fail-closed 边界：任何**其他** backend.* import 一律报告为违规并附可执行放行提示（指向 ALLOWED_NEW_MODULES），使新增旧模块名不会被静默放行——这是「宁可误报、不可漏放」的守卫取向。",
+     "旧 API 字符串：拒绝 /api/author/、/api/creative/、/api/director/、/api/preproduction/、/api/production/、/api/reader/ 六个前缀的**字符串字面量**；/api/studio/** 不误报（已断言）。",
+     "守卫有效性（防「守卫本身失效」导致假通过）：parametrize 覆盖全部 24 个旧模块，**裸名（import creative）与点号名（from backend.creative import ...）两种写法**都必须命中；另覆盖 from-import 子模块、旧 API 字符串、语法错误报告、确定性排序（按 file,line,module）、CLI 退出码 0/1、__pycache__ 跳过；允许项（四基础设施/内部/相对/三方/stdlib）全部不误报。",
+     "真实仓库三根零依赖（本卡验收本体）：check_imports 与 check_legacy_api_strings 在真实 checkout 上均为空列表——即新命名空间当前对旧业务**零 import、零旧 API 引用**，且该状态自此由 38 例测试持续守卫。"
+    ],
+    "contract_question_ruling": [
+     "禁止集取「保守子集」而非「全部旧栈文件」：ROOT-05 盘点把 providers/image_provider/llm_stream/video_storage 等列为「只提取纯协议/配置、重新接新执行记录」——它们的**旧文件本体**属退役范畴（故列入禁止 import），但其纯协议**能力**由 JOB-01 在 backend/infrastructure/providers/ 重写。把「能力」与「旧文件」分开，既允许重写、又禁止新代码 import 旧文件，符合 R01/R11 与附录 09 §5「只读抽取、禁止 import 旧业务路径」。不升契约版本。",
+     "fail-closed（未登记 backend.* 即违规）是**加严**取向：宁可要求主模型显式登记新基础设施，也不放过将来新增的旧模块名。与账本 policy「negative_case_policy：每张派发卡必须填写与唯一操作直接相关的失败/恢复案例」一致。",
+     "本卡不含「逐文件退役清单」：任务卡要求「主模型按实施 HEAD 逐文件审定待删除/解耦/提取项、引用方与复验范围，并记录于 architecture 中的退役清单」。该清单是 **RETIRE-02/03 的就绪前置**（其 requires 含 RETIRE-01 且依赖 GATE-01~05 / JOB-01~12），按架构分册阅读路径应落在 docs/studio/architecture/（decisions.md/domain-contracts.md 或新增退役清单文件）。本卡只交付「检查脚本 + 新代码测试规则」，清单待 RETIRE-02 派发前由主模型出。"
+    ],
+    "evidence": [
+     "scripts/check_legacy_deps.py",
+     "tests/studio/test_retire_guard.py"
+    ],
+    "limitations": [
+     "逐文件退役清单（文件/动作/引用方/复验范围）**尚未冻结**——它是 RETIRE-02/03 的派发前置，且 RETIRE-02/03 还依赖 GATE-01~05 与 JOB-01~12；未冻结前退役子卡保持不可 ready（账本 policy retirement_requires）。",
+     "守卫只覆盖**静态**依赖：运行期动态 import（importlib.import_module 拼串）、子进程调用、HTTP 回调旧路由不在 AST 扫描范围；由 GATE 系列与 RETIRE-03 的装配复核覆盖。",
+     "守卫不检查反向依赖（旧模块 import 新代码）——那属 RETIRE-03 的解除与删除工作。"
+    ]
+   }
   },
   {
    "id": "RETIRE-02-a",
