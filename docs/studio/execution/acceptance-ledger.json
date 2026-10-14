@@ -3,7 +3,7 @@
  "plan_version": "2.2",
  "contract_version": "2.9",
  "product_version": "2.0",
- "updated": "2026-10-13",
+ "updated": "2026-10-15",
  "authority": "root_acceptance_only",
  "implementation": {
   "root": "/mnt/Code/agent-orchestration/workflow/Storyloom",
@@ -44,7 +44,7 @@
   "main_at_document_restructure": "c19639d",
   "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1 已随文档精简删除）；不得触碰非本用户占用端口；新 Studio 预览独占 backend=3011 / frontend=3021。2026-10-13 实测 3011/3021 空闲后由主模型临时占用验证并释放。",
   "current_checkout": "/mnt/Code/agent-orchestration/workflow/Storyloom",
-  "current_head_at_metadata_update": "d09c43c",
+  "current_head_at_metadata_update": "730b23a",
   "root01_tested_base": "bcb3eb4",
   "executor_context_limit_2026_10_13": "pation/qwen38-27b-w3a4 contextWindow=65536（本地端点 http://127.0.0.1:18982/v1 只服务该变体）。2026-10-13 批次 C 五次派发实测：累计 tool 结果 117820~154679 字节时全部以 400 \"Input plus output exceeds 65536 tokens for this model\" 失败且零产出；432 字节的探测会话正常。派发须把单卡阅读+产出控制在约 50KB 以内，或恢复更大上下文的模型变体。"
  },
@@ -3058,11 +3058,49 @@
     "R02",
     "R06"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "allowlist_scope": "web/features/studio/shell/studio-state.ts、web/features/studio/StudioApp.tsx、web/tests/studio/state.test.cjs",
-   "attempts": [],
-   "acceptance": null
+   "attempts": [
+    {
+     "n": 1,
+     "by": "executor(pation/qwen38-27b-w3a4)",
+     "date": "2026-10-13",
+     "result": "失败零产出——模型上下文 65536 超限（见 observed_baselines.executor_context_limit_2026_10_13）；其失败前产出仅状态容器草案，已随 e06939f 以 WIP 入账"
+    },
+    {
+     "n": 2,
+     "by": "主模型",
+     "date": "2026-10-15",
+     "result": "adopt+complete——采纳 e06939f 冻结草案，接线 StudioApp.tsx 并补写 state.test.cjs，全量独立复验后入账"
+    }
+   ],
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-15",
+    "contract_version": "2.9",
+    "tested_baseline": "730b23a（本卡提交，基于 e9ca029；容器草案基线 e06939f）",
+    "scope": "studio_state_container + StudioApp_wiring",
+    "checks": [
+     "主模型独立复验（不复用执行器报告，主模型亲自实现）：node --test 'web/tests/studio/*.test.cjs' → 413 passed / 0 fail（基线 385，本卡新增 28 例零回归；本卡前 9 例因 vm realm 与主 realm 原型不同致 assert.deepEqual 失败，已按 selection.test.cjs 既有 norm=JSON 归一化模式修正后全绿）；web/node_modules/.bin/tsc --noEmit -p web/tsconfig.json → exit 0；git status 仅白名单 3 文件（studio-state.ts 沿用 e06939f 草案未改）。",
+     "冻结容器语义逐条：DEFAULT_VIEW='source'、DEFAULT_SOURCE_SWITCH_MODE='reader'；createInitialState 五项初态且每次新对象（无共享引用）；项目隔离三路（setProject 含 null / switchProject / hydrate）均把 selection/view/jobFeed 重置到新项目初态，旧项目状态零残留；switchProject/hydrate 载入 DTO 摘要并把 sourceSwitch.activeSourceRevisionId 设为 project.active_source_revision_id（null 同步为 null）；hydrate 载入 selectionRef 并经 normalizeSelectionRef 归一；selection 归一四类非法（空 kind/空 id/revision 非正整数/非数字）→ null；pushJob/updateJob 只改 jobFeed 且**永不修改 view**（断言作业运行时 view 保持 script/assets）；pushJob cap=10 只保留最近 10 条（13 推 → 保留 j3..j12）；clearJobFeed 清空且不动 view；未知 action 返回**原引用**（assert.equal 引用相等）不抛错。",
+     "StudioApp.tsx 接线：useReducer(studioReducer, undefined, createInitialState) 接管；projectId/invalid prop 变化 → dispatch {type:'setProject', projectId: invalid===true ? null : projectId}；渲染分支改为依据 state.project.projectId（invalid / 未选择 / 空态三分支文案逐字保留，DOM 容器 .studio-shell 与 .studio-shell__msg、<style jsx> 全保留）；**不做网络水合**——无 '/api/、无 fetch(、不 import app/，未新增任何 API 客户端文件。",
+     "禁止旧产品引用：StudioApp.tsx 不含 ProjectHome / TaskActivity / reader（正则断言）；与既有 studio-app.test.cjs 的 11 条禁止项断言并行通过不冲突。"
+    ],
+    "contract_question_ruling": [
+     "测试撰写分歧（非契约变更）：'不读 localStorage' 断言若按源码字符串匹配 localStorage 会误判——容器头注与 StudioAction 文档**刻意写明**'不读 localStorage'（设计意图陈述）。改断言真实调用不存在（/localStorage\\s*\\./、/sessionStorage\\s*\\./、/window\\.localStorage/ 三者皆不匹配）。语义（恢复一律经 hydrate 从服务端重建）未变，不升契约版本。",
+     "渲染数据源：正文不再直接插值 projectId prop 而改用 state.project.projectId。因 useEffect 在挂载时即 dispatch，state 与 prop 保持一致，可观察文案逐字不变；取 state 保证了后续 hydrate 注入 DTO 后 UI 与容器同源（VIEW-03/04 前置）。不升契约版本。"
+    ],
+    "evidence": [
+     "web/features/studio/shell/studio-state.ts（容器，e06939f 冻结草案未改）",
+     "web/features/studio/StudioApp.tsx（本卡接线）",
+     "web/tests/studio/state.test.cjs（28 例：容器纯逻辑 + StudioApp 接线与禁止项）"
+    ],
+    "limitations": [
+     "浏览器实测（真实 reducer 驱动的交互与视觉）归 GATE-02 关键浏览器连续操作门；本卡以 vm 纯逻辑测试 + 组件字符串断言为准（与 SOURCE-12/13 同一验收深度）。",
+     "本卡不做项目 DTO 网络水合——hydrate 注入由后续卡（VIEW-03/04 或项目加载卡）接入，白名单外不新增 API 客户端。"
+    ]
+   }
   },
   {
    "id": "VIEW-02",
