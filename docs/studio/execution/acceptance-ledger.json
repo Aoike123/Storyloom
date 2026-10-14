@@ -44,11 +44,12 @@
   "main_at_document_restructure": "c19639d",
   "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1 已随文档精简删除）；不得触碰非本用户占用端口；新 Studio 预览独占 backend=3011 / frontend=3021。2026-10-13 实测 3011/3021 空闲后由主模型临时占用验证并释放。",
   "current_checkout": "/mnt/Code/agent-orchestration/workflow/Storyloom",
-  "current_head_at_metadata_update": "e4bc7c2",
+  "current_head_at_metadata_update": "2001765",
   "root01_tested_base": "bcb3eb4",
   "executor_context_limit_2026_10_13": "pation/qwen38-27b-w3a4 contextWindow=65536（本地端点 http://127.0.0.1:18982/v1 只服务该变体）。2026-10-13 批次 C 五次派发实测：累计 tool 结果 117820~154679 字节时全部以 400 \"Input plus output exceeds 65536 tokens for this model\" 失败且零产出；432 字节的探测会话正常。派发须把单卡阅读+产出控制在约 50KB 以内，或恢复更大上下文的模型变体。",
   "batch_c3_closing_regression_2026_10_15": "批次 C3 收尾全量回归（MEDIA-01/CHAT-01/EDIT-01/SCRIPT-02 四卡提交后，HEAD 1a93aa2）：.venv/bin/python -m pytest tests/studio/ -q → **574 passed, exit 0**（551s）。开工基线 460 passed → 净增 114 例（MEDIA-01 31 + CHAT-01 47 + EDIT-01 21 + SCRIPT-02 52，含既有 SCRIPT-01 用例并入同文件后的计数）。并发纪律：本批四卡执行器曾各自并发跑 pytest，共用进程单例测试库（conftest 的 STUDIO_DATA_DIR）导致一次偶发失败（CHAT-01 test_t47 '_IncludedRouter' object has no attribute 'path'），独占重跑与本次收尾全量回归均全绿——确认非实现缺陷，已在批次 C3 派发单确立「验收测试一律串行回收后执行」纪律。",
-  "batch_c4_c5_closing_regression_2026_10_15": "批次 C4/C5 收尾全量回归（JOB-01 / ASSET-02-a / MEDIA-02-a / SHOT-01-a 四卡提交后，HEAD e23da29）：.venv/bin/python -m pytest tests/studio/ -q → **751 passed, exit 0**（610s）。批次 C3 收尾为 574 passed，本波新增 JOB-01 79 + MEDIA-02-a 37 + ASSET-02-a（含 t40–t50）+ SHOT-01-a 12 + RETIRE-01 38 + VIEW-02（web 侧 28，不入 pytest 计数）。本波严格执行「验收测试串行化」：四卡回收期间主模型逐卡独占跑测，未再出现共享测试库争用失败。"
+  "batch_c4_c5_closing_regression_2026_10_15": "批次 C4/C5 收尾全量回归（JOB-01 / ASSET-02-a / MEDIA-02-a / SHOT-01-a 四卡提交后，HEAD e23da29）：.venv/bin/python -m pytest tests/studio/ -q → **751 passed, exit 0**（610s）。批次 C3 收尾为 574 passed，本波新增 JOB-01 79 + MEDIA-02-a 37 + ASSET-02-a（含 t40–t50）+ SHOT-01-a 12 + RETIRE-01 38 + VIEW-02（web 侧 28，不入 pytest 计数）。本波严格执行「验收测试串行化」：四卡回收期间主模型逐卡独占跑测，未再出现共享测试库争用失败。",
+  "batch_c6_closing_regression_2026_10_15": "批次 C6（SHOT-01-b + JOB-02）收尾全量回归（HEAD 2001765）：.venv/bin/python -m pytest tests/studio/ -q → **775 passed, exit 0**（660s）。上批 C4/C5 收尾为 751；本批新增 SHOT-01-b 8 例 + JOB-02 16 例 = +24，吻合。两卡回收期间主模型逐卡独占跑测，未再出现共享测试库争用失败。"
  },
  "policy": {
   "acceptance_requires": [
@@ -3830,11 +3831,13 @@
      "成功码为 **200 而非 201**（SB3 成功即 200，与 SB1 的 201 不同）：api.py 仅 `result.pop(\"_replay\", None)` 后返回，不用 JSONResponse 覆盖 201。DTO 与 SB1 同形（恰 7 键，object_ref.revision 恒 null）。",
      "**场就地改名无版本**：不产生任何 revision 行（studio_scenes 无 revision 列）；`layout_cas_revision` 属 SB7 镜头重排 CAS，**改名绝不改它**——t17 逐字段断言 id/project_id/seq/layout_cas_revision/created_at 全不变，仅 name 与 updated_at 变化。",
      "硬性禁止逐条负向断言（t20）：studio_shots 与 studio_shot_revisions 行数 0；studio_jobs 行数 0；occurrences/bindings/adoptions/source_relations 零写入；另一场行逐字段不变。",
-     "幂等重放（t18）：200 原 body、updated_at **不再前移**、场行数不变；异内容（t19）422 reused。t16 覆盖 name 空/纯空白/超 121 → 422 required/max_length 且保存 trim 后值。"
+     "幂等重放（t18）：200 原 body、updated_at **不再前移**、场行数不变；异内容（t19）422 reused。t16 覆盖 name 空/纯空白/超 121 → 422 required/max_length 且保存 trim 后值。",
+     "批次 C6 收尾全量回归：775 passed（见 observed_baselines.batch_c6_closing_regression_2026_10_15）。"
     ],
     "contract_question_ruling": [
      "本卡未引入新的契约歧义：SB3 在附录 04 §2 已冻结（`name, command_id` → 200），场 DTO 直接沿用上一卡（SHOT-01-a）由主模型冻结的 7 键形状——同域同形，无需另立形状。",
-     "`layout_cas_revision` 的归属在实现前即由主模型在派发单中点明（SB7 专属），执行器据此断言其不变；这属对附录 §1「layout_cas_revision：镜头重排的唯一 CAS 写入点」的忠实落实，不升契约版本。"
+     "`layout_cas_revision` 的归属在实现前即由主模型在派发单中点明（SB7 专属），执行器据此断言其不变；这属对附录 §1「layout_cas_revision：镜头重排的唯一 CAS 写入点」的忠实落实，不升契约版本。",
+     "**幂等身份无命令种类（执行器提问；主模型裁定为可接受并记全局观察）**：`CommandRecord` 只有 (owner_id, command_id) + result_payload，**无命令种类列**；故同一 owner 若把 SB1 建场用过的 command_id 用于 SB3 改名、且 name 恰好相同，会命中重放并返回那条 SB1 的 payload。两者同为 7 键场 DTO，**线上形状无差异**，且 command_id 由客户端生成、语义就是「同一逻辑命令的重试」——客户端复用 command_id 传不同命令本身即违约。裁定：接受现状，不为此增列（增列需升跨卡契约并同步全部已验收域）。该观察适用于**所有**已验收写命令卡（F 系/S 系/SC/AS/CHAT/EDIT/JOB 皆同构），记为全局已知边界。"
     ],
     "evidence": [
      "backend/studio/storyboard/service.py",
@@ -5150,11 +5153,59 @@
     "R08",
     "R11"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "allowlist_scope": "backend/studio/jobs/service.py、backend/studio/jobs/api.py、tests/studio/test_jobs.py",
-   "attempts": [],
-   "acceptance": null,
+   "attempts": [
+    {
+     "n": 1,
+     "by": "executor(kimi-coding/kimi-for-coding-highspeed)",
+     "date": "2026-10-15",
+     "result": "失败零产出——派发后连续五轮未创建任何白名单文件（jobs/{service,api}.py、test_jobs.py 均不存在），仅处读上下文阶段；主模型两次进度询问后仍无产出，遂中断该执行器（interrupt_agent）"
+    },
+    {
+     "n": 2,
+     "by": "主模型",
+     "date": "2026-10-15",
+     "result": "主模型亲自实现——依赖已全部 accepted（JOB-01 86587e5、DB-07/DB-08），依附录 09 §1/§3/§4 冻结接口实现并全量独立复验后入账"
+    }
+   ],
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-15",
+    "contract_version": "2.9",
+    "tested_baseline": "2001765（本卡提交，基于 e4bc7c2）",
+    "scope": "job_submit_idempotent_frozen_input",
+    "checks": [
+     "主模型独立复验（主模型亲自实现）：pytest tests/studio/test_jobs.py → **16 passed**；白名单外零改动（提交恰 3 文件：jobs/{service,api}.py + test_jobs.py，均为新建）；**主模型预接线 jobs.api 到 router.py 存在即挂载清单**（9c3c53e，否则本卡路由会被静默丢弃——同类于 REL-02 的 2b85075），t10/t11 的 201 正是挂载生效的证据。",
+     "校验序逐条：项目 404（不存在/非属主同形状，t2）→ kind 枚举（t3）→ target 形状 → **kind 与 target.kind 配对**（t4；`_TARGET_KIND_BY_JOB_KIND`，防止 export 指向任意对象）→ input 必须为 object（t5）→ priority（t6）→ 目标存在且属本项目（t7：**不存在与跨项目同形状 404**）→ 计费边界（t8/t9/t10）→ 幂等（**先于写**，t15/t16）→ 单事务 INSERT StudioJob + JobEvent(created) + CommandRecord。",
+     "**冻结语义（卡面「冻结目标…未来新增对象不扩大任务」）**：t13 提交后把目标资产升版到 revision=2 并新增另一个资产，读回 DB 行的 `payload`/`ref_kind`/`ref_id` 逐字节不变、DTO target.revision 仍为 1；t14 直接改动目标资产的 project_id（模拟归属变化）后 job 三字段仍等于提交时刻。",
+     "**input_digest 独立重算**（t12）：测试用与实现相同的规范化公式（sort_keys + separators=(\",\",\":\") + ensure_ascii=False + sha256）独立算一遍并与响应相等，长度 64。",
+     "**计费边界（附录 09 §4）**：t8 asset_generate 在 image env 全缺时 → 422 precondition_failed(reason=provider_not_configured) 且 **message 含具体缺失键名 IMAGE_API_KEY**（复用 JOB-01 `missing_env(kind)`）；t9 配置齐全但 confirm_cost=false → 422 reason=cost_not_confirmed；t10 **transcode 为纯本地 kind**，在无任何供应商配置时仍 201（不需配置、不需成本确认）——三类行为与附录 §4「纯本地可自动重试 / 收费不自动重试」的计费分类一致。",
+     "成功 201 行形状（t11）：DTO 恰 11 键；`object_ref={job,id,revision:null}`；status=pending；attempts=0；lease_owner/lease_expires_at 为 NULL；job_events 恰 1 行 type=created；**job_attempts 零行**（本卡不执行，且全测试文件断言 attempt 计数为 0）。",
+     "目标解析覆盖 DB 冻结的全部 5 kind：shot/asset/media_artifact/release 直接按 project_id 校验归属；**confirmed_edit 无 project_id 列**，经其 edit_id 反查 `studio_edit_drafts` 的项目归属（DB-10 验收裁定「确认版本归属随剪辑草稿」）。",
+     "幂等：t15 同 command_id 同内容 → 200 且响应体与首次逐字节相同、jobs/attempts/events/commands 四表计数全部不变（零新行）；t16 同 command_id 异 input → 422 field=command_id rule=reused。",
+     "硬性禁止：不调供应商、不发网络；不写旧 Task/Record；零 attempt、零租约（见上）；不写任何业务对象。",
+     "批次 C6 收尾全量回归：775 passed（见 observed_baselines.batch_c6_closing_regression_2026_10_15）。"
+    ],
+    "contract_question_ruling": [
+     "**kind 集不一致（契约级缺口，主模型登记）**：DB CheckConstraint 把 `studio_jobs.kind` 冻结为 5 值 —— `shot_generate / asset_generate / transcode / export / release_publish`；而附录 09 §3 的 kind 注册表更宽（含 `llm`/`image`/`video`/`chat` 等类别描述）。**宽于 DB 约束的 kind 无法入库**（会被 CheckConstraint 拒绝），因此本卡取**可强制执行的窄集** `_JOB_KINDS`，并把该缺口记入本块与 implementation_notes。裁定：在 DB 约束与附录统一之前，JOB-02/03/05/06/07 一律以 DB 窄集为准；扩集须主模型先统一契约（改 CheckConstraint 属迁移、且需重新验收 DB-08），不在任何叶卡擅改。",
+     "**kind↔target.kind 配对校验为主模型补入**（卡面只说「解析明确 target」）：若不配对，`export` 可指向任意存在的对象而绕过语义。配对表 `_TARGET_KIND_BY_JOB_KIND` 为 1:1，失配 → 422 field=target rule=mismatch。属**加严**，不升契约版本。",
+     "**就绪检查的深度**：卡面「检查就绪」在附录 §3 是按 kind 描述的（如 asset_generate 需「资产可写、图片供应商已配置」；shot_generate 需「镜头输入齐备（adoption+binding 冻结快照）+ 视频供应商已配置」）。本卡实现为「目标存在且属本项目 + 供应商已配置 + 成本已确认」；**更深的输入齐备性（adoption/binding 快照完整性、spec 可写性）留给各生成处理器卡（JOB-08/09/11/12）在消费 payload 时校验**——因为那些前置只有在处理器知道输入语义时才能判定，在提交层硬编码会造出与处理器重复且更弱的判定。此为分界裁定，不升契约版本。",
+     "**形态层 422 与冻结体的分界**（t6）：`priority=\"high\"` 这类请求体**形态**错误由 Pydantic 先拦，响应为 FastAPI 默认 422 而非冻结错误体——与既有多卡（projects/fragments/conversations 等）一致；只有规格显式冻结的违规才走冻结体。service 内仍保留 priority 整数校验作为纵深防御（直调 service 时生效）。"
+    ],
+    "evidence": [
+     "backend/studio/jobs/service.py",
+     "backend/studio/jobs/api.py",
+     "tests/studio/test_jobs.py"
+    ],
+    "limitations": [
+     "kind 集受 DB CheckConstraint 限制为 5 值（见裁定）；附录 §3 更宽的注册表在统一前不可用。",
+     "本卡只提交：不执行、不租约、不重试、不取消、不重做（JOB-03/05/06/07），不产出媒体、不调供应商。",
+     "深度就绪性检查（输入快照完整性、spec 可写性、adoption/binding 齐备）归各生成处理器卡；本卡不代替其判定。",
+     "列作业/查详情/SSE 事件流（JOB-04）与前端队列定位（JOB-10-h）未实现，故无 HTTP 读接口可验。"
+    ]
+   },
    "implementation_notes": [
     {
      "date": "2026-10-15",
