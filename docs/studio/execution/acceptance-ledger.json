@@ -44,7 +44,7 @@
   "main_at_document_restructure": "c19639d",
   "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1 已随文档精简删除）；不得触碰非本用户占用端口；新 Studio 预览独占 backend=3011 / frontend=3021。2026-10-13 实测 3011/3021 空闲后由主模型临时占用验证并释放。",
   "current_checkout": "/mnt/Code/agent-orchestration/workflow/Storyloom",
-  "current_head_at_metadata_update": "9d466f1",
+  "current_head_at_metadata_update": "00cea64",
   "root01_tested_base": "bcb3eb4",
   "executor_context_limit_2026_10_13": "pation/qwen38-27b-w3a4 contextWindow=65536（本地端点 http://127.0.0.1:18982/v1 只服务该变体）。2026-10-13 批次 C 五次派发实测：累计 tool 结果 117820~154679 字节时全部以 400 \"Input plus output exceeds 65536 tokens for this model\" 失败且零产出；432 字节的探测会话正常。派发须把单卡阅读+产出控制在约 50KB 以内，或恢复更大上下文的模型变体。",
   "batch_c3_closing_regression_2026_10_15": "批次 C3 收尾全量回归（MEDIA-01/CHAT-01/EDIT-01/SCRIPT-02 四卡提交后，HEAD 1a93aa2）：.venv/bin/python -m pytest tests/studio/ -q → **574 passed, exit 0**（551s）。开工基线 460 passed → 净增 114 例（MEDIA-01 31 + CHAT-01 47 + EDIT-01 21 + SCRIPT-02 52，含既有 SCRIPT-01 用例并入同文件后的计数）。并发纪律：本批四卡执行器曾各自并发跑 pytest，共用进程单例测试库（conftest 的 STUDIO_DATA_DIR）导致一次偶发失败（CHAT-01 test_t47 '_IncludedRouter' object has no attribute 'path'），独占重跑与本次收尾全量回归均全绿——确认非实现缺陷，已在批次 C3 派发单确立「验收测试一律串行回收后执行」纪律。"
@@ -3121,11 +3121,50 @@
     "R02",
     "R06"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "allowlist_scope": "web/features/studio/canvas/components/InfiniteCanvas.tsx、web/features/studio/canvas/canvas-nodes.ts、web/tests/studio/canvas.test.cjs",
-   "attempts": [],
-   "acceptance": null
+   "attempts": [
+    {
+     "n": 1,
+     "by": "executor(kimi-coding/kimi-for-coding-highspeed)",
+     "date": "2026-10-15",
+     "result": "submitted——模型改选后首轮提交"
+    }
+   ],
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-15",
+    "contract_version": "2.9",
+    "tested_baseline": "00cea64（本卡提交，基于 f75fd1d）",
+    "scope": "controlled_infinite_canvas",
+    "checks": [
+     "主模型独立复验（不复用执行器报告）：node --test tests/studio/canvas.test.cjs → **28 passed**；node --test 'web/tests/studio/*.test.cjs' → **441 passed / 0 fail**（基线 413，+28 零回归）；web/node_modules/.bin/tsc --noEmit -p tsconfig.json → exit 0；白名单外零改动（本卡提交恰 3 文件，且 web 侧被跟踪文件 studio-state.ts/StudioApp.tsx/tsconfig.json/package.json 均未被修改）。",
+     "真实对象派生 nodes：deriveNodes 纯函数（同输入同输出、不读全局/localStorage）；**空输入 → 空数组，不伪造样例**；输入数组追加一个对象后再派生 → 恰好多一个对应节点（异步读入/新对象立即出现，无缓存陈旧）；来源非法（kind/id 非空字符串不满足、revision 非有限数字）→ 该来源跳过而非造节点。",
+     "位置独立于父级与顺序：坐标只来自布局状态（有记录用记录，无记录用 DEFAULT_POSITION{x:0,y:0}），**不按 key 哈希或下标生成**；构造断言证明同一 object_ref 在来源顺序不同的输入下坐标不变。",
+     "坐标不改父级/顺序/采用 revision（卡面验收）：更新坐标前后来源对象数组**逐字段深相等**（含 revision 与顺序），断言原输入未被 mutate；节点键 = kind+NUL+id 且**不含 revision**，故所属对象升版或字段同步都不会重置坐标。",
+     "受控增删与字段同步：upsertNode/removeNode/updateNodePosition/updateLayoutPosition/removeLayoutPosition 均返回新对象（不原地改）；来源展示字段变化能同步到节点，但**不覆盖已持久化的 x/y**。",
+     "数量与 DOM 一致（卡面验收）：InfiniteCanvas.tsx 用 nodes.map 渲染且以节点键作 key，无按条件丢弃节点的分支（字符串断言）；组件为**完全受控**——零 useState/useReducer，节点与视口经 props 传入、变更经 onViewportChange/onMoveNode 上抛，故拖后更新不复位（组件不持有可复位状态）。",
+     "视口数学：zoomAt 围绕锚点缩放后锚点内容坐标不变（数值断言）；zoom 夹 [0.1,8] 且夹取后锚点仍不漂移；panBy/zoomAt/fitToNodes 对非法输入返回**原视口引用**（便于 React bail-out）、contentToScreen/screenToContent 返回 null——**绝不产生 NaN**（已断言）。fitToNodes 空节点/非法 size → 原视口。",
+     "组件禁止项：无 fetch(、无 \"/api/、不 import app/、不引用 ProjectHome|TaskActivity|reader，保留 <style jsx>（与既有 studio-app.test.cjs 同类禁止项一致）。"
+    ],
+    "contract_question_ruling": [
+     "新节点无布局记录时的坐标兜底（实现选择，不升契约版本）：执行器取 DEFAULT_POSITION{x:0,y:0} 并提问「验收是否期望自动网格排布」。裁定：卡面只冻结「位置独立（不按顺序推导）」与「受控增删/字段同步」，**未要求自动布局**；自动网格排布会引入「自动布局是否算布局状态」的新语义，属 VIEW-03/画布后续卡的范围。当前兜底满足冻结语义（坐标仍只来自布局状态这一单一路径），保留。",
+     "节点身份键不含 revision（实现选择，契约一致）：坐标属「布局」而非「对象版本」，对象升版不应重置位置；卡面验收「坐标不改父级/顺序/采用 revision」正是要坐标与 revision 解耦。执行器的键设计与该验收同向，保留。",
+     "拖动提交语义（留待后续卡）：本卡每次 pointermove 即上抛（完全受控，无内部状态）。若 EDIT/VIEW 后续卡要求「拖动中仅预览、松手才提交」，属**新增交互语义**，须在那张卡冻结，不在本卡范围。",
+     "未接 selection（本卡未要求）：props 仅 nodes/viewport/onViewportChange/onMoveNode/className；统一选择与对象属性归 VIEW-03。"
+    ],
+    "evidence": [
+     "web/features/studio/canvas/canvas-nodes.ts",
+     "web/features/studio/canvas/components/InfiniteCanvas.tsx",
+     "web/tests/studio/canvas.test.cjs"
+    ],
+    "limitations": [
+     "浏览器实测（真实指针/滚轮交互与视觉）归 GATE-02 关键浏览器连续操作门；本卡以 vm 纯逻辑测试 + 组件字符串断言为准（与 SOURCE-12/13、VIEW-01 同一验收深度）。",
+     "自动布局策略（网格/力导）与拖动中预览-提交分离未实现，按上列裁定留给后续画布卡。",
+     "旧系统 11 个 pre-rebuild 测试仍失败（story-stack/reader-panel/story-import/model-status/production-follow），与本卡零交集，属已记账债务。"
+    ]
+   }
   },
   {
    "id": "VIEW-03",
