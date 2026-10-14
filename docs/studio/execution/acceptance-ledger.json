@@ -44,7 +44,7 @@
   "main_at_document_restructure": "c19639d",
   "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1 已随文档精简删除）；不得触碰非本用户占用端口；新 Studio 预览独占 backend=3011 / frontend=3021。2026-10-13 实测 3011/3021 空闲后由主模型临时占用验证并释放。",
   "current_checkout": "/mnt/Code/agent-orchestration/workflow/Storyloom",
-  "current_head_at_metadata_update": "730b23a",
+  "current_head_at_metadata_update": "a99d76d",
   "root01_tested_base": "bcb3eb4",
   "executor_context_limit_2026_10_13": "pation/qwen38-27b-w3a4 contextWindow=65536（本地端点 http://127.0.0.1:18982/v1 只服务该变体）。2026-10-13 批次 C 五次派发实测：累计 tool 结果 117820~154679 字节时全部以 400 \"Input plus output exceeds 65536 tokens for this model\" 失败且零产出；432 字节的探测会话正常。派发须把单卡阅读+产出控制在约 50KB 以内，或恢复更大上下文的模型变体。"
  },
@@ -4682,11 +4682,53 @@
     "R09",
     "R12"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "allowlist_scope": "backend/studio/media/store.py、backend/infrastructure/media/probe.py、tests/studio/test_media.py",
-   "attempts": [],
-   "acceptance": null
+   "attempts": [
+    {
+     "n": 1,
+     "by": "executor(pation/qwen38-27b-w3a4)",
+     "date": "2026-10-13",
+     "result": "失败零产出——模型上下文 65536 超限（见 observed_baselines.executor_context_limit_2026_10_13）"
+    },
+    {
+     "n": 2,
+     "by": "executor(kimi-coding/kimi-for-coding-highspeed)",
+     "date": "2026-10-15",
+     "result": "submitted——模型改选后首轮提交（262144 上下文）"
+    }
+   ],
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-15",
+    "contract_version": "2.9",
+    "tested_baseline": "a99d76d（本卡提交，基于 65d4247）",
+    "scope": "media_probe + private_media_store + integrity",
+    "checks": [
+     "主模型独立复验（不复用执行器报告）：.venv/bin/python -m pytest tests/studio/test_media.py → 30 passed（19 个测试函数，含参数化）；`ps` 确认无并发 pytest、全程独占测试库后执行；白名单外零改动（git diff --cached 恰 5 文件：infrastructure/__init__.py、infrastructure/media/{__init__,probe}.py、studio/media/store.py、test_media.py）；代码逐行审查。",
+     "冻结常量与分离性：ALLOWED_EXTENSIONS 六项、MAX_MEDIA_BYTES=512MiB 精确；media_root()==DATA_DIR/'media'、public_root()==DATA_DIR/'public'，断言存储路径不在 public_root 之下，模块对 public 根零写入/零创建。",
+     "safe_filename：纯文件名通过；空/NUL/绝对路径（含 POSIX 与 Windows 盘符）/含 '/' 或 '\\\\' 或 '..' 一律 422 validation_failed(field=filename,rule=invalid)。store_media 路径穿越用例断言**零落盘零落行**。",
+     "校验与错误形状：未知扩展名（unsupported_type）、无扩展名、空数据（size/empty）、超限（size/too_large，monkeypatch 调小上限，不写真大文件）、非法 media_kind、非法 source —— 各 422 且零落盘零落行。",
+     "原子落盘与探测：真实小视频经 ffmpeg 生成后 store_media 落盘，verify_integrity 为真、filename 为 '{pid}/<26位ulid>.mp4' 相对名、sha256/大小与字节一致、duration_ms 非 None；image kind 不探测（三维度 None）；篡改文件后 verify_integrity 为假；损坏文件 probe_media 抛 MediaProbeError 且无 MediaArtifact 行、无残留文件；monkeypatch os.replace 抛错 → 无行无文件（写失败无伪就绪记录）。",
+     "artifact_path 对人为越界 filename 抛 ValueError；probe_media 缺文件与垃圾字节均抛 MediaProbeError。",
+     "硬性禁止逐条：不写/不建 DATA_DIR/public；不 import 任何旧后端媒体模块（video_files/video_storage 等源码无引用）。"
+    ],
+    "contract_question_ruling": [
+     "实现澄清（非契约变更）：静态 imageio_ffmpeg 不附 ffprobe，故按派发规格以 `ffmpeg -i` 的 stderr 为唯一元数据源（Duration 正则 + Video 流行解析分辨率，先剔除 0x.. 编码十六进制避免误匹配）；解析不出任何音视频流即 MediaProbeError。派发规格已冻结该做法，不升契约版本。",
+     "safe_filename 额外覆盖 Windows 盘符前缀（`len>=2 and filename[1]==':'`）：规格只列举空/绝对路径/'/'/'\\\\'/'..'/NUL，盘符形式属绝对路径同类，按最保守合理解释拒绝——属加严而非放宽，不升契约版本。",
+     "MAX_MEDIA_BYTES=512MiB 系主模型补白（附录 08 §4 只给接受输入格式清单、未给上限）；已在该常量的 docstring 与派发单标注为补白处，测试用 monkeypatch 调小验证，不写真实大文件。"
+    ],
+    "evidence": [
+     "backend/infrastructure/media/probe.py",
+     "backend/studio/media/store.py",
+     "tests/studio/test_media.py"
+    ],
+    "limitations": [
+     "MEDIA-01 无 HTTP 路由（media.api 不在本卡范围），故无接口级测试；存储/探测能力由 MEDIA-02-a/b 的读取流路由消费时再验端到端。",
+     "真实媒体大文件与真实供应商上传路径不在本卡（上传登记命令归 ASSET-02-a）。"
+    ]
+   }
   },
   {
    "id": "MEDIA-02-a",
