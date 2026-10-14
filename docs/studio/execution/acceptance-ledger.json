@@ -44,7 +44,7 @@
   "main_at_document_restructure": "c19639d",
   "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1 已随文档精简删除）；不得触碰非本用户占用端口；新 Studio 预览独占 backend=3011 / frontend=3021。2026-10-13 实测 3011/3021 空闲后由主模型临时占用验证并释放。",
   "current_checkout": "/mnt/Code/agent-orchestration/workflow/Storyloom",
-  "current_head_at_metadata_update": "a99d76d",
+  "current_head_at_metadata_update": "816da57",
   "root01_tested_base": "bcb3eb4",
   "executor_context_limit_2026_10_13": "pation/qwen38-27b-w3a4 contextWindow=65536（本地端点 http://127.0.0.1:18982/v1 只服务该变体）。2026-10-13 批次 C 五次派发实测：累计 tool 结果 117820~154679 字节时全部以 400 \"Input plus output exceeds 65536 tokens for this model\" 失败且零产出；432 字节的探测会话正常。派发须把单卡阅读+产出控制在约 50KB 以内，或恢复更大上下文的模型变体。"
  },
@@ -5976,11 +5976,48 @@
    "product_rules": [
     "R10"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "allowlist_scope": "backend/studio/conversations/service.py、backend/studio/conversations/api.py、tests/studio/test_conversations.py",
-   "attempts": [],
-   "acceptance": null
+   "attempts": [
+    {
+     "n": 1,
+     "by": "executor(kimi-coding/kimi-for-coding-highspeed)",
+     "date": "2026-10-15",
+     "result": "submitted——模型改选后首轮提交（262144 上下文）"
+    }
+   ],
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-15",
+    "contract_version": "2.9",
+    "tested_baseline": "816da57（本卡提交，基于 c6eebad）",
+    "scope": "conversations_messages_five_routes",
+    "checks": [
+     "主模型独立复验（不复用执行器报告）：.venv/bin/python -m pytest tests/studio/test_conversations.py → **47 passed**（47 个测试函数）；白名单外零改动（本卡提交恰 3 文件：conversations/api.py、conversations/service.py、test_conversations.py；router.py 未改）；service 层逐行代码审查。",
+     "首跑 1 failed（test_t47_schema_route_paths_mounted，AttributeError '_IncludedRouter' object has no attribute 'path'）经排除并发干扰后定位：非实现缺陷——test_t47 单独运行、与 t45/t46 组合、以及全文件独占重跑均 47 passed。根因是另一张在途卡的执行器同时运行 pytest，共用进程单例测试库（conftest 的 STUDIO_DATA_DIR 单例）导致的偶发；已按批次 C3 派发单确立的「验收测试一律串行回收后执行」纪律处理。",
+     "五路由冻结行为逐条：GET /conversations（owner 限定、scope 过滤、id 升序、cursor 26 字符 format 422、limit clamp [1,200]）；POST /conversations 取或建（项目 404 → scope_kind enum 422 → project 时 scope_id!=pid 为 422 mismatch、其余 kind 不存在/跨项目为 404 同形状 → 幂等 → 已存在四元组行返回 200 同一 id（不报 duplicate）→ 201 新建，title 固定空串）；GET /conversations/{cid}（DTO + 最近 50 条按 id 升序）；GET /conversations/{cid}/messages（升序、cursor、limit）；POST messages（sender enum → content required/too_long>8000 → refs 形状 → job_id 归属 404 → 幂等 → 201 单事务）。",
+     "属主隔离：Conversation 查询一律 owner_id 限定；不存在/跨项目/非本 owner 三路 404 同形状不泄漏；无 token 401。",
+     "幂等与并发兜底：同 command_id 同内容 → 200 原 result_payload 零副作用；异内容 → 422 validation_failed(field=command_id, rule=reused)；新建写事务 IntegrityError（UQ 四元组 / UQ owner+command）→ 回滚后按同一语义确定性重判（_recover_open/_recover_post），不产生第二次写、无半写。",
+     "refs 往返：null→null；合法数组→入库 JSON 文本、出参解析回数组且只留冻结三键 {kind,id,label}；非数组/非 dict 项/kind 或 id 空/label 非 str 一律 422 field=refs rule=invalid。",
+     "硬性禁止逐条（负向断言）：零 Proposal 行写入；不写任何业务表（Fragment/Scene/Shot/Asset/EditDraft/Job 仅只读 SELECT）；实现源码扫描无 requests/httpx/urllib/openai/anthropic/socket/aiohttp/Proposal（不调 LLM、不发网络）。",
+     "自动接线验证：test_t47 用 app.openapi() 证明五路由经 router.py「存在即挂载」清单生效（conversations 与 conversations/{cid}/messages 各含 get+post）。"
+    ],
+    "contract_question_ruling": [
+     "取或建并发兜底（实现补白，非契约变更）：派发规格未要求 IntegrityError 兜底路径，执行器在写事务捕获 UQ 冲突后确定性重判（命中 command_id → 原 payload；命中四元组 → 该行 DTO）。可观察终态与冻结语义完全一致（仍旧取或建、不报 duplicate），仅把并发下的 500 变成确定性 200——属加严，不升契约版本。",
+     "幂等比对经 project_id 容忍（record.project_id is None or == pid）：与 projects 域既有先例同构（CommandRecord.project_id 可空）；不改变「同 command_id 异内容 → 422 reused」的冻结判定，不升契约版本。",
+     "content 长度按原始串长判定（非 strip 后）：规格只冻结「strip 后为空 → required」与「>8000 → too_long」，二者对原始串判定与冻结文字一致；不升契约版本。"
+    ],
+    "evidence": [
+     "backend/studio/conversations/service.py",
+     "backend/studio/conversations/api.py",
+     "tests/studio/test_conversations.py"
+    ],
+    "limitations": [
+     "本卡不调 LLM、不建 Proposal（提案由 CHAT-02 处理器产生，R10：回答本身不保存业务）；title 固定空串，改名命令属后续卡。",
+     "会话 scope 的 edit kind 指向 studio_edit_drafts.edit_id——EDIT-01 交付草稿读写后由 CHAT-02/EDIT 链做端到端联验。"
+    ]
+   }
   },
   {
    "id": "CHAT-02",
