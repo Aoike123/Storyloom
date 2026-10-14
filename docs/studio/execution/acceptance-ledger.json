@@ -3686,7 +3686,18 @@
    "behavior": "创建真实场与片段归属，不生成镜头。",
    "allowlist_scope": "backend/studio/storyboard/service.py、backend/studio/storyboard/api.py、tests/studio/test_shots.py",
    "attempts": [],
-   "acceptance": null
+   "acceptance": null,
+   "implementation_notes": [
+    {
+     "date": "2026-10-15",
+     "by": "root",
+     "kind": "scope_conflict_ruling",
+     "ruling_1": "卡面「创建真实场与片段归属」与架构契约冲突：附录 04 §1 冻结的 studio_scenes 只有 id/project_id/name/seq/layout_cas_revision/created_at/updated_at，**无任何 fragment/adoption 列**；附录 04 §2 冻结 SB1 请求为 {name, seq?|null, command_id}（无片段入参）。按 docs/studio/README.md「工程落实由架构契约定义；发现冲突先由主模型修正规范或契约并标记受影响任务」裁定：**场的片段归属不落在 scene 行上**，而经场内镜头的 studio_shots.script_adoption_id 体现（由 SB4 建立）。本卡只创建场行、不接受片段入参；卡面「不生成镜头」= 绝不创建 Shot/ShotRevision。",
+     "ruling_2": "架构契约 §2 SB1 行写「409 seq 占用」，但项目全域既有冻结先例（SC1 同型 (fragment_id, seq) 唯一冲突，SOURCE-03 已验收）一律为 422 validation_failed(field=seq, rule=taken)；且 00 §4 码表 duplicate(409) 语义为「属主级**身份**唯一冲突（如项目名 (owner,name)）」，seq 占用非身份冲突。按项目一致性裁定本卡用 **422 rule=taken**，不升契约版本（契约正文的 409 笔误留待 SHOT-01 家族收口时按 v2.7/v2.8 先例统一修正并登记）。",
+     "ruling_3": "场 DTO 由主模型冻结为恰 7 键：object_ref{kind=scene,id,revision=null} / name / seq / layout_cas_revision / project_id / created_at / updated_at。revision 恒 null 因场就地改名无版本（附录 04 §1 name 列注）。",
+     "impact": "SHOT-01-b..j 与 SHOT-02 全部消费本卡冻结的场 DTO 与 seq 占用错误形状；SB2 列表/详情、SB3 改名、SB4 建镜头按附录 04 §2 顺序接续。"
+    }
+   ]
   },
   {
    "id": "SHOT-01-b",
