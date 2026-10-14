@@ -44,9 +44,10 @@
   "main_at_document_restructure": "c19639d",
   "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1 已随文档精简删除）；不得触碰非本用户占用端口；新 Studio 预览独占 backend=3011 / frontend=3021。2026-10-13 实测 3011/3021 空闲后由主模型临时占用验证并释放。",
   "current_checkout": "/mnt/Code/agent-orchestration/workflow/Storyloom",
-  "current_head_at_metadata_update": "1f31d4a",
+  "current_head_at_metadata_update": "1a93aa2",
   "root01_tested_base": "bcb3eb4",
-  "executor_context_limit_2026_10_13": "pation/qwen38-27b-w3a4 contextWindow=65536（本地端点 http://127.0.0.1:18982/v1 只服务该变体）。2026-10-13 批次 C 五次派发实测：累计 tool 结果 117820~154679 字节时全部以 400 \"Input plus output exceeds 65536 tokens for this model\" 失败且零产出；432 字节的探测会话正常。派发须把单卡阅读+产出控制在约 50KB 以内，或恢复更大上下文的模型变体。"
+  "executor_context_limit_2026_10_13": "pation/qwen38-27b-w3a4 contextWindow=65536（本地端点 http://127.0.0.1:18982/v1 只服务该变体）。2026-10-13 批次 C 五次派发实测：累计 tool 结果 117820~154679 字节时全部以 400 \"Input plus output exceeds 65536 tokens for this model\" 失败且零产出；432 字节的探测会话正常。派发须把单卡阅读+产出控制在约 50KB 以内，或恢复更大上下文的模型变体。",
+  "batch_c3_closing_regression_2026_10_15": "批次 C3 收尾全量回归（MEDIA-01/CHAT-01/EDIT-01/SCRIPT-02 四卡提交后，HEAD 1a93aa2）：.venv/bin/python -m pytest tests/studio/ -q → **574 passed, exit 0**（551s）。开工基线 460 passed → 净增 114 例（MEDIA-01 31 + CHAT-01 47 + EDIT-01 21 + SCRIPT-02 52，含既有 SCRIPT-01 用例并入同文件后的计数）。并发纪律：本批四卡执行器曾各自并发跑 pytest，共用进程单例测试库（conftest 的 STUDIO_DATA_DIR）导致一次偶发失败（CHAT-01 test_t47 '_IncludedRouter' object has no attribute 'path'），独占重跑与本次收尾全量回归均全绿——确认非实现缺陷，已在批次 C3 派发单确立「验收测试一律串行回收后执行」纪律。"
  },
  "policy": {
   "acceptance_requires": [
@@ -3358,11 +3359,55 @@
     "R07",
     "R11"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "allowlist_scope": "backend/studio/scripts/service.py、backend/studio/scripts/api.py、backend/studio/reviews/impact.py、tests/studio/test_scripts.py",
-   "attempts": [],
-   "acceptance": null
+   "attempts": [
+    {
+     "n": 1,
+     "by": "executor(pation/qwen38-27b-w3a4)",
+     "date": "2026-10-13",
+     "result": "失败零产出——模型上下文 65536 超限（见 observed_baselines.executor_context_limit_2026_10_13）"
+    },
+    {
+     "n": 2,
+     "by": "executor(kimi-coding/kimi-for-coding-highspeed)",
+     "date": "2026-10-15",
+     "result": "submitted——模型改选后首轮提交（262144 上下文）"
+    }
+   ],
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-15",
+    "contract_version": "2.9",
+    "tested_baseline": "1a93aa2（本卡提交，基于 f5b3d33）",
+    "scope": "script_adopt_preview_apply_s6 + impact",
+    "checks": [
+     "主模型独立复验（不复用执行器报告）：.venv/bin/python -m pytest tests/studio/test_scripts.py → **52 passed**（52 个测试函数，含既有 SCRIPT-01 SC1/SC4 全量零回归与 F7 44 条硬门槛）；白名单外零改动（本卡提交恰 4 文件：scripts/service.py、scripts/api.py、reviews/impact.py、test_scripts.py）；service 与 impact 关键路径逐行审查。",
+     "路由 1 preview 冻结行为：校验序逐条（项目 404 → 片段 404 不泄漏 → target_fragment_id != fid 为 422 mismatch → not_confirmed → source_revision_inactive → no_objects → retired 置末 → 幂等先于写）；成功 200 恰 4 字段 preview_id/kind=script_adopt/baseline/impact；零业务副作用（业务表逐行不变，只写 ChangePreview + CommandRecord，state=pending、expires_at=created_at+1800）；baseline 为 JSON 数组：片段全部 ScriptObject 按 seq 升序，链尾存在时追加一条 script_adoption ref（revision 为 null）。",
+     "路由 2 apply 冻结行为：404 形状（project/fragment/preview）→ mismatch 422 → 幂等先于状态检查（源码核对 record 查询位于 preview.state 判定之前，与 F7/T43 裁定一致）→ preview 非 pending：expired 或 pending 且 now>expires_at → 409 preview_stale 且惰性置 state=expired，applied/rejected/superseded → 409 同形且终态不改写 → CAS（expected_previous_adoption_id != 链尾 → 409 revision_conflict，object.kind=script_adoption、actual 为真实链尾或 null）→ 片段门禁重校验（失配全部收集 → 409 preview_stale + conflicts）→ baseline 比对（写事务内重读为权威，失配 → 置 state=superseded + resolved_at → 409 preview_stale + conflicts）→ 单事务写序 INSERT ScriptAdoption → INSERT ReviewDecision(target_ref 为 adoption、baseline_digest = sha256(规范化 preview.baseline)) → UPDATE preview(applied) → INSERT CommandRecord。",
+     "content_hash 冻结算法独立重算相等；apply 200 体恰冻结键（object_ref/fragment/object_revisions/content_hash/previous_adoption_id/created_at）；链式采用（previous_adoption_id 指向原链尾）与二次采用成链。",
+     "impact 三类清单：compute_script_adopt_impact 沿用 _successor_group/_raw_rows；affected = 后继组 adoption 的 shot（当前 revision）；needs_review = payload 文本含后继组 fragment id 或 adoption id 且 status 属于 pending/running 的 job，reason=frozen_input_references_previous_adoption；preservable = media_artifact(source_job_id 属于 job 组) → edit_instance(media_id) → release(poster_artifact_id)；各列表按 object_ref.id 升序、空表空列表且键不省略、缺表 OperationalError 降级为空绝不 500。",
+     "既有 compute_impact 零回归：F7–F10 共 44 条测试全绿，diff 确认既有函数体未被改动（仅 __all__ 增补一名并追加新函数）。",
+     "硬性禁止逐条（负向断言）：零 Shot/ShotRevision/StudioJob/MediaArtifact 写入（不自动生成分镜）；不改任何已存在 ScriptAdoption 行、不改 ScriptObject/ScriptRevision（旧采用不被改写，R11）。",
+     "收尾：批次 C3 全量回归 574 passed（见 observed_baselines.batch_c3_closing_regression_2026_10_15）。"
+    ],
+    "contract_question_ruling": [
+     "apply 写事务内的链尾二次复核（实现加固，非契约变更）：执行器在门禁重校验之后对 expected_previous_adoption_id 再做一次链尾比对（源码 6b 步），失配时同样 raise 409 revision_conflict(object.kind=script_adoption、actual=真实链尾)。这与步骤 6 的 CAS 判定同形、仅在写锁内提供并发防护；差异仅在中文字面 message（片段当前采用已变化，请重新预览后重试。）——冻结契约只规定 code/details 形状、未冻结 message 文案，故不升契约版本。",
+     "impact 的 job 组取全组（任意状态）而 needs_review 取交集：与既有 compute_impact 语义完全一致（preservable 需覆盖已结束 job 产出的媒体）；规格文字只冻结 needs_review 的状态过滤与 preservable 的来源链，不冲突，不升契约版本。",
+     "preview 的 200 体不含 ChangePreview.state/expires_at：规格冻结恰 4 字段（preview_id/kind/baseline/impact），state 只在 apply 阶段可观察；与 F7–F10/S4 既有预览形状一致。"
+    ],
+    "evidence": [
+     "backend/studio/scripts/service.py",
+     "backend/studio/scripts/api.py",
+     "backend/studio/reviews/impact.py",
+     "tests/studio/test_scripts.py"
+    ],
+    "limitations": [
+     "本卡不自动生成分镜（SHOT-01/02 链），只产出采用事实与影响清单。",
+     "旧采用上的 shot 输入冻结于具体 adoption：本卡只列出受影响 shot 作提示，不改写任何已冻结输入（改写属 SHOT-01-j 采用分镜版本）。"
+    ]
+   }
   },
   {
    "id": "SCRIPT-03-a",
@@ -4713,12 +4758,15 @@
      "原子落盘与探测：真实小视频经 ffmpeg 生成后 store_media 落盘，verify_integrity 为真、filename 为 '{pid}/<26位ulid>.mp4' 相对名、sha256/大小与字节一致、duration_ms 非 None；image kind 不探测（三维度 None）；篡改文件后 verify_integrity 为假；损坏文件 probe_media 抛 MediaProbeError 且无 MediaArtifact 行、无残留文件；monkeypatch os.replace 抛错 → 无行无文件（写失败无伪就绪记录）。",
      "artifact_path 对人为越界 filename 抛 ValueError；probe_media 缺文件与垃圾字节均抛 MediaProbeError。",
      "硬性禁止逐条：不写/不建 DATA_DIR/public；不 import 任何旧后端媒体模块（video_files/video_storage 等源码无引用）。",
-     "追加复验（1f31d4a）：执行器在本卡入账后补 test_probe_media_returns_exactly_five_keys（断言 probe_media 返回恰 5 键且 width/height/duration_ms 为真实解析值）并清理 store.py 未使用的 MediaProbeError 导入；主模型独立重跑 31 passed。本卡实际实现覆盖 a99d76d + 1f31d4a 两次提交。"
+     "追加复验（1f31d4a）：执行器在本卡入账后补 test_probe_media_returns_exactly_five_keys（断言 probe_media 返回恰 5 键且 width/height/duration_ms 为真实解析值）并清理 store.py 未使用的 MediaProbeError 导入；主模型独立重跑 31 passed。本卡实际实现覆盖 a99d76d + 1f31d4a 两次提交。",
+     "收尾：批次 C3 全量回归 574 passed（见 observed_baselines.batch_c3_closing_regression_2026_10_15）。"
     ],
     "contract_question_ruling": [
      "实现澄清（非契约变更）：静态 imageio_ffmpeg 不附 ffprobe，故按派发规格以 `ffmpeg -i` 的 stderr 为唯一元数据源（Duration 正则 + Video 流行解析分辨率，先剔除 0x.. 编码十六进制避免误匹配）；解析不出任何音视频流即 MediaProbeError。派发规格已冻结该做法，不升契约版本。",
      "safe_filename 额外覆盖 Windows 盘符前缀（`len>=2 and filename[1]==':'`）：规格只列举空/绝对路径/'/'/'\\\\'/'..'/NUL，盘符形式属绝对路径同类，按最保守合理解释拒绝——属加严而非放宽，不升契约版本。",
-     "MAX_MEDIA_BYTES=512MiB 系主模型补白（附录 08 §4 只给接受输入格式清单、未给上限）；已在该常量的 docstring 与派发单标注为补白处，测试用 monkeypatch 调小验证，不写真实大文件。"
+     "MAX_MEDIA_BYTES=512MiB 系主模型补白（附录 08 §4 只给接受输入格式清单、未给上限）；已在该常量的 docstring 与派发单标注为补白处，测试用 monkeypatch 调小验证，不写真实大文件。",
+     "派发单白名单标题计数笔误（已核实，不需改码）：派发单写「只允许创建/修改这 6 个文件」但实际枚举 5 条（infrastructure/__init__.py、infrastructure/media/__init__.py、infrastructure/media/probe.py、studio/media/store.py、tests/studio/test_media.py）。执行器严格只创建这 5 个，与账本 allowlist 语义一致——以枚举为准，标题计数为笔误，不升契约版本。",
+     "flush 失败不调用 session.rollback()（实现选择，不升契约版本）：store_media 删已写文件后直接 re-raise，事务归调用方掌控（与「返回行、不 commit」同一约定）；flush 已失败故 DB 无行，调用方若不 rollback 而 commit 会得到 PendingRollbackError，不会产生幽灵行——符合「写失败无伪就绪记录」。"
     ],
     "evidence": [
      "backend/infrastructure/media/probe.py",
@@ -5428,7 +5476,8 @@
      "manifest 校验逐条：非 object / schema != 'storyloom.editmanifest/v1' → field=manifest.schema rule=invalid；canvas.width/height/fps 非正整数 → field=manifest.canvas.<k> rule=invalid；instances 非数组 → field=manifest.instances rule=invalid；逐项 field 带下标精确路径（instances[0].id 等）：id/media_id 非空字符串 required、track_id==0 invalid、timeline_start_ms/source_in_ms 非负整数 invalid、source_out_ms>source_in_ms invalid、0.25≤speed≤4.0 invalid、media_id 须存在且属本项目 not_found。",
      "manifest_digest 服务端计算（冻结公式逐字核对：json.dumps(sort_keys=True, separators=(',',':'), ensure_ascii=False) + sha256）：客户端传入假值被忽略，断言等于独立重算值。",
      "CAS 与幂等：新建时 expected_revision 非 null → 422 field=expected_revision rule=invalid；已有草稿 expected_revision != 当前 cas_revision → 409 revision_conflict 带真实 expected/actual；同 command_id 同 payload → 200 原体、零新行（旧草稿行数不减）；异内容 → 422 field=command_id rule=reused。",
-     "硬性禁止逐条（负向断言）：studio_confirmed_edits 与发布表行数为 0；不改 MediaArtifact；不删旧草稿行；时间单位一律整数毫秒（无第二套单位）。instances 行与 manifest 一一对应。"
+     "硬性禁止逐条（负向断言）：studio_confirmed_edits 与发布表行数为 0；不改 MediaArtifact；不删旧草稿行；时间单位一律整数毫秒（无第二套单位）。instances 行与 manifest 一一对应。",
+     "收尾：批次 C3 全量回归 574 passed（见 observed_baselines.batch_c3_closing_regression_2026_10_15）。"
     ],
     "contract_question_ruling": [
      "InstanceDto.object_ref.id 取 instance_id（= manifest 内逻辑实例 id，跨草稿版本稳定），而非 EditInstance 行主键：派发规格未指明该 id 取哪个。行主键是每个草稿版本重建的内部代理（UQ draft_id+instance_id、新版本新行），对外引用若取行主键则同一逻辑实例跨版本会换 id——取 instance_id 才能让 object_ref 稳定可引用。冻结字段形状不变，不升契约版本。",
@@ -6039,12 +6088,15 @@
      "幂等与并发兜底：同 command_id 同内容 → 200 原 result_payload 零副作用；异内容 → 422 validation_failed(field=command_id, rule=reused)；新建写事务 IntegrityError（UQ 四元组 / UQ owner+command）→ 回滚后按同一语义确定性重判（_recover_open/_recover_post），不产生第二次写、无半写。",
      "refs 往返：null→null；合法数组→入库 JSON 文本、出参解析回数组且只留冻结三键 {kind,id,label}；非数组/非 dict 项/kind 或 id 空/label 非 str 一律 422 field=refs rule=invalid。",
      "硬性禁止逐条（负向断言）：零 Proposal 行写入；不写任何业务表（Fragment/Scene/Shot/Asset/EditDraft/Job 仅只读 SELECT）；实现源码扫描无 requests/httpx/urllib/openai/anthropic/socket/aiohttp/Proposal（不调 LLM、不发网络）。",
-     "自动接线验证：test_t47 用 app.openapi() 证明五路由经 router.py「存在即挂载」清单生效（conversations 与 conversations/{cid}/messages 各含 get+post）。"
+     "自动接线验证：test_t47 用 app.openapi() 证明五路由经 router.py「存在即挂载」清单生效（conversations 与 conversations/{cid}/messages 各含 get+post）。",
+     "收尾：批次 C3 全量回归 574 passed（见 observed_baselines.batch_c3_closing_regression_2026_10_15）。"
     ],
     "contract_question_ruling": [
      "取或建并发兜底（实现补白，非契约变更）：派发规格未要求 IntegrityError 兜底路径，执行器在写事务捕获 UQ 冲突后确定性重判（命中 command_id → 原 payload；命中四元组 → 该行 DTO）。可观察终态与冻结语义完全一致（仍旧取或建、不报 duplicate），仅把并发下的 500 变成确定性 200——属加严，不升契约版本。",
      "幂等比对经 project_id 容忍（record.project_id is None or == pid）：与 projects 域既有先例同构（CommandRecord.project_id 可空）；不改变「同 command_id 异内容 → 422 reused」的冻结判定，不升契约版本。",
-     "content 长度按原始串长判定（非 strip 后）：规格只冻结「strip 后为空 → required」与「>8000 → too_long」，二者对原始串判定与冻结文字一致；不升契约版本。"
+     "content 长度按原始串长判定（非 strip 后）：规格只冻结「strip 后为空 → required」与「>8000 → too_long」，二者对原始串判定与冻结文字一致；不升契约版本。",
+     "路由 3/4 校验序（已裁定为项目优先，与路由 5 一致）：GET /conversations/{cid} 与 GET /conversations/{cid}/messages 先判项目 404（details.kind=project）、再判会话 404（details.kind=conversation）。理由：pid 是路径第一段资源，与本项目全域名路由（projects/fragments/scripts/scopes）的既有顺序一致；跨项目 cid 在「项目优先」下返回 kind=project，与「不泄漏存在性」不冲突（两路均为 404 且 details 形状相同）。若日后要求一律 kind=conversation，需主模型统一裁定并同步全域名路由，不在本卡范围。",
+     "取或建命中已存在四元组行时不写 CommandRecord（按规格步骤 4 幂等先于步骤 5 的自然结果）：该 command_id 之后不会被识别为重放。这是「取或建」语义的正确推论——首次创建者已持有自己的 command 记录，第二次调用本就是「取」，无需再记命令；不升契约版本。"
     ],
     "evidence": [
      "backend/studio/conversations/service.py",
