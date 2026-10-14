@@ -1,6 +1,6 @@
 """Storyloom Studio — 分镜域 HTTP 路由（/api/studio/projects/{pid}/scenes*，附录 04 §2）。
 
-本卡只交付 SB1 新建场；SB2/SB3/SB4/SB7 由后续子卡填充。
+本卡交付 SB1 新建场与 SB3 场改名；SB2/SB4/SB7 由后续子卡填充。
 路由层只做请求体形态校验与重放状态码切换；业务逻辑在 storyboard/service.py。
 鉴权：core.auth.require_user（严格 Bearer，无匿名回退）。
 """
@@ -60,4 +60,30 @@ def create_scene(
     if result.pop("_replay", False):
         # 重放命中：200 原样返回首次 result_payload（覆盖 201）
         return JSONResponse(status_code=200, content=result)
+    return result
+
+
+class RenameSceneIn(BaseModel):
+    """SB3 请求体（附录 04 §2）：``name, command_id``。
+
+    **无 seq**：改名不改顺序（场就地改名、无版本，附录 04 §1）；也不接受任何
+    片段/镜头入参。
+    """
+
+    name: str
+    command_id: str
+
+
+@router.post("/projects/{pid}/scenes/{sid}/rename")
+def rename_scene(
+    pid: str, sid: str, body: RenameSceneIn, user: User = Depends(require_user)
+):
+    """SB3 场就地改名（附录 04 §2）：成功 200 场 DTO（与 SB1 同形状，恰 7 键，
+    object_ref.revision 恒 null）；同 command_id 重放亦 200（原 result_payload）。
+    **本命令成功码即 200**，故只 pop 内部 ``_replay`` 标记，不用 JSONResponse
+    覆盖 201。只改 name/updated_at：不产生 revision 行、不动 layout_cas_revision、
+    不改 seq/created_at、不生成任何镜头。"""
+    with Session() as s:
+        result = service.rename_scene(s, user, pid, sid, body.name, body.command_id)
+    result.pop("_replay", False)
     return result

@@ -1,8 +1,9 @@
 """Storyloom Studio — 分镜域服务层（附录 04 §2 命令的服务端实现）。
 
-本卡只实现 SB1 新建场（附录 04 §2，架构契约冻结）：
+本模块交付 SB1 新建场与 SB3 场改名（附录 04 §2，架构契约冻结）：
 `POST /api/studio/projects/{pid}/scenes` 只创建场行（studio_scenes），
-**不生成任何镜头**（studio_shots / studio_shot_revisions 零写）。
+`POST /api/studio/projects/{pid}/scenes/{sid}/rename` 在场行上就地改名，
+两者都**不生成任何镜头**（studio_shots / studio_shot_revisions 零写）。
 
 实现约束（冻结）：
 - 场的片段归属不落在场行上：studio_scenes 无 fragment/adoption 列（附录 04
@@ -32,7 +33,7 @@ from ..contracts.models import CommandRecord
 from ..projects.models import StudioProject
 from .models import Scene
 
-__all__ = ["create_scene"]
+__all__ = ["create_scene", "rename_scene"]
 
 # 附录 04 §1：场名 text(120)；§2 SB1 请求体 name 去空白后保存
 _NAME_MAX_LENGTH = 120
@@ -255,6 +256,115 @@ def create_scene(session, user, pid, name, seq, command_id) -> dict:
         )
         if occupied is not None and occupied != scene.id:
             raise _taken_violation(seq, occupied)
+        raise StudioAPIError.internal()
+
+    return response
+
+
+def _rename_replay_payload(record: CommandRecord, sid, name_s) -> dict | None:
+    """SB3 幂等命中判定（附录 00 §3）：命中返回首次 result_payload（附 _replay）。
+
+    一致 = 记录存在 + 首次 payload 的 object_ref.id == sid（本命令的改名目标）
+    + name == trim 后 name。不一致返回 None，由调用方映射 422 reused。
+
+    与 SB1 ``_replay_payload`` 的差异：SB1 需回读场行确认 sid 仍属本项目；
+    SB3 的校验序第 2 步已判定 sid 属本项目（不存在/跨项目一律 404），故此处
+    不重复回读场行（命中即同一行，无存在性可泄漏）。
+    """
+    payload = json.loads(record.result_payload) if record.result_payload else {}
+    ref = payload.get("object_ref") or {}
+    if ref.get("id") != sid:
+        return None
+    if payload.get("name") != name_s:
+        return None
+    return dict(payload, **{_REPLAY: True})
+
+
+def rename_scene(session, user, pid, sid, name, command_id) -> dict:
+    """SB3 场就地改名（附录 04 §2）。
+
+    校验顺序（冻结，按序短路）：
+    1. 项目不存在/非属主 → 404 not_found(kind=project, id=pid)（不泄漏存在性）；
+    2. 场不存在**或**跨项目 → 一律 404 not_found(kind=scene, id=sid)（两情形
+       同形状，不泄漏存在性）；
+    3. name：trim 后为空 → 422 validation_failed(field=name, rule=required)；
+       trim 后 > 120 → field=name, rule=max_length；**保存 trim 后的值**
+       （复用 SB1 ``_validate`` 的裁定与错误形状；无 seq 分支）；
+    4. 幂等（附录 00 §3，**先于写事务**）：(owner_id, command_id) 命中且首次
+       result_payload 的 object_ref.id == sid 且 name 一致 → 200 重放（原 body
+       附内部标记 ``_replay=True``，零写零 commit）；异内容 → 422
+       validation_failed(field=command_id, rule=reused)；
+    5. 写（**单事务**）：UPDATE 场 name（trim 后）与 updated_at=now +
+       INSERT CommandRecord（result_payload = 完整 200 体）；IntegrityError
+       （UQ owner+command 竞态）→ 回滚后命中 CommandRecord 走重放语义，否则
+       internal_error。
+
+    语义要点（附录 04 §1）：**场就地改名、无版本**——object_ref.revision 恒
+    null，**不产生任何 revision 行**（studio_scenes 本就无 revision 列）；
+    ``layout_cas_revision`` 是镜头/场布局重排的 CAS（SB7 专属），**改名不得
+    改它**；``seq`` 与 ``created_at`` 不变，仅 name 与 updated_at 变化。
+    不生成镜头、不写采用/资产/来源关系、不改其他场行、不写任何生成任务。
+    """
+    # 1) 项目（属主校验，404 不泄漏存在性）
+    project = session.scalar(select(StudioProject).where(StudioProject.id == pid))
+    if project is None or project.owner_id != user.id:
+        raise StudioAPIError.not_found("project", pid)
+
+    # 2) 场：不存在或跨项目 → 一律 404（同形状，不泄漏存在性）
+    scene = session.scalar(select(Scene).where(Scene.id == sid, Scene.project_id == pid))
+    if scene is None:
+        raise StudioAPIError.not_found("scene", sid)
+
+    # 3) name 校验（复用 SB1 裁定：seq=None 时不触发 seq 分支；保存 trim 后的值）
+    name_s = _validate(name, None)
+
+    # 4) 幂等（读查询，先于写事务）
+    record = session.scalar(
+        select(CommandRecord).where(
+            CommandRecord.owner_id == user.id,
+            CommandRecord.command_id == command_id,
+        )
+    )
+    if record is not None:
+        replay = _rename_replay_payload(record, sid, name_s)
+        if replay is not None:
+            return replay
+        raise _reused()
+
+    session.commit()  # 结束读事务；写阶段另起事务
+
+    now = time.time()
+    try:
+        with session.begin():
+            scene.name = name_s  # 保存 trim 后的值
+            scene.updated_at = now
+            session.flush()  # 让 UQ(owner_id, command_id) 在块内立刻暴露
+            response = _dto(scene)
+            session.add(
+                CommandRecord(
+                    id=make_ulid(),
+                    owner_id=user.id,
+                    project_id=pid,
+                    command_id=command_id,
+                    result_payload=json.dumps(response, ensure_ascii=False),
+                    created_at=now,
+                )
+            )
+    except IntegrityError:
+        # 上下文管理器已回滚。唯一可能的竞态是 UQ(owner_id, command_id)：
+        # 并发同 command 的赢家已写入 → 命中则按重放语义返回其 payload。
+        session.rollback()
+        raced = session.scalar(
+            select(CommandRecord).where(
+                CommandRecord.owner_id == user.id,
+                CommandRecord.command_id == command_id,
+            )
+        )
+        if raced is not None:
+            replay = _rename_replay_payload(raced, sid, name_s)
+            if replay is not None:
+                return replay
+            raise _reused()
         raise StudioAPIError.internal()
 
     return response
