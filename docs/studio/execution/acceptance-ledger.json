@@ -44,7 +44,7 @@
   "main_at_document_restructure": "c19639d",
   "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1 已随文档精简删除）；不得触碰非本用户占用端口；新 Studio 预览独占 backend=3011 / frontend=3021。2026-10-13 实测 3011/3021 空闲后由主模型临时占用验证并释放。",
   "current_checkout": "/mnt/Code/agent-orchestration/workflow/Storyloom",
-  "current_head_at_metadata_update": "9c3c53e",
+  "current_head_at_metadata_update": "e4bc7c2",
   "root01_tested_base": "bcb3eb4",
   "executor_context_limit_2026_10_13": "pation/qwen38-27b-w3a4 contextWindow=65536（本地端点 http://127.0.0.1:18982/v1 只服务该变体）。2026-10-13 批次 C 五次派发实测：累计 tool 结果 117820~154679 字节时全部以 400 \"Input plus output exceeds 65536 tokens for this model\" 失败且零产出；432 字节的探测会话正常。派发须把单卡阅读+产出控制在约 50KB 以内，或恢复更大上下文的模型变体。",
   "batch_c3_closing_regression_2026_10_15": "批次 C3 收尾全量回归（MEDIA-01/CHAT-01/EDIT-01/SCRIPT-02 四卡提交后，HEAD 1a93aa2）：.venv/bin/python -m pytest tests/studio/ -q → **574 passed, exit 0**（551s）。开工基线 460 passed → 净增 114 例（MEDIA-01 31 + CHAT-01 47 + EDIT-01 21 + SCRIPT-02 52，含既有 SCRIPT-01 用例并入同文件后的计数）。并发纪律：本批四卡执行器曾各自并发跑 pytest，共用进程单例测试库（conftest 的 STUDIO_DATA_DIR）导致一次偶发失败（CHAT-01 test_t47 '_IncludedRouter' object has no attribute 'path'），独占重跑与本次收尾全量回归均全绿——确认非实现缺陷，已在批次 C3 派发单确立「验收测试一律串行回收后执行」纪律。",
@@ -3806,12 +3806,46 @@
     "R07",
     "R11"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "behavior": "修改当前场草稿，不自动采用。",
    "allowlist_scope": "backend/studio/storyboard/service.py、backend/studio/storyboard/api.py、tests/studio/test_shots.py",
-   "attempts": [],
-   "acceptance": null
+   "attempts": [
+    {
+     "n": 1,
+     "by": "executor(kimi-coding/kimi-for-coding-highspeed)",
+     "date": "2026-10-15",
+     "result": "submitted"
+    }
+   ],
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-15",
+    "contract_version": "2.9",
+    "tested_baseline": "e4bc7c2（本卡提交，基于 dd46006）",
+    "scope": "scene_rename_sb3",
+    "checks": [
+     "主模型独立复验（不复用执行器报告）：pytest tests/studio/test_shots.py → **20 passed**（SB1 的 12 例零回归 + t13–t20 八例）；白名单外零改动（提交恰 3 文件：storyboard/{service,api}.py + test_shots.py；models.py 未改）；代码逐行审查。",
+     "校验序：项目 404（不存在/非属主同形状）→ 场 404（**不存在与跨项目同形状**，查询直接带 scene.project_id==pid）→ name trim/required/max_length 120（复用 SB1 `_validate(name, None)`，保存 trim 后值）→ 幂等（**先于写事务**；`object_ref.id==sid` 且 name 一致 → 200 原体、零写零 commit；异内容 422 field=command_id rule=reused）→ 单事务 UPDATE name+updated_at + INSERT CommandRecord；IntegrityError 竞态回滚后命中 CommandRecord 走重放语义、否则 internal_error。",
+     "成功码为 **200 而非 201**（SB3 成功即 200，与 SB1 的 201 不同）：api.py 仅 `result.pop(\"_replay\", None)` 后返回，不用 JSONResponse 覆盖 201。DTO 与 SB1 同形（恰 7 键，object_ref.revision 恒 null）。",
+     "**场就地改名无版本**：不产生任何 revision 行（studio_scenes 无 revision 列）；`layout_cas_revision` 属 SB7 镜头重排 CAS，**改名绝不改它**——t17 逐字段断言 id/project_id/seq/layout_cas_revision/created_at 全不变，仅 name 与 updated_at 变化。",
+     "硬性禁止逐条负向断言（t20）：studio_shots 与 studio_shot_revisions 行数 0；studio_jobs 行数 0；occurrences/bindings/adoptions/source_relations 零写入；另一场行逐字段不变。",
+     "幂等重放（t18）：200 原 body、updated_at **不再前移**、场行数不变；异内容（t19）422 reused。t16 覆盖 name 空/纯空白/超 121 → 422 required/max_length 且保存 trim 后值。"
+    ],
+    "contract_question_ruling": [
+     "本卡未引入新的契约歧义：SB3 在附录 04 §2 已冻结（`name, command_id` → 200），场 DTO 直接沿用上一卡（SHOT-01-a）由主模型冻结的 7 键形状——同域同形，无需另立形状。",
+     "`layout_cas_revision` 的归属在实现前即由主模型在派发单中点明（SB7 专属），执行器据此断言其不变；这属对附录 §1「layout_cas_revision：镜头重排的唯一 CAS 写入点」的忠实落实，不升契约版本。"
+    ],
+    "evidence": [
+     "backend/studio/storyboard/service.py",
+     "backend/studio/storyboard/api.py",
+     "tests/studio/test_shots.py"
+    ],
+    "limitations": [
+     "SB2 列表/详情、SB4 建镜头、SB7 重排等兄弟命令仍归 SHOT-01-c..j；本卡只交付 SB3。",
+     "改名不触发任何下游传播（无 revision、无影响清单）——这是场「就地改名、无版本」语义的直接结果，非缺失。"
+    ]
+   }
   },
   {
    "id": "SHOT-01-c",
@@ -5130,6 +5164,12 @@
      "fix": "主模型预接线：在清单加入 \"jobs.api\"（提交 9c3c53e）；JOB-02 白名单不含 router.py，故由主模型单独提交，执行器不得改。app_factory 导入与 router 语法均已验证。",
      "precedent": "2b85075 fix(studio): 预接线 relations.api 到存在即挂载清单（REL-02 路由挂载前置）",
      "impact": "JOB-03..12 与所有作业相关路由依赖该挂载；后续若新增域（如 publishing.api）同样须由主模型预接线。"
+    },
+    {
+     "date": "2026-10-15",
+     "by": "root",
+     "kind": "dispatch_observation",
+     "note": "JOB-02 执行器（kimi-for-coding-highspeed）派发后连续三轮**零文件产出**（jobs/{service,api}.py 与 test_jobs.py 均未创建），仅处于读上下文阶段；主模型已发进度询问并要求其直接开始写 service.py。作为对照，同期派发、契约更小的 SHOT-01-b 已完整交付并验收（e4bc7c2）。若下一轮仍无产出，主模型将中断该执行器并亲自实现 JOB-02（其依赖已全部 accepted：JOB-01 86587e5、DB-07/DB-08）。"
     }
    ]
   },
