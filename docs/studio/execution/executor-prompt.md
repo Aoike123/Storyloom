@@ -2,7 +2,11 @@
 
 日期：2026-10-13。执行方向：彻底重构。主模型调度时填写下面占位符；执行器每次只收到一个任务及必要摘录，不让轻量模型自行选择一批任务。完整任务见[计划书](implementation-plan.md)，数据决定见[实施契约](../architecture/domain-contracts.md)。
 
-子卡执行器模型（用户 2026-10-13 指定，同日按 profile `~/.dsh/profiles/web/cordis.patch.yml` 的实际配置同步）：派发子卡时统一显式指定 `provider=pation`、`model=qwen38-27b-w3a4`，不继承父代理路线、不设 reasoning effort。本地端点 `http://127.0.0.1:18982/v1` 当前只服务这一个模型（contextWindow 65536，默认 reasoning effort=medium）；原先记录的 `-64k`/`-128k` 后缀 id 已不存在，不得再派发。验收复核仍由主模型亲自执行（检查 diff、真跑测试）。
+子卡执行器模型（**2026-10-15 用户改选，取代 2026-10-13 的 pation 指定**）：派发子卡时统一显式指定 `provider=kimi-coding`、`model=kimi-for-coding-highspeed`（profile `~/.dsh/profiles/web/cordis.patch.yml` 中 contextWindow 262144，reasoning effort off/minimal/low/medium/high）。不继承父代理路线。验收复核仍由主模型亲自执行（检查 diff、真跑测试）。
+
+改选原因：原指定 `pation/qwen38-27b-w3a4` 为本地端点 `http://127.0.0.1:18982/v1` 唯一模型，2026-10-15 复测 `contextWindow` 仍为 65536；批次 C 首派 SCRIPT-02/MEDIA-01/VIEW-01 全部因 64k 超限零产出（见账本 `observed_baselines.executor_context_limit_2026_10_13`）。换用 262k 上下文路线后单卡预算约束解除（见文末预算节）。若日后回退 pation，须重新适用该节预算。
+
+可派发路线（同 profile，按上下文降序）：`kimi-coding/kimi-for-coding`（1048576）、`kimi-coding/kimi-for-coding-highspeed`（262144）、`deepseek-official/deepseek-flash`、`pation/qwen38-27b-w3a4`（65536，**仅限已压缩到 ~50KB 的小卡**）。
 
 派发前置检查：子代理白名单由 Harness 在**全新顶层会话**创建时采样一次并写入会话投影，之后不再重算（重启服务也不重算）。改过 profile 后必须在新 task 中派发；旧会话只能派发其投影里已允许的路线。
 
@@ -50,7 +54,7 @@
 
 本机命令约定：`pnpm` 包脚本当前不可用（store 缺失），前端类型检查/构建用 `web/node_modules/.bin/tsc --noEmit -p web/tsconfig.json` 与 `web/node_modules/.bin/next build`；`node --test` 传目录会误报失败，须用通配符或逐文件跑。后端测试自带隔离数据根，不要指向 `data/studio`。
 
-**上下文预算（2026-10-13 实测硬限）**：本地执行器模型 contextWindow = 65536 tokens，输入+输出超限直接 `400 INVALID_REQUEST`，会话即失败且零产出（批次 C 首派 SCRIPT-02/REL-02 即因此失败）。派发单与执行器都必须：
+**上下文预算 —— 仅适用于回退到 pation/qwen38-27b-w3a4（65536）时**：本地端点模型 contextWindow = 65536 tokens，输入+输出超限直接 `400 INVALID_REQUEST`，会话即失败且零产出（批次 C 首派 SCRIPT-02/MEDIA-01/VIEW-01 即因此失败）。该路线派发时，派发单与执行器都必须：
 - 不得整读超过约 400 行的文件（例如 `backend/studio/sources/fragment_service.py` 3113 行、`tests/studio/test_scripts.py` 上千行）；先用 `grep -n` 定位，再用 read 的 `offset`/`limit` 只读需要的行区间，**单次 ≤200 行**；
 - 参考实现只读对应函数段，不把整篇读入上下文；实现以派发单的冻结接口文字为准；
 - 追加测试时按用例分批写入，不整读再整体重写大测试文件；
