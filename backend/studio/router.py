@@ -67,5 +67,6 @@ for _pending in (
     "media.api",
     "edits.api",
     "conversations.api",
+    "jobs.api",
 ):
     _include_if_present(_pending)
