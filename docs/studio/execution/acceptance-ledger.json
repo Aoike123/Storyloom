@@ -44,7 +44,7 @@
   "main_at_document_restructure": "c19639d",
   "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1 已随文档精简删除）；不得触碰非本用户占用端口；新 Studio 预览独占 backend=3011 / frontend=3021。2026-10-13 实测 3011/3021 空闲后由主模型临时占用验证并释放。",
   "current_checkout": "/mnt/Code/agent-orchestration/workflow/Storyloom",
-  "current_head_at_metadata_update": "2001765",
+  "current_head_at_metadata_update": "bf216ea",
   "root01_tested_base": "bcb3eb4",
   "executor_context_limit_2026_10_13": "pation/qwen38-27b-w3a4 contextWindow=65536（本地端点 http://127.0.0.1:18982/v1 只服务该变体）。2026-10-13 批次 C 五次派发实测：累计 tool 结果 117820~154679 字节时全部以 400 \"Input plus output exceeds 65536 tokens for this model\" 失败且零产出；432 字节的探测会话正常。派发须把单卡阅读+产出控制在约 50KB 以内，或恢复更大上下文的模型变体。",
   "batch_c3_closing_regression_2026_10_15": "批次 C3 收尾全量回归（MEDIA-01/CHAT-01/EDIT-01/SCRIPT-02 四卡提交后，HEAD 1a93aa2）：.venv/bin/python -m pytest tests/studio/ -q → **574 passed, exit 0**（551s）。开工基线 460 passed → 净增 114 例（MEDIA-01 31 + CHAT-01 47 + EDIT-01 21 + SCRIPT-02 52，含既有 SCRIPT-01 用例并入同文件后的计数）。并发纪律：本批四卡执行器曾各自并发跑 pytest，共用进程单例测试库（conftest 的 STUDIO_DATA_DIR）导致一次偶发失败（CHAT-01 test_t47 '_IncludedRouter' object has no attribute 'path'），独占重跑与本次收尾全量回归均全绿——确认非实现缺陷，已在批次 C3 派发单确立「验收测试一律串行回收后执行」纪律。",
@@ -5239,11 +5239,52 @@
     "R08",
     "R11"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "allowlist_scope": "backend/studio/jobs/runner.py、backend/studio/jobs/worker_main.py、tests/studio/test_job_runner.py",
-   "attempts": [],
-   "acceptance": null
+   "attempts": [
+    {
+     "n": 1,
+     "by": "主模型",
+     "date": "2026-10-15",
+     "result": "派发被 Harness active-child 上限（6）拒绝（三个在途卡占满），主模型亲自实现"
+    }
+   ],
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-15",
+    "contract_version": "2.9",
+    "tested_baseline": "bf216ea（本卡提交，基于 ea45d7d）",
+    "scope": "worker_lease_claim_recovery",
+    "checks": [
+     "主模型独立复验（主模型亲自实现）：pytest tests/studio/test_job_runner.py → **14 passed**；RETIRE-01 守卫 exit 0；白名单外零改动（提交恰 3 文件，均为新建）。",
+     "**互斥（卡面「两个 worker 不会同时执行同 attempt」）**：claim 实现为**单语句条件 UPDATE**，以 `rowcount == 1` 仲裁；候选条件为 `status='pending'` 或 `status='running' 且 lease_expires_at < now`。t1 断言两个 runner（A/B）依次 claim 同一 pending job 时**恰一个**成功、处理器只被调用一次、`attempts` 只 +1、`job_attempts` 恰 1 行；t2 断言租约仍有效时第二个 worker 抢不到。**明确拒绝「先 SELECT 再 UPDATE」两步写法**（那有竞态窗口），实现与 docstring 均写明。",
+     "**过期 claim 不能写当前结果**：写终态前 `_holds_lease()` 再校验「owner==本 worker ∧ status=='running' ∧ lease 未过期」；失配即返回 `\"lease_lost\"` 并**丢弃结果**（不写 job 终态、不写 attempt 终态、不发事件）。t4 构造「A 持租约但已过期且租约已被 B 抢走」的滞留场景 → A 调 `_finish` 返回 lease_lost，且 job 仍为 running、lease_owner 仍为 B（未被 A 抢回）。",
+     "**崩溃恢复不盲目重发收费请求（R08）**：若该 job 任一 attempt 已有 `provider_request_id`，`resume()` 以 `ctx.resume=True` 调用处理器——处理器据此**只走轮询路径**。t5 用注入处理器分别计 submit/poll 次数，断言 **poll==1 且 submit==0**；无厂商号且结果不确定 → attempt `status='indeterminate'`、job **停在 running**（不置 succeeded/failed）、发 `JobEvent(type='indeterminate')`、attempts 不再自增（t6，不自动重试）。",
+     "租约与心跳常量按附录 09 §5 冻结：`LEASE_SECONDS=60.0`、`HEARTBEAT_SECONDS=15.0`；`heartbeat()` 仅**持有者**可续期（t11 断言非持有者返回 False、持有者续期后 lease_expires_at == now+60）。",
+     "执行与状态：处理器返回 succeeded → job `succeeded`、`finished_at` 非空、租约释放、attempt `succeeded`、`provider_request_id`/`usage` 落库、发 succeeded 事件（t7）；处理器抛异常 → job `failed` + `last_error` 含异常类型、attempt `failed`、发 failed 事件，**不炸 worker**（t8）；未注册 kind → job `failed` 且 `last_error` 含「无处理器」（t9）。",
+     "`default_handlers()` 覆盖 DB CheckConstraint 冻结的全部 5 个 kind；桩处理器**明确 failed/indeterminate、绝不假装成功**（t10 逐 kind 断言 status=='failed'）——真正生成逻辑归 JOB-08/09/11/12，本卡不得伪造生成结果。",
+     "`worker_main.main([\"--max-iterations\",\"1\",\"--worker-id\",\"w-test\"])` 无 pending job 时返回 0（t12）；**import 无副作用**（模块内无 init_db/create_all，t13）；不复用旧 `backend.worker`。",
+     "R11 无旧依赖：t14 **复用 RETIRE-01 的 AST 守卫**（scripts/check_legacy_deps.py）断言 `backend/studio/jobs/**` 零旧后端 import——不使用字符串匹配（字符串匹配会把 docstring 中「不复用旧 worker」的说明误判为依赖，这正是守卫选 AST 的原因）。"
+    ],
+    "contract_question_ruling": [
+     "**claim 的原子性实现（主模型冻结）**：以「条件 UPDATE 的 rowcount」为唯一仲裁依据，而不是「先查后写」。SQLite 下单语句 UPDATE 的 `WHERE` 求值与写入在同一语句内完成，且写事务获取写锁（与 SOURCE-03 的 F1「写事务首语句即抢锁」同一机制），因此两个 worker 不会同时把同一行置为自己。t1/t2 为该语义的直接证据。不升契约版本。",
+     "**indeterminate 时租约的处置（主模型裁定）**：结果不确定时 job 停在 `running` 且**不释放租约**（保持 worker 的占有，避免另一个 worker 立刻重跑同一收费请求）。后续由「人工确认重试」入口（JOB-05/07）显式接管——与附录 §4「无厂商号 → 不自动重试；job 详情显示『结果不确定，已保留记录』+ 人工确认重试按钮」一致。不升契约版本。",
+     "**桩处理器的取向**：本卡只证明「按 kind 注册 + 执行/恢复骨架」可用，故桩一律失败/不确定；这保证**不可能**因骨架卡而产出伪造的生成结果。真实处理器卡（JOB-08/09/11/12）接入时替换 `default_handlers()` 对应项即可，骨架无需改动。",
+     "**`resume()` 的粒度**：本卡以「该 job 任一 attempt 有 provider_request_id」判定走轮询；更细的并发恢复（同 job 多 attempt 交错）留待具体处理器卡按其厂商协议处理，骨架只保证「有号就不重提」这一不可违背的底线。"
+    ],
+    "evidence": [
+     "backend/studio/jobs/runner.py",
+     "backend/studio/jobs/worker_main.py",
+     "tests/studio/test_job_runner.py"
+    ],
+    "limitations": [
+     "未接真实供应商协议：本卡不含任何生成/转码/导出/发布逻辑，`default_handlers()` 为显式桩。",
+     "未实现 SSE/事件推送（JOB-04）、重试/取消/重做命令（JOB-05/06/07）与人工确认重试入口；本卡只提供 `resume()` 底座。",
+     "未做真实多进程/多机并发压测：互斥以单语句 UPDATE + 写锁保证，证据为单进程内两 runner 的行为断言；真实多 worker 压测归 GATE-03 新任务/agent 执行门。",
+     "os.fsync 级持久性、进程被 kill -9 后的租约残留行为未测（租约过期即可重抢，属设计内的恢复手段）。"
+    ]
+   }
   },
   {
    "id": "JOB-04",
