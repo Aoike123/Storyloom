@@ -44,7 +44,7 @@
   "main_at_document_restructure": "c19639d",
   "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1 已随文档精简删除）；不得触碰非本用户占用端口；新 Studio 预览独占 backend=3011 / frontend=3021。2026-10-13 实测 3011/3021 空闲后由主模型临时占用验证并释放。",
   "current_checkout": "/mnt/Code/agent-orchestration/workflow/Storyloom",
-  "current_head_at_metadata_update": "e23da29",
+  "current_head_at_metadata_update": "9c3c53e",
   "root01_tested_base": "bcb3eb4",
   "executor_context_limit_2026_10_13": "pation/qwen38-27b-w3a4 contextWindow=65536（本地端点 http://127.0.0.1:18982/v1 只服务该变体）。2026-10-13 批次 C 五次派发实测：累计 tool 结果 117820~154679 字节时全部以 400 \"Input plus output exceeds 65536 tokens for this model\" 失败且零产出；432 字节的探测会话正常。派发须把单卡阅读+产出控制在约 50KB 以内，或恢复更大上下文的模型变体。",
   "batch_c3_closing_regression_2026_10_15": "批次 C3 收尾全量回归（MEDIA-01/CHAT-01/EDIT-01/SCRIPT-02 四卡提交后，HEAD 1a93aa2）：.venv/bin/python -m pytest tests/studio/ -q → **574 passed, exit 0**（551s）。开工基线 460 passed → 净增 114 例（MEDIA-01 31 + CHAT-01 47 + EDIT-01 21 + SCRIPT-02 52，含既有 SCRIPT-01 用例并入同文件后的计数）。并发纪律：本批四卡执行器曾各自并发跑 pytest，共用进程单例测试库（conftest 的 STUDIO_DATA_DIR）导致一次偶发失败（CHAT-01 test_t47 '_IncludedRouter' object has no attribute 'path'），独占重跑与本次收尾全量回归均全绿——确认非实现缺陷，已在批次 C3 派发单确立「验收测试一律串行回收后执行」纪律。",
@@ -5109,7 +5109,18 @@
    "dispatchable": false,
    "allowlist_scope": "backend/studio/jobs/service.py、backend/studio/jobs/api.py、tests/studio/test_jobs.py",
    "attempts": [],
-   "acceptance": null
+   "acceptance": null,
+   "implementation_notes": [
+    {
+     "date": "2026-10-15",
+     "by": "root",
+     "kind": "dispatch_prewire",
+     "issue": "router.py 的「存在即挂载」清单原先**不含 jobs.api**（仅 storyboard/scripts/assets/relations/media/edits/conversations），若 JOB-02 直接交付 jobs/api.py，其作业提交路由会被静默丢弃（文件存在但从不 include_router）——与 REL-02 遇到的同类缺陷。",
+     "fix": "主模型预接线：在清单加入 \"jobs.api\"（提交 9c3c53e）；JOB-02 白名单不含 router.py，故由主模型单独提交，执行器不得改。app_factory 导入与 router 语法均已验证。",
+     "precedent": "2b85075 fix(studio): 预接线 relations.api 到存在即挂载清单（REL-02 路由挂载前置）",
+     "impact": "JOB-03..12 与所有作业相关路由依赖该挂载；后续若新增域（如 publishing.api）同样须由主模型预接线。"
+    }
+   ]
   },
   {
    "id": "JOB-03",
