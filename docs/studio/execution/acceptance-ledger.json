@@ -4870,9 +4870,20 @@
    ],
    "status": "planned",
    "dispatchable": false,
-   "allowlist_scope": "backend/infrastructure/providers/client.py、backend/infrastructure/providers/protocols.py、tests/studio/test_provider_adapter.py",
+   "allowlist_scope": "backend/infrastructure/providers/base.py、backend/infrastructure/providers/llm.py、backend/infrastructure/providers/image.py、backend/infrastructure/providers/video.py、tests/studio/test_provider_adapter.py",
    "attempts": [],
-   "acceptance": null
+   "acceptance": null,
+   "implementation_notes": [
+    {
+     "date": "2026-10-15",
+     "by": "root",
+     "kind": "allowlist_correction_no_contract_change",
+     "was": "backend/infrastructure/providers/client.py、backend/infrastructure/providers/protocols.py、tests/studio/test_provider_adapter.py",
+     "now": "backend/infrastructure/providers/base.py、backend/infrastructure/providers/llm.py、backend/infrastructure/providers/image.py、backend/infrastructure/providers/video.py、tests/studio/test_provider_adapter.py",
+     "basis": "附录 09 §5「供应商适配器抽取白名单」（ROOT-04 冻结，2026-10-04）逐行冻结新模块名为 base.py / llm.py / image.py / video.py；卡面（spec 05-jobs-media.md 与账本 allowlist）写的 client.py / protocols.py 不出现在任何冻结模块清单中。按 docs/studio/README.md「工程落实由架构契约定义；发现冲突先由主模型修正规范或契约并标记受影响任务」，修正**卡面 allowlist** 以对齐架构契约（不改契约本体、不升契约版本 2.9）。",
+     "impact": "JOB-01 之后的所有 provider 消费卡（JOB-08 图片处理器、JOB-09-a 视频、JOB-11 剧本、JOB-12 分镜、CHAT-02）必须按上表四个模块名 import；派发时以本 allowlist 为准。"
+    }
+   ]
   },
   {
    "id": "JOB-02",
