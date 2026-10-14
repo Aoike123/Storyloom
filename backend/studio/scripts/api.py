@@ -1,6 +1,7 @@
 """Storyloom Studio — 剧本域 HTTP 路由（/api/studio/projects/{pid}/script-objects*，附录 03 §2）。
 
-SCRIPT-01-a 逐子卡填充路由（本卡只实现 SC1 POST /projects/{pid}/script-objects）。
+SCRIPT-01-a / SCRIPT-02 逐子卡填充路由（SC1 POST /projects/{pid}/script-objects、
+SC4 POST .../revise、SC6 POST .../fragments/{fid}/script-adopt[/apply]）。
 路由层只做请求体形态校验与重放状态码切换；业务逻辑在 scripts/service.py。
 鉴权：core.auth.require_user（严格 Bearer，无匿名回退）。
 """
@@ -108,3 +109,77 @@ def revise_script_object(
         )
     result.pop("_replay", None)  # 成功与重放同为 200，仅弹内部标记
     return result
+
+
+class ScriptAdoptPreviewIn(BaseModel):
+    """SC6 preview 请求体（附录 03 §2）：target_fragment_id 必与路径片段一致。"""
+
+    target_fragment_id: str
+    command_id: str
+
+
+class ExpectedObjectRevisionIn(BaseModel):
+    """SC6 apply 的对象快照项（附录 03 §1 object_revisions 格式）。"""
+
+    object_id: str
+    revision: int
+    seq: int
+    kind: str
+
+
+class ScriptAdoptApplyIn(BaseModel):
+    """SC6 apply 请求体（附录 03 §2）：
+
+    expected_previous_adoption_id 可 null（首个采用）；expected_object_revisions
+    为 preview 基准的对象快照（写事务内重读逐项全等比对）。
+    """
+
+    preview_id: str
+    command_id: str
+    expected_previous_adoption_id: str | None = None
+    expected_object_revisions: list[ExpectedObjectRevisionIn]
+
+
+@router.post("/projects/{pid}/fragments/{fid}/script-adopt")
+def preview_script_adopt(
+    pid: str, fid: str, body: ScriptAdoptPreviewIn, user: User = Depends(require_user)
+):
+    """SC6 预览采用剧本 revision：200 恰 4 字段 {preview_id, kind, baseline, impact}
+    （00 §5.1；preview 是一次幂等写：只写 ChangePreview + CommandRecord，零业务副作用）；
+    幂等重放命中 → 200 原 result_payload（零写零 commit）。"""
+    with Session() as s:
+        result = service.preview_script_adopt(
+            s, user, pid, fid, body.target_fragment_id, body.command_id
+        )
+    result.pop("_replay", None)  # 成功与重放同为 200，仅弹内部标记
+    return JSONResponse(status_code=200, content=result)
+
+
+@router.post("/projects/{pid}/fragments/{fid}/script-adopt/apply")
+def apply_script_adopt(
+    pid: str, fid: str, body: ScriptAdoptApplyIn, user: User = Depends(require_user)
+):
+    """SC6 应用采用：200 新 ScriptAdoption DTO（链尾）；不自动生成分镜、不改任何
+    已冻结镜头输入与既有 adoption/对象/版本行；幂等重放命中 → 200 原 result_payload。"""
+    expected = [
+        {
+            "object_id": m.object_id,
+            "revision": m.revision,
+            "seq": m.seq,
+            "kind": m.kind,
+        }
+        for m in body.expected_object_revisions
+    ]
+    with Session() as s:
+        result = service.apply_script_adopt(
+            s,
+            user,
+            pid,
+            fid,
+            body.preview_id,
+            body.command_id,
+            body.expected_previous_adoption_id,
+            expected,
+        )
+    result.pop("_replay", None)  # 成功与重放同为 200，仅弹内部标记
+    return JSONResponse(status_code=200, content=result)

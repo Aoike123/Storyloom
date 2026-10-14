@@ -1,7 +1,10 @@
 """Storyloom Studio — 剧本域服务层（附录 03 §2 命令的服务端实现）。
 
-SCRIPT-01-a 逐子卡填充（本卡只实现其唯一命令）：
+SCRIPT-01-a / SCRIPT-02 逐子卡填充（本卡实现 SC1/SC4 与 SC6）：
 SC1 新建剧本草稿对象（action/dialogue），记录出处，不采用。
+SC4 修订当前草稿（追加 revision），不触碰采用。
+SC6 采用片段剧本 revision（preview/apply），新增 ScriptAdoption（链尾），
+不自动生成分镜、不改任何已冻结镜头输入。
 
 实现约束（冻结）：
 - 建立对象 = 真实写入 ScriptObject + ScriptRevision（revision=1，
@@ -15,20 +18,29 @@ SC1 新建剧本草稿对象（action/dialogue），记录出处，不采用。
 - id 全部服务端 ULID（core.db.make_ulid），客户端永不生成实体 ID；
 - 错误一律 raise StudioAPIError（冻结错误协议，附录 00 §4）。
 """
+import hashlib
 import json
 import time
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from ...core.db import make_ulid
 from ..contracts.errors import StudioAPIError
 from ..contracts.models import CommandRecord
 from ..projects.models import StudioProject
+from ..reviews.impact import compute_script_adopt_impact
+from ..reviews.models import ChangePreview, ReviewDecision
 from ..sources.fragment_models import Fragment, FragmentRevision
-from .models import ScriptObject, ScriptRevision
+from .models import ScriptAdoption, ScriptObject, ScriptRevision
 
-__all__ = ["create_script_object", "revise_script_object", "_UNSET"]
+__all__ = [
+    "create_script_object",
+    "revise_script_object",
+    "preview_script_adopt",
+    "apply_script_adopt",
+    "_UNSET",
+]
 
 # 附录 03 §1 CHECK 冻结枚举：动作/对白
 _KINDS = ("action", "dialogue")
@@ -658,3 +670,582 @@ def revise_script_object(
         raise StudioAPIError.internal()
 
     return response
+
+
+# ─────────────── SC6 采用剧本 revision（preview/apply，附录 03 §2 + 00 §5） ───────────────
+
+# 预览 TTL 30 分钟（附录 07 RV1：服务层计算后写入；与 F7–F10 同值）
+_PREVIEW_TTL = 1800
+
+# 片段门禁 reason → 面向用户 message（preview 步骤 4~7，按序短路）
+_GATE_MESSAGES = {
+    "not_confirmed": "该片段尚未确认，不能采用剧本 revision。",
+    "source_revision_inactive": (
+        "该片段绑定的正文版本不是项目当前活跃版本，不能采用剧本 revision。"
+    ),
+    "no_objects": "该片段下没有剧本对象，不能采用。",
+    "retired": "该片段已退役，不能采用剧本 revision。",
+}
+
+# apply 片段门禁重校验失配项形状（preview_stale.conflicts 项；规格未冻结该项
+# 形状，取最接近既有 F7–F10 conflicts 的 {object, expected, actual} 三键形状：
+# object 恒为相关对象 ref；not_confirmed/retired 的 expected/actual 为片段状态，
+# source_revision_inactive 为正文版本 id，no_objects 为存在性标记）。
+_GATE_CONFLICT_MSG = "片段状态已变化，请重新预览。"
+
+
+def _adoption_tail(session, fragment_id: str):
+    """片段当前采用 = 采用链链尾（附录 03 §1：按 created_at 取该 fragment 最新行；
+    ULID 单调，同刻以 id 降序兜底）。无采用 → None。"""
+    return session.scalars(
+        select(ScriptAdoption)
+        .where(ScriptAdoption.fragment_id == fragment_id)
+        .order_by(ScriptAdoption.created_at.desc(), ScriptAdoption.id.desc())
+        .limit(1)
+    ).first()
+
+
+def _fragment_current_revision(session, frag) -> int:
+    """片段当前 revision 号（current_revision_id 为 NOT NULL FK，缺失 = 数据损坏）。"""
+    rv = session.get(FragmentRevision, frag.current_revision_id)
+    if rv is None:  # 理论上不可达
+        raise StudioAPIError.internal()
+    return rv.revision
+
+
+def _has_script_objects(session, fragment_id: str) -> bool:
+    return (
+        session.scalar(
+            select(ScriptObject.id)
+            .where(ScriptObject.fragment_id == fragment_id)
+            .limit(1)
+        )
+        is not None
+    )
+
+
+def _script_adopt_gate(session, project, frag, current_revision) -> list[tuple[str, dict]]:
+    """SC6 片段门禁（preview 步骤 4~7 的**全部**失配项，不短路，按冻结顺序）。
+
+    4. state != 'confirmed'（**retired 除外，置末**）→ not_confirmed；
+    5. source_revision_id != project.active_source_revision_id → source_revision_inactive；
+    6. 片段下无 ScriptObject → no_objects；
+    7. state == 'retired' → retired（置末）。
+
+    每项 details.blocked_by 形状冻结 = {"kind":"fragment","id":fid,"revision":current}。
+    """
+    blocked_by = {"kind": "fragment", "id": frag.id, "revision": current_revision}
+    failures: list[tuple[str, dict]] = []
+    if frag.state not in ("confirmed", "retired"):
+        failures.append(("not_confirmed", blocked_by))
+    if frag.source_revision_id != project.active_source_revision_id:
+        failures.append(("source_revision_inactive", blocked_by))
+    if not _has_script_objects(session, frag.id):
+        failures.append(("no_objects", blocked_by))
+    if frag.state == "retired":
+        failures.append(("retired", blocked_by))
+    return failures
+
+
+def _gate_conflict(reason: str, frag, project) -> dict:
+    """apply 片段门禁重校验的单个失配项（preview_stale.conflicts 项）。"""
+    if reason == "not_confirmed":
+        return {
+            "object": {"kind": "fragment", "id": frag.id},
+            "expected": "confirmed",
+            "actual": frag.state,
+        }
+    if reason == "source_revision_inactive":
+        return {
+            "object": {"kind": "source", "id": project.active_source_revision_id},
+            "expected": project.active_source_revision_id,
+            "actual": frag.source_revision_id,
+        }
+    if reason == "no_objects":
+        return {
+            "object": {"kind": "fragment", "id": frag.id},
+            "expected": "objects_present",
+            "actual": "no_objects",
+        }
+    return {  # retired（置末）
+        "object": {"kind": "fragment", "id": frag.id},
+        "expected": "confirmed",
+        "actual": "retired",
+    }
+
+
+def _baseline_conflicts(expected: list, actual: list) -> list[dict]:
+    """expected_object_revisions 与权威快照逐项全等（object_id/revision/seq/kind）比对，
+    返回**全部**失配项（规格未冻结该项形状：expected/actual 取整条快照项，
+    object.id 取可解析一侧的 object_id）。"""
+    conflicts: list[dict] = []
+    for i in range(max(len(expected), len(actual))):
+        e = expected[i] if i < len(expected) else None
+        a = actual[i] if i < len(actual) else None
+        if e != a:
+            ref = a if isinstance(a, dict) else (e if isinstance(e, dict) else {})
+            conflicts.append(
+                {
+                    "object": {
+                        "kind": "script_object",
+                        "id": ref.get("object_id") or "",
+                    },
+                    "expected": e,
+                    "actual": a,
+                }
+            )
+    return conflicts
+
+
+def _script_object_snapshot(session, fragment_id: str) -> tuple[list[dict], str]:
+    """片段全部对象按 seq 升序的权威快照 + content_hash（冻结算法）。
+
+    快照项 = {"object_id","revision","seq","kind"}（= ScriptAdoption.object_revisions
+    与 apply 200 DTO 的 object_revisions 格式，附录 03 §1）；
+    content_hash = sha256(按 seq 拼接 f"{revision}:{sha256(text.encode('utf-8'))}")
+    （附录 03 §1 冻结指纹）。不写任何行；revision 缺失（数据损坏）→ internal_error。
+    """
+    objs = session.scalars(
+        select(ScriptObject)
+        .where(ScriptObject.fragment_id == fragment_id)
+        .order_by(ScriptObject.seq)
+    ).all()
+    snapshot: list[dict] = []
+    parts: list[str] = []
+    for o in objs:
+        rev = session.get(ScriptRevision, o.current_revision_id)
+        if rev is None:  # 理论上不可达
+            raise StudioAPIError.internal()
+        snapshot.append(
+            {"object_id": o.id, "revision": rev.revision, "seq": o.seq, "kind": o.kind}
+        )
+        parts.append(
+            f"{rev.revision}:{hashlib.sha256(rev.text.encode('utf-8')).hexdigest()}"
+        )
+    content_hash = hashlib.sha256("".join(parts).encode("utf-8")).hexdigest()
+    return snapshot, content_hash
+
+
+def preview_script_adopt(
+    session, user, pid, fid, target_fragment_id, command_id
+) -> dict:
+    """SC6 预览采用片段剧本 revision（附录 03 §2 SC6 + 00 §5；preview 本身是一次
+    幂等写：只写 ChangePreview + CommandRecord，**零业务副作用**）。
+
+    校验顺序（冻结，按序短路）：
+    1. 项目不存在/非属主 → 404 not_found(kind=project)（不泄漏）；
+    2. 片段不存在/跨项目 → 404 not_found(kind=fragment)（不泄漏）；
+    3. target_fragment_id != fid → 422 validation_failed(field=target_fragment_id,
+       rule=mismatch)；
+    4.~7. 片段门禁（_script_adopt_gate，按序短路：not_confirmed →
+       source_revision_inactive → no_objects → retired），命中 → 422
+       precondition_failed{reason, blocked_by={fragment,fid,current}}；
+    8. 幂等（00 §3，先于写）：同 (owner, command_id) 且首次 preview 行的
+       payload.target_fragment_id == fid → 200 原 result_payload（附内部标记
+       ``_replay=True``，零写零 commit）；异内容 → 422 validation_failed
+       (field=command_id, rule=reused)。首次 preview 的 target 只持久在
+       ChangePreview.payload（200 体不含该字段），故从该行取证比对。
+
+    baseline（冻结、确定性）= JSON 数组：片段全部对象按 seq 升序的
+    {kind:'script_object', id, revision} + （若已有采用）末尾链尾
+    {kind:'script_adoption', id, revision:null}。
+    impact = compute_script_adopt_impact(session, pid, fid)（三类清单）。
+
+    返回 200 体，**恰 4 字段**：``{preview_id, kind:'script_adopt', baseline,
+    impact}``（记录 state=pending 不外露）；重放附 ``_replay=True``。
+    """
+    # 1) 项目（属主校验，404 不泄漏存在性）
+    project = session.scalar(select(StudioProject).where(StudioProject.id == pid))
+    if project is None or project.owner_id != user.id:
+        raise StudioAPIError.not_found("project", pid)
+
+    # 2) 片段：不存在或不属本项目 → 一律 404（不泄漏存在性）
+    frag = session.scalar(
+        select(Fragment).where(Fragment.id == fid, Fragment.project_id == pid)
+    )
+    if frag is None:
+        raise StudioAPIError.not_found("fragment", fid)
+
+    # 3) target 必须与路径片段一致
+    if target_fragment_id != fid:
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "target_fragment_id",
+                    "rule": "mismatch",
+                    "message": "target_fragment_id 必须与路径片段一致。",
+                }
+            ]
+        )
+
+    current = _fragment_current_revision(session, frag)
+
+    # 4~7) 片段门禁（按序短路：命中首个即 422 precondition_failed）
+    failures = _script_adopt_gate(session, project, frag, current)
+    if failures:
+        reason, blocked_by = failures[0]
+        raise StudioAPIError.precondition_failed(
+            reason, blocked_by, _GATE_MESSAGES[reason]
+        )
+
+    # 8) 幂等（冻结顺序：门禁之后、写之前）
+    record = session.scalar(
+        select(CommandRecord).where(
+            CommandRecord.owner_id == user.id,
+            CommandRecord.command_id == command_id,
+        )
+    )
+    if record is not None:
+        payload = json.loads(record.result_payload) if record.result_payload else {}
+        prev = (
+            session.get(ChangePreview, payload["preview_id"])
+            if payload.get("kind") == "script_adopt" and payload.get("preview_id")
+            else None
+        )
+        prev_payload = (
+            json.loads(prev.payload) if prev is not None and prev.payload else {}
+        )
+        if (
+            prev is not None
+            and prev.project_id == pid
+            and prev_payload.get("target_fragment_id") == fid
+        ):
+            # 重放：返回首次 result_payload，零写零 commit
+            return dict(payload, _replay=True)
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "command_id",
+                    "rule": "reused",
+                    "message": "command_id 已被其他命令使用，请生成新的。",
+                }
+            ]
+        )
+
+    # 读事务快照：baseline（对象按 seq 升序 + 链尾 adoption ref）+ impact
+    snapshot, _ = _script_object_snapshot(session, fid)
+    baseline = [
+        {"kind": "script_object", "id": o["object_id"], "revision": o["revision"]}
+        for o in snapshot
+    ]
+    tail = _adoption_tail(session, fid)
+    if tail is not None:
+        baseline.append(
+            {"kind": "script_adoption", "id": tail.id, "revision": None}
+        )
+    impact = compute_script_adopt_impact(session, pid, fid)
+    session.commit()  # 结束读事务；写阶段另起事务
+
+    # 9) 写事务：preview 是一次幂等写（单事务 + CommandRecord，无半次保存）
+    now = time.time()
+    preview_id = make_ulid()
+    body = {
+        "preview_id": preview_id,
+        "kind": "script_adopt",
+        "baseline": baseline,
+        "impact": impact,
+    }
+    with session.begin():
+        session.add(
+            ChangePreview(
+                id=preview_id,
+                project_id=pid,
+                owner_id=user.id,
+                kind="script_adopt",
+                payload=json.dumps({"target_fragment_id": fid}, ensure_ascii=False),
+                baseline=json.dumps(baseline, ensure_ascii=False, sort_keys=True),
+                impact=json.dumps(impact, ensure_ascii=False, sort_keys=True),
+                state="pending",
+                decision_id=None,
+                created_at=now,
+                resolved_at=None,
+                expires_at=now + _PREVIEW_TTL,
+            )
+        )
+        session.add(
+            CommandRecord(
+                id=make_ulid(),
+                owner_id=user.id,
+                project_id=pid,
+                command_id=command_id,
+                result_payload=json.dumps(body, ensure_ascii=False),
+                created_at=now,
+            )
+        )
+    return body
+
+
+def apply_script_adopt(
+    session,
+    user,
+    pid,
+    fid,
+    preview_id,
+    command_id,
+    expected_previous_adoption_id,
+    expected_object_revisions,
+) -> dict:
+    """SC6 应用采用（附录 03 §2 SC6 + 00 §5）：新增一条 ScriptAdoption（链尾），
+    **不自动生成分镜**、不改任何已冻结镜头输入、不改既有 adoption/对象/版本行。
+
+    校验顺序（冻结，按序短路）：
+    1. 项目 404；2. 片段 404（形状同 preview 步骤 1/2）；
+    3. preview 不存在/跨项目 → 404 not_found(kind=preview)；kind != 'script_adopt'
+       或 payload.target_fragment_id != fid → 422 validation_failed
+       (field=target_fragment_id, rule=mismatch，同 F7 apply 步骤 3 形状)；
+    4. 幂等（00 §3；**先于状态检查**——原命令重放不受预览终态阻断，F7/T43 惯例）：
+       同 (owner, command_id) 且首次 payload object_ref.kind=='script_adoption'、
+       fragment.id==fid、previous_adoption_id==expected_previous_adoption_id → 200
+       原 result_payload（零写零 commit）；异内容 → 422 validation_failed
+       (field=command_id, rule=reused)；
+    5. preview 非 pending（或已过 TTL）→ 409 preview_stale{preview_id,
+       conflicts:[{object:{preview,id}, expected:'pending', actual}]}：'expired' 或
+       (pending 且 now>expires_at) → actual='expired' 并**惰性置 state='expired'**；
+       'applied'/'rejected'/'superseded' → actual=该 state（终态不可逆，不再改写）；
+    6. CAS：expected_previous_adoption_id != 当前链尾 id → 409 revision_conflict
+       （object={kind:'script_adoption', id:链尾 id 或 ""}，expected/actual 真实值）；
+    7. 片段门禁重校验（preview 步骤 4~7 全部；写事务内以权威值为准；任一失配 →
+       409 preview_stale，conflicts 列出全部失配项）；
+    8. baseline 比对（**写事务内重读为权威**）：expected_object_revisions 与当前
+       片段全部对象按 seq 升序的快照逐项全等（object_id/revision/seq/kind）失配 →
+       409 preview_stale{preview_id, conflicts:[全部失配项]} 且 preview 置
+       state='superseded' + resolved_at；
+    9. 写（**单事务，无半次保存**；写序照 F7 apply）：
+       INSERT ScriptAdoption → INSERT ReviewDecision(decision='applied', preview_id,
+       target_ref={kind:'script_adoption',id:新id,revision:null},
+       baseline_digest=sha256(规范化 preview.baseline)) → UPDATE preview(state='applied',
+       resolved_at, decision_id) → INSERT CommandRecord(result_payload=完整 200 体)。
+
+    返回 200 体（新 adoption DTO，字段冻结）：
+    ``{object_ref:{kind:'script_adoption',id,revision:null}, fragment:{kind:'fragment',
+    id:fid,revision}, object_revisions:[{object_id,revision,seq,kind}], content_hash,
+    previous_adoption_id, created_at}``；重放附 ``_replay=True``。
+    """
+    # 1) 项目（属主校验，404 不泄漏存在性）
+    project = session.scalar(select(StudioProject).where(StudioProject.id == pid))
+    if project is None or project.owner_id != user.id:
+        raise StudioAPIError.not_found("project", pid)
+
+    # 2) 片段：不存在或不属本项目 → 一律 404（不泄漏存在性）
+    frag = session.scalar(
+        select(Fragment).where(Fragment.id == fid, Fragment.project_id == pid)
+    )
+    if frag is None:
+        raise StudioAPIError.not_found("fragment", fid)
+
+    # 3) preview：不存在或跨项目 → 404；kind/target 失配 → 422 mismatch
+    preview = session.scalar(
+        select(ChangePreview).where(
+            ChangePreview.id == preview_id, ChangePreview.project_id == pid
+        )
+    )
+    if preview is None:
+        raise StudioAPIError.not_found("preview", preview_id)
+    pv_payload = json.loads(preview.payload) if preview.payload else {}
+    if preview.kind != "script_adopt" or pv_payload.get("target_fragment_id") != fid:
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "target_fragment_id",
+                    "rule": "mismatch",
+                    "message": "target_fragment_id 必须与路径片段一致。",
+                }
+            ]
+        )
+
+    # 4) 幂等（00 §3；先于状态检查——原命令重放不受预览终态阻断，F7/T43）
+    record = session.scalar(
+        select(CommandRecord).where(
+            CommandRecord.owner_id == user.id,
+            CommandRecord.command_id == command_id,
+        )
+    )
+    if record is not None:
+        payload = json.loads(record.result_payload) if record.result_payload else {}
+        ref = payload.get("object_ref") or {}
+        pfrag = payload.get("fragment") or {}
+        if (
+            ref.get("kind") == "script_adoption"
+            and pfrag.get("id") == fid
+            and payload.get("previous_adoption_id") == expected_previous_adoption_id
+        ):
+            # 重放：返回首次 result_payload，零写零 commit
+            return dict(payload, _replay=True)
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "command_id",
+                    "rule": "reused",
+                    "message": "command_id 已被其他命令使用，请生成新的。",
+                }
+            ]
+        )
+
+    # 5) 状态检查：非 pending（或 pending 已过 TTL）→ 409 preview_stale
+    now = time.time()
+    expired = preview.state == "expired" or (
+        preview.state == "pending" and now > preview.expires_at
+    )
+    if preview.state != "pending" or expired:
+        session.commit()  # 结束读事务（惰性置位需独立事务）
+        if expired and preview.state == "pending":
+            with session.begin():
+                session.execute(
+                    update(ChangePreview)
+                    .where(ChangePreview.id == preview_id)
+                    .values(state="expired", resolved_at=now)
+                )
+        actual = "expired" if expired else preview.state
+        err = StudioAPIError.preview_stale(
+            preview_id, "预览已过期或状态已变化，请重新预览。"
+        )
+        err.details["conflicts"] = [
+            {
+                "object": {"kind": "preview", "id": preview_id},
+                "expected": "pending",
+                "actual": actual,
+            }
+        ]
+        raise err
+
+    # 6) CAS：链尾（读阶段；写事务内再复核，见下）
+    tail = _adoption_tail(session, fid)
+    tail_id = tail.id if tail is not None else None
+    if expected_previous_adoption_id != tail_id:
+        raise StudioAPIError.revision_conflict(
+            "script_adoption",
+            tail_id or "",
+            expected_previous_adoption_id,
+            tail_id,
+            "片段当前采用已变化，请重新预览后重试。",
+        )
+
+    base = json.loads(preview.baseline) if preview.baseline else []
+    session.commit()  # 结束读事务；写阶段另起事务
+
+    # 7~9) 写事务：首条语句即写语句（no-op 自赋值抢 DB 级写锁，同 F7）→ 获锁后
+    # 重读为权威 → 门禁重校验 → 链尾复核 → baseline 比对 → 写
+    now = time.time()
+    adoption_id = make_ulid()
+    decision_id = make_ulid()
+    if not session.in_transaction():
+        session.begin()
+    try:
+        session.execute(
+            update(Fragment)
+            .where(Fragment.id == fid)
+            .values(updated_at=Fragment.updated_at)
+        )
+        frag_now = session.get(Fragment, fid)
+        current_now = _fragment_current_revision(session, frag_now)
+        project_now = session.get(StudioProject, pid)
+
+        # 7) 片段门禁重校验（preview 步骤 4~7 全部；全部收集）
+        gate = _script_adopt_gate(session, project_now, frag_now, current_now)
+        if gate:
+            conflicts = [
+                _gate_conflict(reason, frag_now, project_now) for reason, _ in gate
+            ]
+            session.rollback()
+            err = StudioAPIError.preview_stale(preview_id, _GATE_CONFLICT_MSG)
+            err.details["conflicts"] = conflicts
+            raise err
+
+        # 6b) 链尾复核（并发防护；CAS 真实值）
+        tail_now = _adoption_tail(session, fid)
+        tail_now_id = tail_now.id if tail_now is not None else None
+        if expected_previous_adoption_id != tail_now_id:
+            session.rollback()
+            raise StudioAPIError.revision_conflict(
+                "script_adoption",
+                tail_now_id or "",
+                expected_previous_adoption_id,
+                tail_now_id,
+                "片段当前采用已变化，请重新预览后重试。",
+            )
+
+        # 8) baseline 比对（写事务内重读为权威，失配项全部收集）
+        snapshot, content_hash = _script_object_snapshot(session, fid)
+        conflicts = _baseline_conflicts(expected_object_revisions, snapshot)
+        if conflicts:
+            session.execute(
+                update(ChangePreview)
+                .where(ChangePreview.id == preview_id)
+                .values(state="superseded", resolved_at=now)
+            )
+            session.commit()
+            err = StudioAPIError.preview_stale(
+                preview_id, "预览基准已变化（对象快照失配），请重新预览。"
+            )
+            err.details["conflicts"] = conflicts
+            raise err
+
+        # 9) 执行（单事务，无半次保存；不改任何既有 adoption/对象/版本行）
+        session.add(
+            ScriptAdoption(
+                id=adoption_id,
+                project_id=pid,
+                fragment_id=fid,
+                object_revisions=json.dumps(snapshot, ensure_ascii=False),
+                content_hash=content_hash,
+                previous_adoption_id=tail_now_id,
+                created_at=now,
+            )
+        )
+        session.add(
+            ReviewDecision(
+                id=decision_id,
+                project_id=pid,
+                owner_id=user.id,
+                preview_id=preview_id,
+                target_ref=json.dumps(
+                    {"kind": "script_adoption", "id": adoption_id, "revision": None},
+                    ensure_ascii=False,
+                ),
+                decision="applied",
+                baseline_digest=hashlib.sha256(
+                    json.dumps(base, sort_keys=True, separators=(",", ":")).encode(
+                        "utf-8"
+                    )
+                ).hexdigest(),
+                created_at=now,
+            )
+        )
+        session.flush()  # ReviewDecision 先 INSERT（FK preview.decision_id 非 deferrable）
+        session.execute(
+            update(ChangePreview)
+            .where(ChangePreview.id == preview_id)
+            .values(state="applied", resolved_at=now, decision_id=decision_id)
+        )
+        body = {
+            "object_ref": {
+                "kind": "script_adoption",
+                "id": adoption_id,
+                "revision": None,
+            },
+            "fragment": {"kind": "fragment", "id": fid, "revision": current_now},
+            "object_revisions": snapshot,
+            "content_hash": content_hash,
+            "previous_adoption_id": tail_now_id,
+            "created_at": now,
+        }
+        session.add(
+            CommandRecord(
+                id=make_ulid(),
+                owner_id=user.id,
+                project_id=pid,
+                command_id=command_id,
+                result_payload=json.dumps(body, ensure_ascii=False),
+                created_at=now,
+            )
+        )
+        session.commit()
+    except StudioAPIError:
+        raise
+    except Exception:
+        try:
+            session.rollback()
+        except Exception:
+            pass
+        raise
+    return body

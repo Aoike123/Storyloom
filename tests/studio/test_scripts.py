@@ -10,14 +10,18 @@ seq 自动顺位/显式/占用冲突、text/kind/seq 字段校验（一次返回
 本文件不改写 STUDIO_* env。db fixture 与 register/auth/import/fragment helper
 照抄 tests/studio/test_fragments.py 的实现。
 """
+import hashlib
+import json
 import re
+import time
 import uuid
 
 import pytest
 from sqlalchemy import func, select, text
 
-from backend.core.db import Base, Session, engine
+from backend.core.db import Base, Session, engine, make_ulid
 from backend.studio.contracts.models import CommandRecord
+from backend.studio.reviews.models import ChangePreview, ReviewDecision
 from backend.studio.scripts.models import ScriptAdoption, ScriptObject, ScriptRevision
 from backend.studio.sources.fragment_models import Fragment, RangeSet
 
@@ -1017,3 +1021,1021 @@ def test_t36_direct_db_check_zero_adoption_and_mirror(db, client):
                 old_rev.source_fragment_revision, old_rev.created_at) == old_rev_snapshot
         # 新 revision 的 source_fragment_revision = 保存时刻片段 revision
         assert rev2.source_fragment_revision == 1
+
+
+# ═══════════════════ SCRIPT-02 / SC6 采用剧本 revision（preview/apply）═══════════════════
+# 覆盖：preview/apply 成功路径（DTO 逐字段、baseline 精确、TTL、零业务副作用）、401、
+# 项目/片段/preview 404 不泄漏、mismatch 422、片段门禁四态顺序、幂等重放/异内容 reused、
+# expired 惰性置位、终态不改写、CAS 失配、baseline 失配 + superseded、content_hash/
+# baseline_digest 独立重算、ReviewDecision 恰 1 行、负向断言（分镜/任务/媒体/对象不变）、
+# 采用链（baseline 追加 adoption ref、previous_adoption_id、旧 adoption 行不变）。
+
+
+def _adopt_preview(client, token, pid, fid, target=None, command_id=None):
+    return client.post(
+        f"/api/studio/projects/{pid}/fragments/{fid}/script-adopt",
+        json={
+            "target_fragment_id": target if target is not None else fid,
+            "command_id": command_id or _cmd(),
+        },
+        headers=_auth(token),
+    )
+
+
+def _expected_objects(pid, fid) -> list:
+    """当前片段全部对象按 seq 升序的 apply 快照（= preview baseline 的对象部分）。"""
+    with Session() as s:
+        objs = s.scalars(
+            select(ScriptObject)
+            .where(ScriptObject.fragment_id == fid)
+            .order_by(ScriptObject.seq)
+        ).all()
+        out = []
+        for o in objs:
+            rv = s.get(ScriptRevision, o.current_revision_id)
+            out.append(
+                {
+                    "object_id": o.id,
+                    "revision": rv.revision,
+                    "seq": o.seq,
+                    "kind": o.kind,
+                }
+            )
+    return out
+
+
+def _adopt_apply(
+    client,
+    token,
+    pid,
+    fid,
+    preview_id,
+    *,
+    command_id=None,
+    expected_previous_adoption_id=None,
+    expected_object_revisions=None,
+):
+    if expected_object_revisions is None:
+        expected_object_revisions = _expected_objects(pid, fid)
+    return client.post(
+        f"/api/studio/projects/{pid}/fragments/{fid}/script-adopt/apply",
+        json={
+            "preview_id": preview_id,
+            "command_id": command_id or _cmd(),
+            "expected_previous_adoption_id": expected_previous_adoption_id,
+            "expected_object_revisions": expected_object_revisions,
+        },
+        headers=_auth(token),
+    )
+
+
+def _adopt_setup(client, token, name="SProj"):
+    """项目→导入激活→确认片段→建 2 个对象（dialogue + action），返回 (pid, fid)。"""
+    pid = _mk_project(client, token, name)
+    rev = _import_active(client, token, pid, TEXT_A)
+    fid = _confirmed_fragment(client, token, pid, rev["id"])
+    r1 = _create(client, token, pid, fid, kind="dialogue", text="甲", speaker="林")
+    r2 = _create(client, token, pid, fid, kind="action", text="乙")
+    assert r1.status_code == 201 and r2.status_code == 201, (r1.text, r2.text)
+    return pid, fid
+
+
+def _preview_row(preview_id) -> dict:
+    with Session() as s:
+        pv = s.get(ChangePreview, preview_id)
+        return {
+            "state": pv.state,
+            "kind": pv.kind,
+            "project_id": pv.project_id,
+            "owner_id": pv.owner_id,
+            "payload": pv.payload,
+            "baseline": pv.baseline,
+            "impact": pv.impact,
+            "decision_id": pv.decision_id,
+            "created_at": pv.created_at,
+            "resolved_at": pv.resolved_at,
+            "expires_at": pv.expires_at,
+        }
+
+
+def _count(table: str) -> int:
+    with Session() as s:
+        return s.scalar(text(f"SELECT COUNT(*) FROM {table}"))
+
+
+def _adopt_previews(pid) -> list:
+    """本项目 script_adopt 预览行（ChangePreview 属 FK 环，跨测试不保证被
+    drop_all 清空，故一律按项目 + kind 过滤）。"""
+    with Session() as s:
+        return [
+            p
+            for p in s.scalars(
+                select(ChangePreview).where(ChangePreview.project_id == pid)
+            ).all()
+            if p.kind == "script_adopt"
+        ]
+
+
+def _adopt_decisions(pid) -> list:
+    """本项目 script_adoption 终局决定行（ReviewDecision 亦被片段确认等命令写入，
+    且属 FK 环不被清空，故按项目 + target_ref.kind 过滤）。"""
+    with Session() as s:
+        return [
+            d
+            for d in s.scalars(
+                select(ReviewDecision).where(ReviewDecision.project_id == pid)
+            ).all()
+            if json.loads(d.target_ref).get("kind") == "script_adoption"
+        ]
+
+
+def _cross_counts() -> dict:
+    """跨域负向断言的表行数（预览/应用均不得写入任何一行）。"""
+    return {
+        "shots": _count("studio_shots"),
+        "shot_revisions": _count("studio_shot_revisions"),
+        "jobs": _count("studio_jobs"),
+        "media": _count("studio_media_artifacts"),
+        "edit_instances": _count("studio_edit_instances"),
+        "releases": _count("studio_releases"),
+    }
+
+
+def _user_id(username) -> str:
+    with Session() as s:
+        return s.execute(
+            text("SELECT id FROM users WHERE username = :u"), {"u": username}
+        ).scalar()
+
+
+def _object_rows() -> dict:
+    with Session() as s:
+        return {
+            o.id: (o.current_revision_id, o.seq, o.kind, o.updated_at, o.retired_at)
+            for o in s.scalars(select(ScriptObject)).all()
+        }
+
+
+def _revision_rows() -> dict:
+    with Session() as s:
+        return {
+            r.id: (r.revision, r.text, r.speaker, r.adaptation_note, r.created_at)
+            for r in s.scalars(select(ScriptRevision)).all()
+        }
+
+
+def _content_hash(pid, fid) -> str:
+    """独立重算冻结的 content_hash（对象按 seq 升序）。"""
+    with Session() as s:
+        objs = s.scalars(
+            select(ScriptObject)
+            .where(ScriptObject.fragment_id == fid)
+            .order_by(ScriptObject.seq)
+        ).all()
+        parts = []
+        for o in objs:
+            rv = s.get(ScriptRevision, o.current_revision_id)
+            parts.append(
+                f"{rv.revision}:{hashlib.sha256(rv.text.encode('utf-8')).hexdigest()}"
+            )
+    return hashlib.sha256("".join(parts).encode("utf-8")).hexdigest()
+
+
+def _baseline_digest(baseline_text: str) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            json.loads(baseline_text), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+# ── t_sc6_01 无 token → 401（preview/apply 各一）─────────────────────────────
+
+def test_sc6_01_no_token_401(db, client):
+    pid = "01" * 13
+    fid = "02" * 13
+    r1 = client.post(
+        f"/api/studio/projects/{pid}/fragments/{fid}/script-adopt",
+        json={"target_fragment_id": fid, "command_id": _cmd()},
+    )
+    assert r1.status_code == 401, r1.text
+    assert r1.json()["error"]["code"] == "unauthenticated"
+    r2 = client.post(
+        f"/api/studio/projects/{pid}/fragments/{fid}/script-adopt/apply",
+        json={
+            "preview_id": "03" * 13,
+            "command_id": _cmd(),
+            "expected_previous_adoption_id": None,
+            "expected_object_revisions": [],
+        },
+    )
+    assert r2.status_code == 401, r2.text
+    assert r2.json()["error"]["code"] == "unauthenticated"
+
+
+# ── t_sc6_02 preview 成功：DTO/baseline/TTL/零业务副作用 ────────────────────
+
+def test_sc6_02_preview_success_dto_baseline_ttl_zero_side_effects(db, client):
+    token = _register(client, "sc6_02_alice")
+    pid, fid = _adopt_setup(client, token)
+    objs = _expected_objects(pid, fid)
+    before = _counts()
+    cross_before = _cross_counts()
+
+    r = _adopt_preview(client, token, pid, fid)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # 恰 4 字段（00 §5.1 冻结形状）
+    assert set(body) == {"preview_id", "kind", "baseline", "impact"}
+    assert body["kind"] == "script_adopt"
+    assert re.fullmatch(r"[0-9a-z]{26}", body["preview_id"])
+    # baseline 精确 = 对象按 seq 升序（无链尾则只有对象项）
+    assert body["baseline"] == [
+        {"kind": "script_object", "id": o["object_id"], "revision": o["revision"]}
+        for o in objs
+    ]
+    assert body["impact"] == {"affected": [], "needs_review": [], "preservable": []}
+    assert set(body["impact"]) == {"affected", "needs_review", "preservable"}
+
+    pv = _preview_row(body["preview_id"])
+    assert pv["kind"] == "script_adopt"
+    assert pv["state"] == "pending"
+    assert pv["decision_id"] is None and pv["resolved_at"] is None
+    assert pv["owner_id"] == _user_id("sc6_02_alice")
+    assert pv["project_id"] == pid
+    assert json.loads(pv["payload"]) == {"target_fragment_id": fid}
+    assert json.loads(pv["baseline"]) == body["baseline"]
+    assert json.loads(pv["impact"]) == body["impact"]
+    assert 1700 < pv["expires_at"] - pv["created_at"] < 1900  # 30 分钟 TTL 窗
+
+    # 零业务副作用：对象/版本/采用不变；commands +1；preview +1；跨域零写
+    after = _counts()
+    assert after["objects"] == before["objects"]
+    assert after["revisions"] == before["revisions"]
+    assert after["adoptions"] == 0
+    assert after["commands"] == before["commands"] + 1
+    assert len(_adopt_previews(pid)) == 1
+    assert _cross_counts() == cross_before
+
+
+# ── t_sc6_03 apply 成功：DTO 逐字段 + DB + ReviewDecision + 负向断言 ─────────
+
+def test_sc6_03_apply_success_dto_db_decision_no_writes(db, client):
+    token = _register(client, "sc6_03_bob")
+    pid, fid = _adopt_setup(client, token)
+    objs = _expected_objects(pid, fid)
+    rp = _adopt_preview(client, token, pid, fid)
+    assert rp.status_code == 200, rp.text
+    preview_id = rp.json()["preview_id"]
+
+    obj_before = _object_rows()
+    rev_before = _revision_rows()
+    cross_before = _cross_counts()
+    commands_before = _count("studio_command_records")
+
+    ra = _adopt_apply(client, token, pid, fid, preview_id, expected_object_revisions=objs)
+    assert ra.status_code == 200, ra.text
+    body = ra.json()
+    aid = body["object_ref"]["id"]
+    assert set(body) == {
+        "object_ref", "fragment", "object_revisions", "content_hash",
+        "previous_adoption_id", "created_at",
+    }
+    assert body["object_ref"] == {"kind": "script_adoption", "id": aid, "revision": None}
+    assert re.fullmatch(r"[0-9a-z]{26}", aid)
+    assert body["fragment"] == {"kind": "fragment", "id": fid, "revision": 1}
+    assert body["object_revisions"] == objs
+    assert body["content_hash"] == _content_hash(pid, fid)  # 独立重算
+    assert re.fullmatch(r"[0-9a-f]{64}", body["content_hash"])
+    assert body["previous_adoption_id"] is None
+    assert isinstance(body["created_at"], float)
+
+    with Session() as s:
+        ad = s.get(ScriptAdoption, aid)
+    assert ad is not None
+    assert ad.project_id == pid and ad.fragment_id == fid
+    assert json.loads(ad.object_revisions) == objs
+    assert ad.content_hash == body["content_hash"]
+    assert ad.previous_adoption_id is None
+    assert ad.created_at == body["created_at"]
+
+    pv = _preview_row(preview_id)
+    assert pv["state"] == "applied"
+    assert pv["resolved_at"] is not None and pv["decision_id"] is not None
+
+    decisions = _adopt_decisions(pid)  # 本项目 script_adoption 决定
+    assert len(decisions) == 1  # 恰 1 行
+    d = decisions[0]
+    assert d.decision == "applied"
+    assert d.preview_id == preview_id
+    assert d.id == pv["decision_id"]
+    assert d.owner_id == _user_id("sc6_03_bob")
+    assert json.loads(d.target_ref) == {
+        "kind": "script_adoption", "id": aid, "revision": None,
+    }
+    assert d.baseline_digest == _baseline_digest(pv["baseline"])  # 独立重算
+
+    assert _count("studio_command_records") == commands_before + 1
+    assert _count("studio_script_adoptions") == 1
+    # 负向：对象/版本行逐字段不变；跨域（分镜/任务/媒体/剪辑/发布）零写
+    assert _object_rows() == obj_before
+    assert _revision_rows() == rev_before
+    assert _cross_counts() == cross_before
+
+
+# ── t_sc6_04 项目/片段/preview 404（不泄漏存在性，同形状）────────────────────
+
+def test_sc6_04_not_found_shapes(db, client):
+    ta = _register(client, "sc6_04_alice")
+    tb = _register(client, "sc6_04_bob")
+    pid_a, fid_a = _adopt_setup(client, ta, "T04A")
+    pid_b, fid_b = _adopt_setup(client, tb, "T04B")
+    objs_a = _expected_objects(pid_a, fid_a)
+    ghost_pid = "01" * 13
+    ghost_fid = "02" * 13
+    ghost_pv = "03" * 13
+
+    # 项目 404：preview + apply（不存在）
+    r = _adopt_preview(client, ta, ghost_pid, ghost_fid)
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["code"] == "not_found"
+    assert r.json()["error"]["details"] == {"kind": "project", "id": ghost_pid}
+    r = _adopt_apply(
+        client, ta, ghost_pid, ghost_fid, ghost_pv, expected_object_revisions=[]
+    )
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["details"] == {"kind": "project", "id": ghost_pid}
+
+    # 项目 404：非属主（tb 的项目，ta 访问）
+    r = _adopt_preview(client, ta, pid_b, fid_b)
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["details"] == {"kind": "project", "id": pid_b}
+
+    # 片段 404：不存在 / 跨项目 → 同形状
+    for fid_bad in (ghost_fid, fid_b):
+        r = _adopt_preview(client, ta, pid_a, fid_bad)
+        assert r.status_code == 404, (fid_bad, r.text)
+        assert r.json()["error"]["details"] == {"kind": "fragment", "id": fid_bad}
+    r = _adopt_apply(
+        client, ta, pid_a, fid_b, ghost_pv, expected_object_revisions=[]
+    )
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["details"] == {"kind": "fragment", "id": fid_b}
+
+    # preview 404：不存在 / 跨项目 → 同形状
+    r = _adopt_apply(
+        client, ta, pid_a, fid_a, ghost_pv, expected_object_revisions=objs_a
+    )
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["details"] == {"kind": "preview", "id": ghost_pv}
+    rp_b = _adopt_preview(client, tb, pid_b, fid_b)
+    assert rp_b.status_code == 200, rp_b.text
+    r = _adopt_apply(
+        client, ta, pid_a, fid_a, rp_b.json()["preview_id"],
+        expected_object_revisions=objs_a,
+    )
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["details"] == {
+        "kind": "preview", "id": rp_b.json()["preview_id"],
+    }
+    # 全程零采用写入
+    assert _count("studio_script_adoptions") == 0
+
+
+# ── t_sc6_05 target/kind mismatch 422 ───────────────────────────────────────
+
+def test_sc6_05_target_mismatch_422(db, client):
+    token = _register(client, "sc6_05_carol")
+    pid, fid = _adopt_setup(client, token)
+    rev = None
+    # preview：target != 路径 fid
+    r = _adopt_preview(client, token, pid, fid, target="04" * 13)
+    assert r.status_code == 422, r.text
+    v0 = r.json()["error"]["details"]["violations"][0]
+    assert v0["field"] == "target_fragment_id" and v0["rule"] == "mismatch"
+    assert len(_adopt_previews(pid)) == 0
+
+    # apply：preview.kind != script_adopt（F7 retire 预览行）→ mismatch
+    rp = client.post(
+        f"/api/studio/projects/{pid}/fragments/{fid}/retire",
+        json={"target_fragment_id": fid, "command_id": _cmd()},
+        headers=_auth(token),
+    )
+    assert rp.status_code == 200, rp.text
+    ra = _adopt_apply(client, token, pid, fid, rp.json()["preview_id"])
+    assert ra.status_code == 422, ra.text
+    v0 = ra.json()["error"]["details"]["violations"][0]
+    assert v0["field"] == "target_fragment_id" and v0["rule"] == "mismatch"
+
+    # apply：payload.target_fragment_id != 路径 fid（同项目另一片段）→ mismatch
+    with Session() as s:
+        rev = s.scalar(
+            select(Fragment.source_revision_id).where(Fragment.id == fid)
+        )
+    fid2 = _confirmed_fragment(
+        client, token, pid, rev, start=10, end=20, name="F2",
+        expected=_range_set_cas(pid),
+    )
+    r2 = _create(client, token, pid, fid2, text="丙")
+    assert r2.status_code == 201, r2.text
+    rp2 = _adopt_preview(client, token, pid, fid2)
+    assert rp2.status_code == 200, rp2.text
+    ra2 = _adopt_apply(client, token, pid, fid, rp2.json()["preview_id"])
+    assert ra2.status_code == 422, ra2.text
+    v0 = ra2.json()["error"]["details"]["violations"][0]
+    assert v0["field"] == "target_fragment_id" and v0["rule"] == "mismatch"
+    assert _count("studio_script_adoptions") == 0
+
+
+# ── t_sc6_06 片段门禁四态与顺序 ─────────────────────────────────────────────
+
+def test_sc6_06_gate_order_all_four(db, client):
+    token = _register(client, "sc6_06_dave")
+    pid = _mk_project(client, token, "Gate")
+    rev1 = _import_active(client, token, pid, TEXT_A)
+    cand = _mk_fragment(client, token, pid, rev1["id"], start=0, end=5, name="cand")
+    empty = _confirmed_fragment(
+        client, token, pid, rev1["id"], start=5, end=10, name="empty",
+        expected=_range_set_cas(pid),
+    )
+    empty2 = _confirmed_fragment(
+        client, token, pid, rev1["id"], start=10, end=15, name="empty2",
+        expected=_range_set_cas(pid),
+    )
+    withobj = _confirmed_fragment(
+        client, token, pid, rev1["id"], start=15, end=20, name="withobj",
+        expected=_range_set_cas(pid),
+    )
+    assert _create(client, token, pid, withobj, text="对象").status_code == 201
+
+    def _gate(fid):
+        r = _adopt_preview(client, token, pid, fid)
+        assert r.status_code == 422, (fid, r.text)
+        err = r.json()["error"]
+        assert err["code"] == "precondition_failed"
+        return err["details"]["reason"], err["details"]["blocked_by"]
+
+    # (a) candidate（无对象）→ not_confirmed（门禁 4 先于 6）
+    reason, blocked = _gate(cand)
+    assert reason == "not_confirmed"
+    assert blocked == {"kind": "fragment", "id": cand, "revision": 1}
+    # (b) confirmed + active + 无对象 → no_objects
+    assert _gate(empty)[0] == "no_objects"
+    # (c) confirmed + active + 有对象，退役后 → retired（置末）
+    _retire(client, token, pid, withobj)
+    assert _gate(withobj)[0] == "retired"
+    # (d) retired 但无对象 → no_objects（门禁 6 先于 7）
+    _retire(client, token, pid, empty)
+    assert _gate(empty)[0] == "no_objects"
+    # 换版：rev1 全失效
+    r2 = client.post(
+        f"/api/studio/projects/{pid}/sources",
+        json={"content": TEXT_B, "command_id": _cmd()},
+        headers=_auth(token),
+    )
+    assert r2.status_code == 201, r2.text
+    _activate(client, token, pid, r2.json()["id"], rev1["id"])
+    # (e) candidate + 非 active → not_confirmed（门禁 4 先于 5）
+    reason, blocked = _gate(cand)
+    assert reason == "not_confirmed"
+    assert blocked["revision"] == 1
+    # (f) confirmed + 非 active + 无对象 → source_revision_inactive（门禁 5 先于 6）
+    reason, blocked = _gate(empty2)
+    assert reason == "source_revision_inactive"
+    assert blocked == {"kind": "fragment", "id": empty2, "revision": 1}
+    assert len(_adopt_previews(pid)) == 0
+
+
+# ── t_sc6_07 preview 幂等（重放 200 / 异内容 reused）────────────────────────
+
+def test_sc6_07_preview_idempotent_replay_and_reused(db, client):
+    token = _register(client, "sc6_07_erin")
+    pid, fid = _adopt_setup(client, token)
+    with Session() as s:
+        rev = s.scalar(select(Fragment.source_revision_id).where(Fragment.id == fid))
+    fid2 = _confirmed_fragment(
+        client, token, pid, rev, start=10, end=20, name="F2",
+        expected=_range_set_cas(pid),
+    )
+    assert _create(client, token, pid, fid2, text="丙").status_code == 201
+
+    cmd = _cmd()
+    r1 = _adopt_preview(client, token, pid, fid, command_id=cmd)
+    assert r1.status_code == 200, r1.text
+    before = _count("studio_command_records")
+    r2 = _adopt_preview(client, token, pid, fid, command_id=cmd)
+    assert r2.status_code == 200, r2.text
+    assert r2.json() == r1.json()  # 原样返回首次 result_payload
+    assert len(_adopt_previews(pid)) == 1  # 零副作用
+    assert _count("studio_command_records") == before
+
+    # 同 command_id、异内容（不同片段）→ 422 reused
+    r3 = _adopt_preview(client, token, pid, fid2, command_id=cmd)
+    assert r3.status_code == 422, r3.text
+    v0 = r3.json()["error"]["details"]["violations"][0]
+    assert v0["field"] == "command_id" and v0["rule"] == "reused"
+    assert len(_adopt_previews(pid)) == 1
+
+
+# ── t_sc6_08 apply 幂等（先于状态检查/ CAS）────────────────────────────────
+
+def test_sc6_08_apply_idempotent_replay_and_reused(db, client):
+    token = _register(client, "sc6_08_frank")
+    pid, fid = _adopt_setup(client, token)
+    objs = _expected_objects(pid, fid)
+    rp = _adopt_preview(client, token, pid, fid)
+    preview_id = rp.json()["preview_id"]
+    cmd = _cmd()
+    ra1 = _adopt_apply(
+        client, token, pid, fid, preview_id, command_id=cmd,
+        expected_object_revisions=objs,
+    )
+    assert ra1.status_code == 200, ra1.text
+    body1 = ra1.json()
+    aid = body1["object_ref"]["id"]
+    snap = (_count("studio_script_adoptions"), len(_adopt_decisions(pid)),
+            _count("studio_command_records"))
+    ra2 = _adopt_apply(
+        client, token, pid, fid, preview_id, command_id=cmd,
+        expected_object_revisions=objs,
+    )
+    assert ra2.status_code == 200, ra2.text
+    assert ra2.json() == body1
+    assert (_count("studio_script_adoptions"), len(_adopt_decisions(pid)),
+            _count("studio_command_records")) == snap  # 重放零写
+
+    # 同 command_id、异内容（previous_adoption_id 不同）→ 422 reused（先于状态/CAS）
+    ra3 = _adopt_apply(
+        client, token, pid, fid, preview_id, command_id=cmd,
+        expected_previous_adoption_id=aid, expected_object_revisions=objs,
+    )
+    assert ra3.status_code == 422, ra3.text
+    v0 = ra3.json()["error"]["details"]["violations"][0]
+    assert v0["field"] == "command_id" and v0["rule"] == "reused"
+    assert (_count("studio_script_adoptions"), len(_adopt_decisions(pid)),
+            _count("studio_command_records")) == snap
+
+
+# ── t_sc6_09 expired：409 + 惰性置位（不改写已有终态）──────────────────────
+
+def test_sc6_09_expired_lazy_set_409(db, client):
+    token = _register(client, "sc6_09_grace")
+    pid, fid = _adopt_setup(client, token)
+    objs = _expected_objects(pid, fid)
+    rp = _adopt_preview(client, token, pid, fid)
+    preview_id = rp.json()["preview_id"]
+    # pending 且 now > expires_at（就地压 TTL）
+    with Session() as s:
+        pv = s.get(ChangePreview, preview_id)
+        pv.expires_at = time.time() - 1
+        s.commit()
+    ra = _adopt_apply(
+        client, token, pid, fid, preview_id, expected_object_revisions=objs
+    )
+    assert ra.status_code == 409, ra.text
+    err = ra.json()["error"]
+    assert err["code"] == "preview_stale"
+    assert err["details"]["preview_id"] == preview_id
+    assert err["details"]["conflicts"] == [
+        {
+            "object": {"kind": "preview", "id": preview_id},
+            "expected": "pending",
+            "actual": "expired",
+        }
+    ]
+    pv = _preview_row(preview_id)
+    assert pv["state"] == "expired" and pv["resolved_at"] is not None
+
+    # 已 expired（终态）→ 同形 409，不再改写
+    rp2 = _adopt_preview(client, token, pid, fid)
+    preview2 = rp2.json()["preview_id"]
+    with Session() as s:
+        pv2 = s.get(ChangePreview, preview2)
+        pv2.state = "expired"
+        pv2.resolved_at = 123.0
+        s.commit()
+    ra2 = _adopt_apply(
+        client, token, pid, fid, preview2, expected_object_revisions=objs
+    )
+    assert ra2.status_code == 409, ra2.text
+    assert ra2.json()["error"]["details"]["conflicts"][0]["actual"] == "expired"
+    pv2 = _preview_row(preview2)
+    assert pv2["state"] == "expired" and pv2["resolved_at"] == 123.0  # 未改写
+    assert _count("studio_script_adoptions") == 0
+    assert _adopt_decisions(pid) == []
+
+
+# ── t_sc6_10 终态（applied/rejected）→ 409 同形且不改写 ─────────────────────
+
+def test_sc6_10_terminal_state_409_no_rewrite(db, client):
+    token = _register(client, "sc6_10_heidi")
+    pid, fid = _adopt_setup(client, token)
+    objs = _expected_objects(pid, fid)
+    rp = _adopt_preview(client, token, pid, fid)
+    preview_id = rp.json()["preview_id"]
+    ra1 = _adopt_apply(
+        client, token, pid, fid, preview_id, expected_object_revisions=objs
+    )
+    assert ra1.status_code == 200, ra1.text
+    aid = ra1.json()["object_ref"]["id"]
+    # 新 command_id 再 apply → 409 actual='applied'，终态不改写
+    ra2 = _adopt_apply(
+        client, token, pid, fid, preview_id,
+        expected_previous_adoption_id=aid, expected_object_revisions=objs,
+    )
+    assert ra2.status_code == 409, ra2.text
+    err = ra2.json()["error"]
+    assert err["code"] == "preview_stale"
+    assert err["details"]["conflicts"] == [
+        {
+            "object": {"kind": "preview", "id": preview_id},
+            "expected": "pending",
+            "actual": "applied",
+        }
+    ]
+    pv = _preview_row(preview_id)
+    assert pv["state"] == "applied"
+    assert _count("studio_script_adoptions") == 1
+    assert len(_adopt_decisions(pid)) == 1
+
+    # rejected 终态 → 409 actual='rejected'，不改写
+    rp3 = _adopt_preview(client, token, pid, fid)
+    preview3 = rp3.json()["preview_id"]
+    with Session() as s:
+        pv3 = s.get(ChangePreview, preview3)
+        pv3.state = "rejected"
+        pv3.resolved_at = 456.0
+        s.commit()
+    ra3 = _adopt_apply(
+        client, token, pid, fid, preview3,
+        expected_previous_adoption_id=aid, expected_object_revisions=objs,
+    )
+    assert ra3.status_code == 409, ra3.text
+    assert ra3.json()["error"]["details"]["conflicts"][0]["actual"] == "rejected"
+    pv3 = _preview_row(preview3)
+    assert pv3["state"] == "rejected" and pv3["resolved_at"] == 456.0
+    assert _count("studio_script_adoptions") == 1
+
+
+# ── t_sc6_11 CAS 失配 409（expected/actual 精确，无半次保存）────────────────
+
+def test_sc6_11_cas_conflict_409_exact_no_half_save(db, client):
+    token = _register(client, "sc6_11_ivan")
+    pid, fid = _adopt_setup(client, token)
+    objs = _expected_objects(pid, fid)
+
+    # (a) 无链尾：expected != None（实际链尾 None）→ object.id == ""
+    rp = _adopt_preview(client, token, pid, fid)
+    preview_id = rp.json()["preview_id"]
+    ghost = "04" * 13
+    ra = _adopt_apply(
+        client, token, pid, fid, preview_id,
+        expected_previous_adoption_id=ghost, expected_object_revisions=objs,
+    )
+    assert ra.status_code == 409, ra.text
+    err = ra.json()["error"]
+    assert err["code"] == "revision_conflict"
+    assert err["details"] == {
+        "object": {"kind": "script_adoption", "id": ""},
+        "expected": ghost,
+        "actual": None,
+    }
+    assert _count("studio_script_adoptions") == 0
+    assert _preview_row(preview_id)["state"] == "pending"  # 无半次保存
+
+    # (b) 有链尾：expected 失配 → object.id/actual == 真实链尾
+    ra1 = _adopt_apply(
+        client, token, pid, fid, preview_id, expected_object_revisions=objs
+    )
+    assert ra1.status_code == 200, ra1.text
+    aid1 = ra1.json()["object_ref"]["id"]
+    rp2 = _adopt_preview(client, token, pid, fid)
+    preview2 = rp2.json()["preview_id"]
+    ra2 = _adopt_apply(
+        client, token, pid, fid, preview2,
+        expected_previous_adoption_id=ghost, expected_object_revisions=objs,
+    )
+    assert ra2.status_code == 409, ra2.text
+    assert ra2.json()["error"]["details"] == {
+        "object": {"kind": "script_adoption", "id": aid1},
+        "expected": ghost,
+        "actual": aid1,
+    }
+    assert _count("studio_script_adoptions") == 1
+    assert len(_adopt_decisions(pid)) == 1
+    assert _preview_row(preview2)["state"] == "pending"
+
+
+# ── t_sc6_12 baseline 失配 409 + preview superseded ─────────────────────────
+
+def test_sc6_12_baseline_mismatch_409_superseded(db, client):
+    token = _register(client, "sc6_12_judy")
+    pid, fid = _adopt_setup(client, token)
+    objs = _expected_objects(pid, fid)
+    oid = objs[0]["object_id"]
+    rp = _adopt_preview(client, token, pid, fid)
+    preview_id = rp.json()["preview_id"]
+    # preview 后修订对象 → 快照失配（revision 1 → 2）
+    rr = _revise(
+        client, token, pid, oid,
+        {"text": "改", "expected_revision": 1, "command_id": _cmd()},
+    )
+    assert rr.status_code == 200, rr.text
+    obj_before = _object_rows()
+    rev_before = _revision_rows()
+
+    ra = _adopt_apply(
+        client, token, pid, fid, preview_id, expected_object_revisions=objs
+    )
+    assert ra.status_code == 409, ra.text
+    err = ra.json()["error"]
+    assert err["code"] == "preview_stale"
+    assert err["details"]["preview_id"] == preview_id
+    conflicts = err["details"]["conflicts"]
+    assert len(conflicts) == 1
+    assert conflicts[0]["object"] == {"kind": "script_object", "id": oid}
+    assert conflicts[0]["expected"]["revision"] == 1
+    assert conflicts[0]["actual"]["revision"] == 2
+    pv = _preview_row(preview_id)
+    assert pv["state"] == "superseded" and pv["resolved_at"] is not None
+    # 无半次保存：零采用/零决定，对象快照已变（该变更来自 revise，非本命令）
+    assert _count("studio_script_adoptions") == 0
+    assert _adopt_decisions(pid) == []
+    assert _object_rows() == obj_before
+    assert _revision_rows() == rev_before
+
+
+# ── t_sc6_13 apply 片段门禁重校验 → 409 preview_stale ──────────────────────
+
+def test_sc6_13_apply_gate_recheck_409(db, client):
+    token = _register(client, "sc6_13_karen")
+    pid, fid = _adopt_setup(client, token)
+    objs = _expected_objects(pid, fid)
+    rp = _adopt_preview(client, token, pid, fid)
+    preview_id = rp.json()["preview_id"]
+    # preview 后片段被退役 → apply 门禁重校验 retired
+    _retire(client, token, pid, fid)
+    ra = _adopt_apply(
+        client, token, pid, fid, preview_id, expected_object_revisions=objs
+    )
+    assert ra.status_code == 409, ra.text
+    err = ra.json()["error"]
+    assert err["code"] == "preview_stale"
+    assert err["details"]["preview_id"] == preview_id
+    assert err["details"]["conflicts"] == [
+        {
+            "object": {"kind": "fragment", "id": fid},
+            "expected": "confirmed",
+            "actual": "retired",
+        }
+    ]
+    assert _count("studio_script_adoptions") == 0
+    assert _adopt_decisions(pid) == []
+    assert _preview_row(preview_id)["state"] == "pending"  # 门禁失配不置终态
+
+
+# ── t_sc6_14 采用链：baseline 追加链尾 ref、previous_adoption_id、旧行不变 ──
+
+def test_sc6_14_adoption_chain_tail(db, client):
+    token = _register(client, "sc6_14_laura")
+    pid, fid = _adopt_setup(client, token)
+    objs = _expected_objects(pid, fid)
+
+    rp1 = _adopt_preview(client, token, pid, fid)
+    assert rp1.status_code == 200, rp1.text
+    assert rp1.json()["baseline"] == [
+        {"kind": "script_object", "id": o["object_id"], "revision": o["revision"]}
+        for o in objs
+    ]  # 首个采用前无链尾
+    ra1 = _adopt_apply(
+        client, token, pid, fid, rp1.json()["preview_id"],
+        expected_object_revisions=objs,
+    )
+    assert ra1.status_code == 200, ra1.text
+    aid1 = ra1.json()["object_ref"]["id"]
+    assert ra1.json()["previous_adoption_id"] is None
+
+    # 第一次采用后：baseline 末尾追加链尾 adoption ref
+    rp2 = _adopt_preview(client, token, pid, fid)
+    assert rp2.status_code == 200, rp2.text
+    assert rp2.json()["baseline"] == [
+        {"kind": "script_object", "id": o["object_id"], "revision": o["revision"]}
+        for o in objs
+    ] + [{"kind": "script_adoption", "id": aid1, "revision": None}]
+
+    with Session() as s:
+        old_row = s.get(ScriptAdoption, aid1)
+        old_snapshot = (
+            old_row.project_id, old_row.fragment_id, old_row.object_revisions,
+            old_row.content_hash, old_row.previous_adoption_id, old_row.created_at,
+        )
+    objs_before = _object_rows()
+    revs_before = _revision_rows()
+
+    ra2 = _adopt_apply(
+        client, token, pid, fid, rp2.json()["preview_id"],
+        expected_previous_adoption_id=aid1, expected_object_revisions=objs,
+    )
+    assert ra2.status_code == 200, ra2.text
+    body2 = ra2.json()
+    aid2 = body2["object_ref"]["id"]
+    assert aid2 != aid1
+    assert body2["previous_adoption_id"] == aid1  # 链尾正确
+    assert body2["content_hash"] == _content_hash(pid, fid)
+    assert body2["created_at"] > ra1.json()["created_at"]
+    with Session() as s:
+        ad2 = s.get(ScriptAdoption, aid2)
+        assert ad2.previous_adoption_id == aid1
+        # 旧 adoption 行逐字段不变（R11：旧采用不被改写）
+        old_row = s.get(ScriptAdoption, aid1)
+        assert (
+            old_row.project_id, old_row.fragment_id, old_row.object_revisions,
+            old_row.content_hash, old_row.previous_adoption_id, old_row.created_at,
+        ) == old_snapshot
+    assert _count("studio_script_adoptions") == 2
+    assert len(_adopt_decisions(pid)) == 2
+    # 对象/版本行不变
+    assert _object_rows() == objs_before
+    assert _revision_rows() == revs_before
+
+
+# ── SC6 impact 种子（跨域只读验证）──────────────────────────────────────────
+
+def _seed_sc6_shot(pid, adoption_id, seq) -> dict:
+    now = time.time()
+    scene_id, shot_id, shot_rev_id = make_ulid(), make_ulid(), make_ulid()
+    with Session() as s:
+        s.execute(
+            text(
+                "INSERT INTO studio_scenes (id, project_id, name, seq, "
+                "layout_cas_revision, created_at, updated_at) "
+                "VALUES (:id, :pid, :name, :seq, 1, :now, :now)"
+            ),
+            {"id": scene_id, "pid": pid, "name": f"S{seq}", "seq": seq, "now": now},
+        )
+        s.execute(
+            text(
+                "INSERT INTO studio_shots (id, project_id, scene_id, seq, name, "
+                "script_adoption_id, current_revision_id, created_at, updated_at) "
+                "VALUES (:id, :pid, :scene, 1, :name, :ad, :cur, :now, :now)"
+            ),
+            {
+                "id": shot_id, "pid": pid, "scene": scene_id, "name": f"SH{seq}",
+                "ad": adoption_id, "cur": shot_rev_id, "now": now,
+            },
+        )
+        s.execute(
+            text(
+                "INSERT INTO studio_shot_revisions (id, shot_id, revision, visual, "
+                "action, dialogue, transition_in, transition_out, duration_hint_ms, "
+                "created_at) VALUES (:id, :sid, 1, '{}', '{}', NULL, NULL, NULL, "
+                "NULL, :now)"
+            ),
+            {"id": shot_rev_id, "sid": shot_id, "now": now},
+        )
+        s.commit()
+    return {"shot_id": shot_id, "shot_rev_id": shot_rev_id}
+
+
+def _seed_sc6_job_chain(pid, uid, needle, status, seq) -> dict:
+    """种子：StudioJob(payload 含 needle, status) → MediaArtifact → EditInstance
+    → Release(poster=media)；返回各 id。"""
+    now = time.time()
+    job_id, media_id = make_ulid(), make_ulid()
+    draft_id, inst_id = make_ulid(), make_ulid()
+    ce_id, rel_id = make_ulid(), make_ulid()
+    with Session() as s:
+        s.execute(
+            text(
+                "INSERT INTO studio_jobs (id, project_id, owner_id, kind, ref_kind, "
+                "ref_id, payload, status, priority, created_at, submitted_by, "
+                "attempts, usage, last_error, finished_at) VALUES (:id, :pid, :uid, "
+                "'shot_generate', NULL, NULL, :payload, :status, 0, :now, :uid, 0, "
+                "NULL, NULL, NULL)"
+            ),
+            {
+                "id": job_id, "pid": pid, "uid": uid,
+                "payload": json.dumps(
+                    {"script_adoption_id": needle, "fragment_id": needle}
+                ),
+                "status": status, "now": now,
+            },
+        )
+        s.execute(
+            text(
+                "INSERT INTO studio_media_artifacts (id, project_id, media_kind, "
+                "filename, size_bytes, sha256, duration_ms, width, height, source, "
+                "source_job_id, created_at) VALUES (:id, :pid, 'video', :fn, 12, "
+                ":sha, NULL, NULL, NULL, 'shot_generate', :jid, :now)"
+            ),
+            {
+                "id": media_id, "pid": pid, "fn": f"{seq}.mp4",
+                "sha": "ab" * 32, "jid": job_id, "now": now,
+            },
+        )
+        s.execute(
+            text(
+                "INSERT INTO studio_edit_drafts (id, project_id, edit_id, "
+                "edit_revision, manifest, manifest_digest, cas_revision, updated_at) "
+                "VALUES (:id, :pid, :eid, 1, '{}', :dig, 1, :now)"
+            ),
+            {
+                "id": draft_id, "pid": pid, "eid": make_ulid(),
+                "dig": "cd" * 32, "now": now,
+            },
+        )
+        s.execute(
+            text(
+                "INSERT INTO studio_edit_instances (id, draft_id, instance_id, "
+                "media_id, source_in_ms, source_out_ms, speed, timeline_start_ms, "
+                "track_id) VALUES (:id, :draft, :iid, :media, 0, 1000, 1.0, 0, 0)"
+            ),
+            {
+                "id": inst_id, "draft": draft_id, "iid": make_ulid(),
+                "media": media_id,
+            },
+        )
+        s.execute(
+            text(
+                "INSERT INTO studio_confirmed_edits (id, edit_id, edit_revision, "
+                "manifest, manifest_digest, output_spec, created_at) VALUES (:id, "
+                ":eid, 1, '{}', :dig, '{}', :now)"
+            ),
+            {"id": ce_id, "eid": make_ulid(), "dig": "ef" * 32, "now": now},
+        )
+        s.execute(
+            text(
+                "INSERT INTO studio_releases (id, project_id, name, "
+                "confirmed_edit_id, poster_artifact_id, status, "
+                "predecessor_release_id, public_dir, published_at, created_at, "
+                "updated_at, cas_revision) VALUES (:id, :pid, :name, :ce, :poster, "
+                "'draft', NULL, NULL, NULL, :now, :now, 1)"
+            ),
+            {
+                "id": rel_id, "pid": pid, "name": f"R{seq}", "ce": ce_id,
+                "poster": media_id, "now": now,
+            },
+        )
+        s.commit()
+    return {
+        "job_id": job_id, "media_id": media_id,
+        "edit_instance_id": inst_id, "release_id": rel_id,
+    }
+
+
+# ── t_sc6_15 impact 三类清单（affected/needs_review/preservable）────────────
+
+def test_sc6_15_impact_lists_cross_domain(db, client):
+    token = _register(client, "sc6_15_mallory")
+    pid, fid = _adopt_setup(client, token)
+    uid = _user_id("sc6_15_mallory")
+    objs = _expected_objects(pid, fid)
+    # 先产生一条采用（链尾），作为旧采用
+    rp0 = _adopt_preview(client, token, pid, fid)
+    ra0 = _adopt_apply(
+        client, token, pid, fid, rp0.json()["preview_id"],
+        expected_object_revisions=objs,
+    )
+    assert ra0.status_code == 200, ra0.text
+    aid1 = ra0.json()["object_ref"]["id"]
+
+    shot = _seed_sc6_shot(pid, aid1, seq=1)
+    job_run = _seed_sc6_job_chain(pid, uid, aid1, "running", seq=1)
+    job_ok = _seed_sc6_job_chain(pid, uid, fid, "succeeded", seq=2)
+
+    rp = _adopt_preview(client, token, pid, fid)
+    assert rp.status_code == 200, rp.text
+    impact = rp.json()["impact"]
+    assert set(impact) == {"affected", "needs_review", "preservable"}
+    assert impact["affected"] == [
+        {"object_ref": {"kind": "shot", "id": shot["shot_id"], "revision": 1}}
+    ]
+    # needs_review 仅 pending/running（succeeded 的 job 不入）
+    assert impact["needs_review"] == [
+        {
+            "object_ref": {"kind": "job", "id": job_run["job_id"], "revision": None},
+            "reason": "frozen_input_references_previous_adoption",
+        }
+    ]
+    # preservable = 全 job 组的媒体证据链，按 id 升序
+    expected_preservable = sorted(
+        [
+            {"object_ref": {"kind": "media_artifact", "id": job_run["media_id"], "revision": None}},
+            {"object_ref": {"kind": "edit_instance", "id": job_run["edit_instance_id"], "revision": None}},
+            {"object_ref": {"kind": "release", "id": job_run["release_id"], "revision": None}},
+            {"object_ref": {"kind": "media_artifact", "id": job_ok["media_id"], "revision": None}},
+            {"object_ref": {"kind": "edit_instance", "id": job_ok["edit_instance_id"], "revision": None}},
+            {"object_ref": {"kind": "release", "id": job_ok["release_id"], "revision": None}},
+        ],
+        key=lambda x: x["object_ref"]["id"],
+    )
+    assert impact["preservable"] == expected_preservable
+    # baseline 末尾追加旧采用 ref
+    assert rp.json()["baseline"][-1] == {
+        "kind": "script_adoption", "id": aid1, "revision": None,
+    }
+    # 预览仍零业务副作用
+    assert _count("studio_script_adoptions") == 1
+    assert len(_adopt_decisions(pid)) == 1
+    assert len(_adopt_previews(pid)) == 2
+

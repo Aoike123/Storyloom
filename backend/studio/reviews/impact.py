@@ -24,7 +24,7 @@ from ..relations.models import AssetOccurrence, SourceRelation
 from ..scripts.models import ScriptAdoption, ScriptObject, ScriptRevision
 from ..sources.fragment_models import Fragment, FragmentRevision
 
-__all__ = ["compute_impact"]
+__all__ = ["compute_impact", "compute_script_adopt_impact"]
 
 # 跨域只读查询（表名冻结常量；表可能尚未交付进当前 DB → 缺表时该规则降级为空，不 500）
 _SHOT_SQL = (
@@ -33,6 +33,12 @@ _SHOT_SQL = (
     "WHERE s.project_id = :pid AND s.script_adoption_id IN :adoptions"
 )
 _EDIT_INSTANCE_SQL = "SELECT id FROM studio_edit_instances WHERE media_id IN :ids"
+# SC6 采用 impact 的 media 证据链起点（与 _EDIT_INSTANCE_SQL/_RELEASE_SQL 同款
+# 跨域只读；表未交付 → _raw_rows 捕获 OperationalError 降级为空）
+_MEDIA_ARTIFACT_SQL = (
+    "SELECT id FROM studio_media_artifacts "
+    "WHERE project_id = :pid AND source_job_id IN :ids"
+)
 _RELEASE_SQL = (
     "SELECT id FROM studio_releases WHERE project_id = :pid "
     "AND poster_artifact_id IN :ids"
@@ -183,6 +189,96 @@ def compute_impact(session, pid, fid) -> dict:
                 {"object_ref": {"kind": "media_artifact", "id": m.id, "revision": None}}
             )
         aids = [m.id for m in arts]
+        if aids:
+            for row in _raw_rows(session, _EDIT_INSTANCE_SQL, {"ids": aids}):
+                preservable.append(
+                    {
+                        "object_ref": {
+                            "kind": "edit_instance",
+                            "id": row[0],
+                            "revision": None,
+                        }
+                    }
+                )
+            for row in _raw_rows(session, _RELEASE_SQL, {"pid": pid, "ids": aids}):
+                preservable.append(
+                    {"object_ref": {"kind": "release", "id": row[0], "revision": None}}
+                )
+    preservable.sort(key=lambda x: x["object_ref"]["id"])
+
+    return {"affected": affected, "needs_review": needs_review, "preservable": preservable}
+
+
+def compute_script_adopt_impact(session, pid, fid) -> dict:
+    """SC6 采用预览 impact（附录 03 §2 SC6 + 00 §5；沿用本文件 _successor_group/
+    _raw_rows；确定性 = 各列表按 object_ref.id 升序；空表 → 空列表，键不省略；
+    跨域表未交付（OperationalError）→ 该规则降级为空，绝不 500）。
+
+    - affected[]：`shot` —— `studio_shots.script_adoption_id` ∈ 该片段**后继组**
+      的全部 adoption id（旧采用上的镜头输入冻结于具体 adoption；列出仅为提示，
+      本次采用不改写任何已冻结输入）；
+    - needs_review[]：`job` —— `project_id=pid`、`status ∈ (pending, running)` 且
+      payload 文本含后继组任一 fragment id 或该组任一 adoption id；
+      reason 固定 `frozen_input_references_previous_adoption`；
+    - preservable[]：`media_artifact`（`source_job_id ∈ job 组`）→ 其
+      `edit_instance`（`media_id ∈ 上述 media`）→ 其 `release`
+      （`poster_artifact_id ∈ 上述 media`）；三者 revision 均 null。
+
+    `job 组` 沿用 compute_impact 既有语义：payload 文本命中后继组 fragment id 或
+    该组 adoption id 的**全部**项目 job（任意状态）；needs_review 是其与
+    {pending, running} 的交集，preservable 取全组（已产出媒体多来自已结束 job）。
+    """
+    group = _successor_group(session, pid, fid)
+
+    # 该片段后继组的全部 adoption id（旧采用；不区分是否链尾——历史上任何采用
+    # 都可能被冻结引用）
+    adoption_ids: set = {
+        ad.id
+        for ad in session.scalars(
+            select(ScriptAdoption).where(ScriptAdoption.fragment_id.in_(group))
+        ).all()
+    }
+
+    affected: list[dict] = []
+    if adoption_ids:
+        for row in _raw_rows(
+            session, _SHOT_SQL, {"pid": pid, "adoptions": sorted(adoption_ids)}
+        ):
+            affected.append(
+                {"object_ref": {"kind": "shot", "id": row[0], "revision": row[1]}}
+            )
+    affected.sort(key=lambda x: x["object_ref"]["id"])
+
+    # job 组 = payload（冻结输入）文本含任一 group fragment id 或任一 group
+    # adoption id 的项目 job（任意状态）；needs_review = 该组 ∩ {pending, running}
+    needles = set(group) | adoption_ids
+    try:
+        jobs = session.scalars(
+            select(StudioJob).where(StudioJob.project_id == pid)
+        ).all()
+    except OperationalError:  # 表未交付（当前 DB 未交付）→ 该规则降级为空
+        jobs = []
+    job_group = [j for j in jobs if any(n in (j.payload or "") for n in needles)]
+    needs_review: list[dict] = []
+    for j in job_group:
+        if j.status in ("pending", "running"):
+            needs_review.append(
+                {
+                    "object_ref": {"kind": "job", "id": j.id, "revision": None},
+                    "reason": "frozen_input_references_previous_adoption",
+                }
+            )
+    needs_review.sort(key=lambda x: x["object_ref"]["id"])
+
+    preservable: list[dict] = []
+    if job_group:
+        jids = [j.id for j in job_group]
+        mrows = _raw_rows(session, _MEDIA_ARTIFACT_SQL, {"pid": pid, "ids": jids})
+        aids = [row[0] for row in mrows]
+        for aid in aids:
+            preservable.append(
+                {"object_ref": {"kind": "media_artifact", "id": aid, "revision": None}}
+            )
         if aids:
             for row in _raw_rows(session, _EDIT_INSTANCE_SQL, {"ids": aids}):
                 preservable.append(
