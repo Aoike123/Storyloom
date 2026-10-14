@@ -44,10 +44,11 @@
   "main_at_document_restructure": "c19639d",
   "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1 已随文档精简删除）；不得触碰非本用户占用端口；新 Studio 预览独占 backend=3011 / frontend=3021。2026-10-13 实测 3011/3021 空闲后由主模型临时占用验证并释放。",
   "current_checkout": "/mnt/Code/agent-orchestration/workflow/Storyloom",
-  "current_head_at_metadata_update": "00cea64",
+  "current_head_at_metadata_update": "e23da29",
   "root01_tested_base": "bcb3eb4",
   "executor_context_limit_2026_10_13": "pation/qwen38-27b-w3a4 contextWindow=65536（本地端点 http://127.0.0.1:18982/v1 只服务该变体）。2026-10-13 批次 C 五次派发实测：累计 tool 结果 117820~154679 字节时全部以 400 \"Input plus output exceeds 65536 tokens for this model\" 失败且零产出；432 字节的探测会话正常。派发须把单卡阅读+产出控制在约 50KB 以内，或恢复更大上下文的模型变体。",
-  "batch_c3_closing_regression_2026_10_15": "批次 C3 收尾全量回归（MEDIA-01/CHAT-01/EDIT-01/SCRIPT-02 四卡提交后，HEAD 1a93aa2）：.venv/bin/python -m pytest tests/studio/ -q → **574 passed, exit 0**（551s）。开工基线 460 passed → 净增 114 例（MEDIA-01 31 + CHAT-01 47 + EDIT-01 21 + SCRIPT-02 52，含既有 SCRIPT-01 用例并入同文件后的计数）。并发纪律：本批四卡执行器曾各自并发跑 pytest，共用进程单例测试库（conftest 的 STUDIO_DATA_DIR）导致一次偶发失败（CHAT-01 test_t47 '_IncludedRouter' object has no attribute 'path'），独占重跑与本次收尾全量回归均全绿——确认非实现缺陷，已在批次 C3 派发单确立「验收测试一律串行回收后执行」纪律。"
+  "batch_c3_closing_regression_2026_10_15": "批次 C3 收尾全量回归（MEDIA-01/CHAT-01/EDIT-01/SCRIPT-02 四卡提交后，HEAD 1a93aa2）：.venv/bin/python -m pytest tests/studio/ -q → **574 passed, exit 0**（551s）。开工基线 460 passed → 净增 114 例（MEDIA-01 31 + CHAT-01 47 + EDIT-01 21 + SCRIPT-02 52，含既有 SCRIPT-01 用例并入同文件后的计数）。并发纪律：本批四卡执行器曾各自并发跑 pytest，共用进程单例测试库（conftest 的 STUDIO_DATA_DIR）导致一次偶发失败（CHAT-01 test_t47 '_IncludedRouter' object has no attribute 'path'），独占重跑与本次收尾全量回归均全绿——确认非实现缺陷，已在批次 C3 派发单确立「验收测试一律串行回收后执行」纪律。",
+  "batch_c4_c5_closing_regression_2026_10_15": "批次 C4/C5 收尾全量回归（JOB-01 / ASSET-02-a / MEDIA-02-a / SHOT-01-a 四卡提交后，HEAD e23da29）：.venv/bin/python -m pytest tests/studio/ -q → **751 passed, exit 0**（610s）。批次 C3 收尾为 574 passed，本波新增 JOB-01 79 + MEDIA-02-a 37 + ASSET-02-a（含 t40–t50）+ SHOT-01-a 12 + RETIRE-01 38 + VIEW-02（web 侧 28，不入 pytest 计数）。本波严格执行「验收测试串行化」：四卡回收期间主模型逐卡独占跑测，未再出现共享测试库争用失败。"
  },
  "policy": {
   "acceptance_requires": [
@@ -3720,12 +3721,48 @@
     "R07",
     "R11"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "behavior": "创建真实场与片段归属，不生成镜头。",
    "allowlist_scope": "backend/studio/storyboard/service.py、backend/studio/storyboard/api.py、tests/studio/test_shots.py",
-   "attempts": [],
-   "acceptance": null,
+   "attempts": [
+    {
+     "n": 1,
+     "by": "executor(kimi-coding/kimi-for-coding-highspeed)",
+     "date": "2026-10-15",
+     "result": "submitted——模型改选后首轮提交（262144 上下文）"
+    }
+   ],
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-15",
+    "contract_version": "2.9",
+    "tested_baseline": "9421068（本卡提交，基于 86587e5）",
+    "scope": "scene_create_sb1",
+    "checks": [
+     "主模型独立复验（不复用执行器报告）：pytest tests/studio/test_shots.py → **12 passed**；白名单外零改动（提交恰 3 文件：storyboard/{service,api}.py + test_shots.py；models.py 未改）；代码逐行审查。",
+     "DTO 恰 7 键（object_ref{kind=scene,id,revision:null}/name/seq/layout_cas_revision/project_id/created_at/updated_at），revision 恒 null（场就地改名无版本，附录 04 §1）。",
+     "校验序：项目 404（不存在/非属主同形状）→ name required/max_length(120，保存 trim 后值) → seq 正整数（显式拒绝 bool）→ 幂等（**先于 seq 占用与写**；命中且 name 相符、显式 seq 时 seq 全等 → 200 原体；异内容 422 reused）→ seq 解析（缺省/null = max(seq)+1，无场为 1）→ 显式占用 422 validation_failed(field=seq,rule=taken，message 含占用者 id) → 单事务 INSERT Scene + CommandRecord。",
+     "并发竞态：IntegrityError 回滚后命中 CommandRecord → 重放语义；否则重读占用者映射同一 422 taken（照抄 SC1 先例）。",
+     "`_replay_payload` 额外校验首次 payload 的场**仍属本项目**（防跨项目 command_id 复用读出他场 DTO）。",
+     "硬性禁止逐条负向断言（t10）：零 Shot/ShotRevision 写入；零 source_relations/asset_occurrences/asset_bindings/script_adoptions 写入；不改 fragments/projects 行；零 StudioJob（不生成镜头、不启动生成）。",
+     "t12 断言 updated_at 仅在新建时前移、重放不变；t5 断言首场 seq=1、次场 2。"
+    ],
+    "contract_question_ruling": [
+     "卡面「创建真实场**与片段归属**」与架构契约冲突（主模型裁定，已入 implementation_notes）：附录 04 §1 的 studio_scenes 无任何 fragment/adoption 列，§2 冻结 SB1 请求为 {name, seq?, command_id} 无片段入参 → 裁定**归属不落 scene 行**，经场内镜头 script_adoption_id 体现（SB4 建立）；本卡只建场、绝不建镜头。",
+     "架构契约 §2 SB1 行「409 seq 占用」与全域先例冲突：SC1 同型 (fragment_id,seq) 唯一冲突已冻结为 **422 validation_failed(field=seq,rule=taken)**，且 00 §4 的 duplicate(409) 语义为「属主级**身份**唯一冲突（如项目名）」。裁定本卡取 422 rule=taken；契约该行的 409 为笔误，留待 SHOT-01 家族收口时按 v2.7/v2.8 先例统一修正并登记。",
+     "场 DTO 由主模型冻结（卡面未给形状）：7 键如上；revision 恒 null 而非 1——场无版本链，「revision 无关」在附录 §2 SB1 行亦有明示。"
+    ],
+    "evidence": [
+     "backend/studio/storyboard/service.py",
+     "backend/studio/storyboard/api.py",
+     "tests/studio/test_shots.py"
+    ],
+    "limitations": [
+     "SB2 列表/详情、SB3 改名、SB4 建镜头等兄弟命令归 SHOT-01-b..j；本卡只交付 SB1。",
+     "场与片段的归属链（镜头 → script_adoption → 片段）本卡未建立，待 SB4 与 SHOT-01 家族收口时端到端联验。"
+    ]
+   },
    "implementation_notes": [
     {
      "date": "2026-10-15",
@@ -4570,12 +4607,49 @@
     "R07",
     "R11"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "behavior": "验证真实文件并生成待审核AssetRevision，损坏/跨项目拒绝。",
    "allowlist_scope": "backend/studio/assets/service.py、backend/studio/assets/api.py、web/features/studio/assets/components/AssetUpload.tsx、tests/studio/test_assets.py；按后端/前端分卡",
-   "attempts": [],
-   "acceptance": null
+   "attempts": [
+    {
+     "n": 1,
+     "by": "executor(kimi-coding/kimi-for-coding-highspeed)",
+     "date": "2026-10-15",
+     "result": "submitted——模型改选后首轮提交（262144 上下文）"
+    }
+   ],
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-15",
+    "contract_version": "2.9",
+    "tested_baseline": "e23da29（本卡提交，基于 74a1921）",
+    "scope": "asset_media_upload_new_revision",
+    "checks": [
+     "主模型独立复验（不复用执行器报告）：pytest tests/studio/test_assets.py → **50 passed**（既有 ASSET-01 用例零回归 + 本卡 t40–t50）；白名单外零改动（提交恰 3 文件：assets/{service,api}.py + test_assets.py）；代码逐行审查。",
+     "端点（主模型收窄冻结）：POST /projects/{pid}/assets/{aid}/media，multipart `file`=UploadFile + `command_id`=Form + 可选 `expected_revision`=Form；首次 201、同 command_id 重放 200；service 保持纯同步（api 层 await file.read()）。",
+     "校验序：项目 404 → 资产 404（不存在/跨项目同形状）→ expected_revision 正整数（bool 拒绝）→ store_media 登记**真实文件**（MEDIA-01：扩展名/大小/kind/source 校验 + 原子落盘 + video/audio 真实探测）→ verify_integrity 复核（为假视为损坏）→ 幂等（先于 CAS）→ CAS 409（expected/actual 真实）→ 单事务 INSERT 新 AssetRevision + UPDATE current_revision_id/updated_at + CommandRecord。",
+     "**真实文件而非 fake URL**：新 revision 的 media_artifact_id 指向本命令登记的真实 MediaArtifact（filename 为 {pid}/<ulid>.<ext> 相对名、sha256 与字节一致、verify_integrity 为真）。",
+     "**不隐式采用**：t48 断言 AssetOccurrence/AssetBinding 零写入；**保留并存版本**：t43 断言旧 revision 行数与内容不变；t41 断言 revision=current+1 且 review_status=unreviewed（待审核，R07）。",
+     "**错误保留原版本 / 无半写**：t42 损坏文件 → 422 且零新 AssetRevision、零 MediaArtifact 行、零残留文件；t50 monkeypatch 使完整性复核失败 → 拒绝并清理；失败路径 session.rollback() + _discard_media_file(media_rel) 删除已落盘文件。",
+     "t47 近失/跨项目 404 同形状；t46 请求体形状 422；t44 重放 200 原体零新行 + 异内容 422 reused；t45 CAS 409。"
+    ],
+    "contract_question_ruling": [
+     "**图片扩展名边界（未决契约问题，主模型显式登记）**：MEDIA-01 冻结的 ALLOWED_EXTENSIONS 仅 (\"mp4\",\"webm\",\"mov\",\"m4a\",\"wav\",\"mp3\")，**不含 png/jpg/jpeg/webp**；附录 08 §4「接受输入」清单同样只列音视频与 m4a/wav/mp3。执行器按要求**如实透传** store_media 的 unsupported_type 422（t49 覆盖），未擅自放宽 MEDIA-01 常量（该常量已被 MEDIA-01 验收冻结）。裁定：本卡范围内「上传即登记」对音视频完整成立；**图片作为资产媒体的入库路径仍是开放缺口**，需主模型决定是扩展 MEDIA-01 白名单（升 MEDIA-01 契约并重新验收其常量断言）还是另设图片专用登记路径——不在本卡擅改。",
+     "uploads 的 media_kind 映射：音视频按扩展名确定；未知扩展名兜底 image 仅是「交由 store_media 以 unsupported_type 拒绝」的路径（不产生行），非白名单放宽。",
+     "expected_revision 为可选（卡面未要求必须 CAS）：提供时走 CAS 409，不提供则不做 CAS 比对；与 AS4 的「必填 CAS」不同，属冻结请求体形状的忠实实现。"
+    ],
+    "evidence": [
+     "backend/studio/assets/service.py",
+     "backend/studio/assets/api.py",
+     "tests/studio/test_assets.py"
+    ],
+    "limitations": [
+     "图片扩展名缺口（见裁定）：图片资产的真实上传入库在扩展 MEDIA-01 白名单或另设路径前不可用。",
+     "ASSET-02-b（资产上传 UI）与 ASSET-03（审核采用）未在本卡范围；上传不隐式采用已断言。",
+     "真实浏览器 multipart 上传交互归 GATE-02；真实大文件与供应商产物入库归 ASSET-02-b/JOB 链。"
+    ]
+   }
   },
   {
    "id": "ASSET-02-b",
@@ -4844,12 +4918,47 @@
     "R09",
     "R12"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "behavior": "严格属主与Range请求；猜ID不读他人文件。",
    "allowlist_scope": "backend/studio/media/api.py、backend/studio/media/stream.py、tests/studio/test_media.py",
-   "attempts": [],
-   "acceptance": null
+   "attempts": [
+    {
+     "n": 1,
+     "by": "executor(kimi-coding/kimi-for-coding-highspeed)",
+     "date": "2026-10-15",
+     "result": "submitted——模型改选后首轮提交（262144 上下文）"
+    }
+   ],
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-15",
+    "contract_version": "2.9",
+    "tested_baseline": "74a1921（本卡提交，基于 9421068）",
+    "scope": "private_media_stream_owner_range",
+    "checks": [
+     "主模型独立复验（不复用执行器报告）：pytest tests/studio/test_media.py → **68 passed**（MEDIA-01 的 31 例全保留 + 本卡 37 例）；白名单外零改动（提交恰 3 文件：media/{stream,api}.py + test_media.py；store.py/models.py 未被修改）；代码逐行审查。",
+     "**核心安全要求「猜 ID 不读他人文件」**：项目不存在/非属主 → 404 kind=project；MediaArtifact 不存在**与**跨项目 → 404 kind=media_artifact **同形状**（details 逐字节一致，测试用「他人项目真实存在的 artifact id」断言与「完全不存在」等价，且响应体不含任何文件内容）。",
+     "Range 语义逐条：无 Range → 200 + Accept-Ranges: bytes + Content-Length=全量；bytes=start-end → 206 + Content-Range: bytes s-e/total + **Content-Length=分段长度（≠全量）** + 体恰为该区间；开放式 bytes=start- 与 bytes=-N 均支持；不可满足（start≥size / start>end / 语法非法）→ **416 + Content-Range: bytes */total**。",
+     "无过度全量重传：iter_file_range **seek 后按 64KB 分块产出**，配合 StreamingResponse，绝不把整文件读入内存再切片。",
+     "Content-Type 按 kind+扩展名确定性映射（content_type_for）；文件缺失（DB 有行磁盘无文件）→ 404 同形状。",
+     "纯读零副作用：多次 GET 前后媒体行数与文件集不变；**不写/不建 public_root**（私有/公开物理分离，公开流归 MEDIA-02-b）。",
+     "416 用传输层 Response 表达而**非** StudioAPIError：冻结码表（00 §4）无 416 对应码，用错误协议表达会破坏冻结形状。"
+    ],
+    "contract_question_ruling": [
+     "416 表达方式（实现裁定）：Range 不可满足属 HTTP 传输语义，返回 Response(416, headers={Content-Range: bytes */total})，不进入 StudioAPIError 码表。与卡面「seek 可用」与冻结错误协议均不冲突，不升契约版本。",
+     "开放式 Range（bytes=-N）支持：卡面只举 bytes=start-；按 HTTP 语义同时实现后缀式，属兼容性加严，测试固定语义。"
+    ],
+    "evidence": [
+     "backend/studio/media/stream.py",
+     "backend/studio/media/api.py",
+     "tests/studio/test_media.py"
+    ],
+    "limitations": [
+     "公开产物流（/watch 与 Release 白名单文件）归 MEDIA-02-b（依赖 Release/MEDIA-02-a），本卡不碰 public_root。",
+     "本卡无前端媒体播放组件；浏览器 seek 实测归 GATE-02/GATE-04。"
+    ]
+   }
   },
   {
    "id": "MEDIA-02-b",
@@ -4918,11 +5027,52 @@
     "R08",
     "R11"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "allowlist_scope": "backend/infrastructure/providers/base.py、backend/infrastructure/providers/llm.py、backend/infrastructure/providers/image.py、backend/infrastructure/providers/video.py、tests/studio/test_provider_adapter.py",
-   "attempts": [],
-   "acceptance": null,
+   "attempts": [
+    {
+     "n": 1,
+     "by": "executor(kimi-coding/kimi-for-coding-highspeed)",
+     "date": "2026-10-15",
+     "result": "submitted——模型改选后首轮提交（262144 上下文）"
+    }
+   ],
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-15",
+    "contract_version": "2.9",
+    "tested_baseline": "86587e5（本卡提交，基于 74a1921）",
+    "scope": "provider_adapter_pure_protocol",
+    "checks": [
+     "主模型独立复验（不复用执行器报告）：pytest tests/studio/test_provider_adapter.py → **79 passed**（0.29s，纯逻辑测试无 DB 依赖）；白名单外零改动（提交恰 6 文件：providers/{__init__,base,llm,image,video}.py + test_provider_adapter.py）；RETIRE-01 守卫在真实树仍 exit 0；代码逐行审查。",
+     "模块名依架构契约（附录 09 §5 冻结白名单 base/llm/image/video），**不是**卡面旧文的 client/protocols；主模型已修正账本 allowlist（3f89cea）并留 was/now 与依据。",
+     "base.py：ProviderError 携带可分类纯元数据（kind/status/message/retryable）；错误分类覆盖 网络·超时·认证·限流·厂商业务·响应格式；**URL 必须 https**（非 https 拒绝）；配置门槛纯函数可在缺失时报出**具体缺失项名**；**注入式 transport**——出网一律经调用方注入，缺省 default_http() 才返回 httpx。",
+     "llm.py（DeepSeek OpenAI 兼容，LLM_BASE_URL/LLM_MODEL/LLM_API_KEY）：SSE 流消费、stall 超时、**256KB 上限**、usage 提取、JSON 模式、**deepseek 禁 thinking 参数**、**不自动重发**（失败即错误，断言调用次数恰 1）；请求实际 model/prompt 可追溯。",
+     "image.py（硅基流动，IMAGE_PROVIDER/ENDPOINT/MODEL/API_KEY）：1024² 文生图、参考图 **1–9**、steps **1–100**、**https-only 下载**、下载校验 **20MB / 最短边≥256px / 最长边≤5760px / 宽高比 0.4–2.5**、PIL 归一 PNG；超范围明确报错不静默截断。",
+     "video.py（minimax/ark，VIDEO_PROVIDER/ENDPOINT/MODEL/API_KEY）：提交+轮询协议、**64MB 守卫**、时长 **6–10s**、参考图 **≤6**、**已有厂商任务号只轮询绝不重提**。",
+     "硬性禁止逐条：providers 全文**零旧后端 import**（grep 无 providers/image_provider/llm_stream/reference_image_model/task_activity/provider_usage/workflows/worker 等），且自带 test_adapter_sources_have_no_legacy_backend_imports 源码扫描守卫；不读写旧 Task/Record、不写任何数据库表。",
+     "无真实收费调用：test_adapters_never_touch_real_network 断言所有出网经注入 transport；测试全程 0.29s 且无网络等待，佐证未打真实端点。",
+     "执行器交付报告的实现选择（主模型核可，均不改契约）：①image 参考图入参只收已归一 PNG data URI（沿用旧 local_frame_data 形状），https 参考图与本地文件读取留 JOB-08；②参考图上限按冻结卡取 9（旧常量 3 被卡覆盖），模型默认取 env IMAGE_MODEL；③256KB 上限按 **UTF-8 字节**计（旧实现按字符 len），常量仍 262144；④**禁 thinking 与旧实现相反**——旧 providers.chat_json 显式写 body[\"thinking\"]={\"type\":\"disabled\"}，本卡按卡面「请求体不得出现 thinking 相关参数」实现并公开 assert_no_thinking_parameters 守门；⑤ark 分支保持旧协议形状不加 duration/resolution/ratio，但时长 6–10 无条件校验，仅 minimax 追加；⑥64MB 守卫默认不变但提供 max_bytes 注入以便廉价测试；⑦VIDEO_PROVIDER∈{minimax,ark}、IMAGE_PROVIDER==siliconflow 才算配置齐全（沿用旧 settings() 语义）；⑧retryable 语义 = 重试是否有重复计费风险（network/timeout/auth/provider/format=False；config/validation/rate_limit=True），本包任何函数都不自行重试。"
+    ],
+    "contract_question_ruling": [
+     "卡面白名单 client.py/protocols.py → base/llm/image/video（主模型裁定，已在 implementation_notes 留档）：附录 09 §5 标题即「供应商适配器抽取白名单」并逐行冻结新模块名；卡面所列 client/protocols 不出现在任何冻结模块清单中。按 docs/studio/README.md「工程落实由架构契约定义」修正卡面，不升契约版本。",
+     "「只读抽取纯协议」的可执行含义：**禁止 import 旧栈文件**，但允许依附录文字在新命名空间**重写**同等纯协议能力——执行器据此全文自实现，未 import backend/providers.py 等；与 R01/R11 及附录「禁止 import 旧 providers.py/image_provider.py/llm_stream.py/workflows.py/worker.py/db.py 业务路径」一致。",
+     "出网可注入（实现取向，加严）：缺省虽返回 httpx，但接口设计要求调用方注入 transport，使「不调真实供应商」在测试中成为结构保证而非约定；后续 JOB-08/09/11/12 处理器必须沿用注入，禁止直接 new httpx。",
+     "④ 禁 thinking 的取向（重要，主模型确认）：卡面冻结「deepseek 禁 thinking 参数」，而旧实现是**显式传** thinking=disabled。两者都达「不启用思考」，但**请求体形状不同**。裁定按**新契约卡面**实现（请求体完全不出现 thinking 相关键），原因是新流程不绑定旧 prompt/参数 payload 形状（附录 09 §5「新流程不绑定旧 prompt payload 格式」）。若日后供应商要求显式 disabled，须升契约并同步 llm.py 与测试。"
+    ],
+    "evidence": [
+     "backend/infrastructure/providers/base.py",
+     "backend/infrastructure/providers/llm.py",
+     "backend/infrastructure/providers/image.py",
+     "backend/infrastructure/providers/video.py",
+     "tests/studio/test_provider_adapter.py"
+    ],
+    "limitations": [
+     "本卡只交付纯协议层，**不含** job 提交/轮询编排、attempt/event 落库与媒体登记——那些归 JOB-02/03 与各处理器卡（JOB-08/09/11/12）；本卡不写任何数据库表。",
+     "模型表（附录 09 §6）冻结为 DeepSeek/硅基流动/MiniMax，本卡不新增付费通道；实际供应商联调属 GATE-03 新任务/agent 执行门，本卡无真实调用。"
+    ]
+   },
    "implementation_notes": [
     {
      "date": "2026-10-15",
