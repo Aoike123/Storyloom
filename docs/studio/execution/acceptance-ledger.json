@@ -3185,9 +3185,20 @@
    ],
    "status": "planned",
    "dispatchable": false,
-   "allowlist_scope": "web/features/studio/shell/components/ObjectInspector.tsx、web/features/studio/shell/studio-state.ts、web/features/studio/shell/object-view.ts",
+   "allowlist_scope": "web/features/studio/shell/components/ObjectInspector.tsx、web/features/studio/shell/studio-state.ts、web/features/studio/shell/object-view.ts、web/tests/studio/object-view.test.cjs（主模型补入，验收需测试证据）",
    "attempts": [],
-   "acceptance": null
+   "acceptance": null,
+   "implementation_notes": [
+    {
+     "date": "2026-10-15",
+     "by": "root",
+     "kind": "allowlist_extension_no_contract_change",
+     "was": "web/features/studio/shell/components/ObjectInspector.tsx、web/features/studio/shell/studio-state.ts、web/features/studio/shell/object-view.ts",
+     "now": "web/features/studio/shell/components/ObjectInspector.tsx、web/features/studio/shell/studio-state.ts、web/features/studio/shell/object-view.ts、web/tests/studio/object-view.test.cjs（主模型补入，验收需测试证据）",
+     "basis": "卡面白名单只列 3 个实现文件、**无测试文件**；但账本 policy negative_case_policy 要求「每张派发卡必须填写与唯一操作直接相关的失败/恢复案例，不能以空数组通过」，且本卡验收项（节点高亮/属性/出处指同一对象 revision、不把 group 标题当归属、资源与实例选择不混淆）**必须是可执行断言**，仅靠 tsc + 既有测试不足以证明。按 SOURCE-12-fix-1 与 STATE-13 的既有先例（纯逻辑入模块、测试文件随卡补入白名单）扩展 allowlist。",
+     "note": "studio-state.ts 已在 VIEW-01 验收（含 state.test.cjs 28 例）；本卡若修改其导出/语义，须保持 VIEW-01 的 28 例零回归。"
+    }
+   ]
   },
   {
    "id": "VIEW-04",
