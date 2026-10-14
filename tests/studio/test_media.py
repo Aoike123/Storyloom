@@ -957,3 +957,459 @@ def test_media_t16_stored_artifact_streams_range(db, client):
     assert full.status_code == 200
     assert full.content == payload
     assert _public_snapshot() == public_before  # 公开根零改动
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# MEDIA-02-b 公开发布媒体流
+# （GET /api/studio/projects/{pid}/releases/{rid}/media/{filename:path}）
+#
+# 「公开」= 仅该 Release 自己的公开目录 public_root()/{public_dir}/ 内文件；
+# 严格属主 + 仅 published/retired；一切否定分支同形状 404；纯读零副作用。
+# 以下为追加用例，上方 MEDIA-01 / MEDIA-02-a 用例原样保留。
+# ══════════════════════════════════════════════════════════════════════════
+from urllib.parse import quote  # noqa: E402
+
+from backend.studio.edits.models import ConfirmedEdit  # noqa: E402
+from backend.studio.media.stream import (  # noqa: E402
+    normalize_public_dir,
+    public_content_type,
+    resolve_public_path,
+)
+from backend.studio.publishing.models import Release  # noqa: E402
+
+_UNSET = object()  # public_dir 未显式给出时默认 = releaseId
+
+
+def _seed_release(
+    pid: str,
+    *,
+    status: str = "published",
+    rid: str | None = None,
+    name: str | None = None,
+    public_dir=_UNSET,
+) -> str:
+    """建 ConfirmedEdit（Release.confirmed_edit_id FK）+ Release 行，返回 release_id。"""
+    rid = rid or make_ulid()
+    with Session() as s:
+        ce = ConfirmedEdit(
+            id=make_ulid(),
+            edit_id=make_ulid(),
+            edit_revision=1,
+            manifest="{}",
+            manifest_digest=hashlib.sha256(b"{}").hexdigest(),
+            output_spec="{}",
+        )
+        s.add(ce)
+        s.flush()
+        s.add(
+            Release(
+                id=rid,
+                project_id=pid,
+                name=name or f"rel-{rid}",
+                confirmed_edit_id=ce.id,
+                status=status,
+                public_dir=rid if public_dir is _UNSET else public_dir,
+                published_at=1.0,
+            )
+        )
+        s.commit()
+    return rid
+
+
+def _write_public(rid: str, filename: str, data: bytes) -> Path:
+    """在 public_root()/{rid}/ 下造一个真实公开文件（仅测试夹具写公开根）。"""
+    path = public_root() / rid / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return path
+
+
+def _release_media_url(pid: str, rid: str, filename: str) -> str:
+    return f"/api/studio/projects/{pid}/releases/{rid}/media/{filename}"
+
+
+def _release_rows_snapshot():
+    """全部 Release 行的列值快照（纯读零副作用断言用）。"""
+    with Session() as s:
+        return sorted(
+            (
+                r.id,
+                r.project_id,
+                r.name,
+                r.confirmed_edit_id,
+                r.poster_artifact_id,
+                r.status,
+                r.predecessor_release_id,
+                r.public_dir,
+                r.published_at,
+                r.created_at,
+                r.updated_at,
+                r.cas_revision,
+            )
+            for r in s.execute(select(Release)).scalars().all()
+        )
+
+
+# ── 纯逻辑单元（归一化 / 路径解析 / Content-Type） ────────────────────────
+def test_release_media_unit_public_content_type():
+    assert public_content_type("clip.mp4") == "video/mp4"
+    assert public_content_type("a/b/clip.MP4") == "video/mp4"
+    assert public_content_type("cover.png") == "image/png"
+    assert public_content_type("cover.WEBP") == "image/webp"
+    assert public_content_type("a.m4a") == "audio/mp4"
+    assert public_content_type("noext") == "application/octet-stream"
+    assert public_content_type("a.xyz") == "application/octet-stream"
+
+
+def test_release_media_unit_normalize_public_dir():
+    rid = make_ulid()
+    assert normalize_public_dir(None, rid) == rid  # NULL → 回落 releaseId
+    assert normalize_public_dir("", rid) == rid
+    assert normalize_public_dir(rid, rid) == rid
+    assert normalize_public_dir(f"public/{rid}", rid) == rid  # 存量前缀归一化
+    assert normalize_public_dir(f"./{rid}", rid) == rid
+    assert normalize_public_dir(f"{rid}/sub", rid) == f"{rid}/sub"
+    for bad in ("public", "..", "../media", "a/../..", "/etc", "a\x00b", rid + "/../.."):
+        assert normalize_public_dir(bad, rid) is None, bad
+
+
+def test_release_media_unit_resolve_public_path():
+    rid = make_ulid()
+    root = public_root().resolve()
+    assert resolve_public_path(rid, rid, "clip.mp4") == (root / rid / "clip.mp4")
+    assert resolve_public_path(None, rid, "clip.mp4") == (root / rid / "clip.mp4")
+    assert resolve_public_path(f"public/{rid}", rid, "sub/clip.mp4") == (
+        root / rid / "sub/clip.mp4"
+    )
+    for bad in (
+        "",
+        "..",
+        "../x.mp4",
+        "a/../../x.mp4",
+        "a/../b.mp4",
+        "/etc/passwd",
+        "\\x.mp4",
+        "d:/x.mp4",
+        "a\x00b.mp4",
+        "a//b.mp4",
+        "a/./b.mp4",
+        "a/",
+        "dir/",
+    ):
+        assert resolve_public_path(rid, rid, bad) is None, bad
+    # public_dir 归一化失败 → 一律 None（不回落、不猜测）
+    for bad_dir in ("..", "../media", "/etc", "public", "a/../.."):
+        assert resolve_public_path(bad_dir, rid, "clip.mp4") is None, bad_dir
+
+
+# ── 鉴权与属主（HTTP） ──────────────────────────────────────────────────
+def test_release_media_t1_no_token_401(db, client):
+    _token, pid = _seed_via_api(client, "rel_t1")
+    rid = _seed_release(pid)
+    _write_public(rid, "clip.mp4", b"hello world")
+
+    r = client.get(_release_media_url(pid, rid, "clip.mp4"))
+    assert r.status_code == 401, r.text
+    assert r.json()["error"]["code"] == "unauthenticated"
+    assert b"hello world" not in r.content
+
+
+def test_release_media_t2_project_missing_404_kind_project(db, client):
+    token, pid = _seed_via_api(client, "rel_t2")
+    rid = _seed_release(pid)
+    _write_public(rid, "clip.mp4", b"hello world")
+    missing = make_ulid()
+
+    r = client.get(_release_media_url(missing, rid, "clip.mp4"), headers=_auth(token))
+    assert r.status_code == 404, r.text
+    err = r.json()["error"]
+    assert err["code"] == "not_found"
+    assert err["details"] == {"kind": "project", "id": missing}
+    assert b"hello world" not in r.content
+
+
+def test_release_media_t3_other_owner_project_404_same_shape(db, client):
+    token_a, pid_a = _seed_via_api(client, "rel_t3_a")
+    secret = b"REL-T3-SECRET-PUBLIC-BYTES"
+    rid = _seed_release(pid_a)
+    _write_public(rid, "clip.mp4", secret)
+
+    token_b = _register(client, "rel_t3_b")
+    r = client.get(_release_media_url(pid_a, rid, "clip.mp4"), headers=_auth(token_b))
+    assert r.status_code == 404, r.text
+    err = r.json()["error"]
+    assert err["code"] == "not_found"
+    assert err["details"] == {"kind": "project", "id": pid_a}
+    assert secret not in r.content
+
+
+def test_release_media_t4_release_missing_404_kind_release(db, client):
+    token, pid = _seed_via_api(client, "rel_t4")
+    _write_public(make_ulid(), "clip.mp4", b"unrelated")
+    missing = make_ulid()
+
+    r = client.get(_release_media_url(pid, missing, "clip.mp4"), headers=_auth(token))
+    assert r.status_code == 404, r.text
+    err = r.json()["error"]
+    assert err["code"] == "not_found"
+    assert err["details"] == {"kind": "release", "id": missing}
+
+
+def test_release_media_t5_cross_project_release_404_same_shape(db, client):
+    """跨项目 release：与「不存在」逐字节同形状，不泄漏存在性。"""
+    token, pid1 = _seed_via_api(client, "rel_t5")
+    pid2 = _mk_project(client, token, "T5RelSecond")
+    secret = b"REL-T5-ONLY-IN-P1"
+    rid1 = _seed_release(pid1)
+    _write_public(rid1, "clip.mp4", secret)
+    missing = make_ulid()
+
+    r = client.get(_release_media_url(pid2, rid1, "clip.mp4"), headers=_auth(token))
+    r2 = client.get(_release_media_url(pid2, missing, "clip.mp4"), headers=_auth(token))
+    for r_ in (r, r2):
+        assert r_.status_code == 404, r_.text
+        err = r_.json()["error"]
+        assert err["code"] == "not_found"
+        assert err["details"]["kind"] == "release"
+        assert set(err["details"]) == {"kind", "id"}
+    assert r.json()["error"]["details"]["id"] == rid1
+    assert secret not in r.content
+    assert r.content.replace(rid1.encode(), b"<ID>") == r2.content.replace(
+        missing.encode(), b"<ID>"
+    )
+
+
+# ── 状态门禁：draft 不可读 ──────────────────────────────────────────────
+def test_release_media_t6_draft_not_readable_404(db, client):
+    """draft 的 release 即使公开文件真实存在也 404（防草稿泄漏），同形状。"""
+    token, pid = _seed_via_api(client, "rel_t6")
+    secret = b"REL-T6-DRAFT-MUST-NOT-LEAK"
+    rid = _seed_release(pid, status="draft", public_dir=f"public/{make_ulid()}")
+    _write_public(rid, "clip.mp4", secret)
+    missing = make_ulid()
+
+    r = client.get(_release_media_url(pid, rid, "clip.mp4"), headers=_auth(token))
+    r2 = client.get(_release_media_url(pid, missing, "clip.mp4"), headers=_auth(token))
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["details"] == {"kind": "release", "id": rid}
+    assert secret not in r.content
+    assert r.content.replace(rid.encode(), b"<ID>") == r2.content.replace(
+        missing.encode(), b"<ID>"
+    )
+
+
+# ── 正常返回 / 退役仍可读 / Range ───────────────────────────────────────
+def test_release_media_t7_published_full_body_200(db, client):
+    token, pid = _seed_via_api(client, "rel_t7")
+    data = b"hello world"  # 11 字节
+    rid = _seed_release(pid)
+    _write_public(rid, "clip.mp4", data)
+
+    r = client.get(_release_media_url(pid, rid, "clip.mp4"), headers=_auth(token))
+    assert r.status_code == 200, r.text
+    assert r.headers["accept-ranges"] == "bytes"
+    assert int(r.headers["content-length"]) == len(data)
+    assert r.headers["content-type"] == "video/mp4"
+    assert r.content == data
+
+
+def test_release_media_t8_retired_still_readable_200(db, client):
+    """R12：已发布可退役，公开访问仍成立（文件保留）。"""
+    token, pid = _seed_via_api(client, "rel_t8")
+    data = b"retired-still-serves"
+    rid = _seed_release(pid, status="retired")
+    _write_public(rid, "film.mp4", data)
+
+    r = client.get(_release_media_url(pid, rid, "film.mp4"), headers=_auth(token))
+    assert r.status_code == 200, r.text
+    assert r.content == data
+    assert int(r.headers["content-length"]) == len(data)
+
+
+def test_release_media_t9_range_0_4_206(db, client):
+    token, pid = _seed_via_api(client, "rel_t9")
+    data = b"hello world"  # 11 字节
+    rid = _seed_release(pid)
+    _write_public(rid, "clip.mp4", data)
+
+    r = client.get(
+        _release_media_url(pid, rid, "clip.mp4"),
+        headers={**_auth(token), "Range": "bytes=0-4"},
+    )
+    assert r.status_code == 206, r.text
+    assert r.headers["accept-ranges"] == "bytes"
+    assert r.headers["content-range"] == "bytes 0-4/11"
+    assert int(r.headers["content-length"]) == 5
+    assert r.content == b"hello"
+
+
+def test_release_media_t10_unsatisfiable_range_416(db, client):
+    token, pid = _seed_via_api(client, "rel_t10")
+    data = b"hello world"
+    rid = _seed_release(pid)
+    _write_public(rid, "clip.mp4", data)
+
+    r = client.get(
+        _release_media_url(pid, rid, "clip.mp4"),
+        headers={**_auth(token), "Range": "bytes=99-"},
+    )
+    assert r.status_code == 416, r.text
+    assert r.headers["content-range"] == "bytes */11"
+    assert r.headers["accept-ranges"] == "bytes"
+    assert r.content == b""
+
+
+# ── 穿越拒绝 ────────────────────────────────────────────────────────────
+def test_release_media_t11_traversal_404_no_private_content(db, client):
+    """`../media/{pid}/{私有文件名}` 与 `../../etc/passwd` → 404 同形状。"""
+    token, pid = _seed_via_api(client, "rel_t11")
+    private_secret = b"REL-T11-PRIVATE-MUST-NOT-LEAK"
+    aid, _path = _put_artifact(pid, private_secret)
+    rid = _seed_release(pid)
+    _write_public(rid, "clip.mp4", b"public-ok")
+
+    evil = f"../media/{pid}/{aid}.mp4"
+    # 百分号编码形式原样到达路由（httpx 不折叠 %2F），由路由的穿越防护拒绝：
+    # 路由收到的 filename 就是 "../media/{pid}/{aid}.mp4" / "../../etc/passwd"。
+    for filename in (quote(evil, safe=""), quote("../../etc/passwd", safe="")):
+        r = client.get(
+            _release_media_url(pid, rid, filename), headers=_auth(token)
+        )
+        assert r.status_code == 404, (filename, r.text)
+        assert r.json()["error"]["details"] == {"kind": "release", "id": rid}
+        assert private_secret not in r.content
+    # 原始 ".." 形式会被 httpx 在客户端按 RFC 3986 折叠点段后才发出（ASGI 层
+    # 看不到 ".."），仍必须 404 且不含私有内容。
+    for filename in (evil, "../../etc/passwd"):
+        r = client.get(
+            _release_media_url(pid, rid, filename), headers=_auth(token)
+        )
+        assert r.status_code == 404, (filename, r.text)
+        assert private_secret not in r.content
+
+
+# ── 不泄漏私有媒体（核心） ──────────────────────────────────────────────
+def test_release_media_t12_private_artifact_never_served(db, client):
+    """真实存在的私有 artifact：用其文件名/相对名请求公开路由一律 404 且无内容。"""
+    token, pid = _seed_via_api(client, "rel_t12")
+    private_secret = b"REL-T12-TOP-SECRET-PRIVATE-" + b"Z" * 64
+    aid, path = _put_artifact(pid, private_secret)
+    rel = f"{pid}/{aid}.mp4"
+    assert path.is_file() and path.read_bytes() == private_secret  # 私有文件真实存在
+
+    rid = _seed_release(pid)
+    _write_public(rid, "clip.mp4", b"public-ok")
+
+    for filename in (f"{aid}.mp4", rel, path.name, quote(rel, safe="")):
+        r = client.get(
+            _release_media_url(pid, rid, filename), headers=_auth(token)
+        )
+        assert r.status_code == 404, (filename, r.text)
+        assert r.json()["error"]["details"] == {"kind": "release", "id": rid}
+        assert private_secret not in r.content
+    # 私有文件未被改动
+    assert path.read_bytes() == private_secret
+
+
+def test_release_media_t13_public_dir_escape_rejected(db, client):
+    """public_dir 本身穿透（../media/{pid}）→ 404，不可借道读私有根。"""
+    token, pid = _seed_via_api(client, "rel_t13")
+    private_secret = b"REL-T13-ESCAPE-MUST-NOT-LEAK"
+    aid, _path = _put_artifact(pid, private_secret)
+    rid = _seed_release(pid, public_dir=f"../media/{pid}")
+
+    r = client.get(
+        _release_media_url(pid, rid, f"{aid}.mp4"), headers=_auth(token)
+    )
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["details"] == {"kind": "release", "id": rid}
+    assert private_secret not in r.content
+
+
+# ── 目录列举拒绝 ────────────────────────────────────────────────────────
+def test_release_media_t14_directory_listing_refused(db, client):
+    token, pid = _seed_via_api(client, "rel_t14")
+    rid = _seed_release(pid)
+    _write_public(rid, "sub/inner.mp4", b"inner-bytes")
+    _write_public(rid, "clip.mp4", b"public-ok")
+
+    for filename in ("sub", "sub/", "", f"{rid}/sub"):
+        r = client.get(
+            _release_media_url(pid, rid, filename), headers=_auth(token)
+        )
+        assert r.status_code == 404, (filename, r.text)
+        assert b"inner-bytes" not in r.content
+        assert b"clip.mp4" not in r.content  # 绝不返回目录清单
+
+
+# ── 子路径可读 / 存量 public_dir 前缀归一化 ─────────────────────────────
+def test_release_media_t15_subpath_and_legacy_prefix_readable(db, client):
+    token, pid = _seed_via_api(client, "rel_t15")
+    sub = b"nested-public-asset"
+    # 存量写法：public_dir 带 "public/" 前缀，但文件实际落在 public_root()/{rid}/
+    rid = make_ulid()
+    _seed_release(pid, rid=rid, public_dir=f"public/{rid}")
+    _write_public(rid, "poster/cover.png", sub)
+
+    r = client.get(
+        _release_media_url(pid, rid, "poster/cover.png"), headers=_auth(token)
+    )
+    assert r.status_code == 200, r.text
+    assert r.content == sub
+    assert r.headers["content-type"] == "image/png"
+
+
+# ── 纯读零副作用 / 不创建公开根 ─────────────────────────────────────────
+def test_release_media_t16_pure_read_zero_side_effects(db, client):
+    token, pid = _seed_via_api(client, "rel_t16")
+    private_secret = b"REL-T16-PRIVATE"
+    _put_artifact(pid, private_secret)
+    data = bytes(range(64))
+    rid = _seed_release(pid)
+    path = _write_public(rid, "clip.mp4", data)
+    # 一个没有公开目录的 published release：GET 不得创建任何目录/文件
+    empty_rid = _seed_release(pid)
+
+    rows_before = _release_rows_snapshot()
+    media_before = _media_rows_snapshot()
+    public_before = _public_snapshot()
+    media_files_before = _all_media_files()
+
+    for _ in range(3):
+        assert (
+            client.get(_release_media_url(pid, rid, "clip.mp4"), headers=_auth(token)).status_code
+            == 200
+        )
+        assert (
+            client.get(
+                _release_media_url(pid, rid, "clip.mp4"),
+                headers={**_auth(token), "Range": "bytes=0-4"},
+            ).status_code
+            == 206
+        )
+        assert (
+            client.get(
+                _release_media_url(pid, rid, "clip.mp4"),
+                headers={**_auth(token), "Range": "bytes=9999-"},
+            ).status_code
+            == 416
+        )
+        assert (
+            client.get(
+                _release_media_url(pid, rid, "../media/x.mp4"), headers=_auth(token)
+            ).status_code
+            == 404
+        )
+        assert (
+            client.get(
+                _release_media_url(pid, empty_rid, "clip.mp4"), headers=_auth(token)
+            ).status_code
+            == 404
+        )
+
+    assert _release_rows_snapshot() == rows_before  # Release 行零改动
+    assert _media_rows_snapshot() == media_before  # MediaArtifact 行零改动
+    assert _public_snapshot() == public_before  # 公开根零新增/零改动
+    assert _all_media_files() == media_files_before
+    assert path.read_bytes() == data
+    assert not (public_root() / empty_rid).exists()  # 未创建公开目录
