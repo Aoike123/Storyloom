@@ -8,7 +8,9 @@ spec 必填键与 body_type、type/name 非法、跨项目/无 token、command_i
 本文件不改写 STUDIO_* env。db fixture 照抄 tests/studio/test_projects.py。
 """
 import json
+import os
 import re
+import struct
 import uuid
 
 import pytest
@@ -17,6 +19,14 @@ from sqlalchemy import func, select, text
 from backend.core.db import Base, Session, engine
 from backend.studio.assets.models import Asset, AssetRevision
 from backend.studio.contracts.models import CommandRecord
+from backend.studio.jobs.models import StudioJob
+from backend.studio.media.models import MediaArtifact
+from backend.studio.media.store import (
+    artifact_path,
+    media_root,
+    store_media,
+    verify_integrity,
+)
 from backend.studio.relations.models import AssetBinding, AssetOccurrence
 from backend.studio.projects.models import StudioProject
 from backend.studio.storyboard.models import Scene, Shot
@@ -1440,3 +1450,491 @@ def test_t39_costume_spec_revision_no_attribution_check(db, client):
     err = r.json()["error"]
     v = err["details"]["violations"][0]
     assert v["field"] == "spec.description" and v["rule"] == "required"
+
+
+# ── ASSET-02-a 上传并登记媒体版本（AS5）POST /assets/{aid}/media ────────────
+
+_MEDIA_DTO_KEYS = {
+    "object_ref", "type", "name", "character",
+    "current_revision", "versions", "occurrences", "bindings",
+}
+
+
+def _wav_bytes(seconds: float = 0.1, rate: int = 8000) -> bytes:
+    """构造极小的真实 PCM WAV（16bit mono 静音）：MEDIA-01 的 audio 探测可解析。
+
+    不依赖 ffmpeg 生成，测试快且确定（duration≈100ms）。
+    """
+    payload = b"\x00\x00" * int(rate * seconds)
+    header = b"RIFF" + struct.pack("<I", 36 + len(payload)) + b"WAVE"
+    header += b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+    header += b"data" + struct.pack("<I", len(payload))
+    return header + payload
+
+
+def _upload_media(client, pid, aid, *, data, filename="clip.wav", token=None,
+                  command_id=None, expected_revision=None,
+                  content_type="audio/wav"):
+    """POST /assets/{aid}/media（multipart/form-data，文件字段名 file）。"""
+    form = {"command_id": command_id or _cmd()}
+    if expected_revision is not None:
+        form["expected_revision"] = str(expected_revision)
+    headers = _auth(token) if token is not None else {}
+    return client.post(
+        f"/api/studio/projects/{pid}/assets/{aid}/media",
+        files={"file": (filename, data, content_type)},
+        data=form,
+        headers=headers,
+    )
+
+
+def _media_files() -> set:
+    """私有媒体根下全部文件（含隐藏临时文件）的绝对路径集合。"""
+    root = media_root()
+    found: set = set()
+    if not root.exists():
+        return found
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in filenames:
+            found.add(os.path.join(dirpath, name))
+    return found
+
+
+def _media_row_count() -> int:
+    with Session() as s:
+        return s.scalar(select(func.count(MediaArtifact.id)))
+
+
+def _revision_snapshot(s, aid) -> list[tuple]:
+    """资产全部 revision 行的逐字段快照（按 revision 升序），用于不可变断言。"""
+    rows = s.scalars(
+        select(AssetRevision)
+        .where(AssetRevision.asset_id == aid)
+        .order_by(AssetRevision.revision)
+    ).all()
+    return [
+        (
+            r.id, r.revision, r.spec, r.media_artifact_id,
+            r.generation_input, r.review_status, r.created_at,
+        )
+        for r in rows
+    ]
+
+
+def test_t40_media_upload_no_token_401(db, client):
+    """无 token 上传 → 401 unauthenticated（鉴权先于一切业务校验）。"""
+    r = _upload_media(client, "01" * 13, "02" * 13, data=_wav_bytes(), token=None)
+    assert r.status_code == 401, r.text
+    assert r.json()["error"]["code"] == "unauthenticated"
+
+
+def test_t41_media_upload_success_201(db, client):
+    """成功上传：201 + 8 键 DTO、新 revision=current+1、媒体为新登记行、
+    review_status=unreviewed、spec/generation 继承、落盘可校验完整性。"""
+    token = _register(client, "a40_vera")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+    with Session() as s:
+        snapshot0 = _revision_snapshot(s, aid)
+        old_spec_text = snapshot0[0][2]
+    counts0 = _counts()
+    files0 = _media_files()
+    data = _wav_bytes()
+
+    r = _upload_media(
+        client, pid, aid, data=data, filename="Voice.WAV",
+        token=token, expected_revision=1,
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert set(body) == _MEDIA_DTO_KEYS
+    assert body["object_ref"] == {"kind": "asset", "id": aid, "revision": 2}
+    assert body["current_revision"]["revision"] == 2
+    assert body["current_revision"]["spec"] == json.loads(old_spec_text)
+    assert body["current_revision"]["review_status"] == "unreviewed"
+    media_id = body["current_revision"]["media_artifact_id"]
+    assert media_id is not None
+    assert [v["revision"] for v in body["versions"]] == [1, 2]
+    assert body["versions"][0]["media_artifact_id"] is None
+    assert body["versions"][1]["media_artifact_id"] == media_id
+    assert body["occurrences"] == [] and body["bindings"] == []
+
+    with Session() as s:
+        artifact = s.get(MediaArtifact, media_id)
+        assert artifact is not None
+        assert artifact.project_id == pid
+        assert artifact.media_kind == "audio"
+        assert artifact.source == "upload" and artifact.source_job_id is None
+        assert artifact.filename == f"{pid}/{media_id}.wav"  # 扩展名归一化小写
+        assert artifact.size_bytes == len(data)
+        assert verify_integrity(artifact) is True
+        path = artifact_path(artifact)
+        assert path.is_file()
+        assert path == (media_root() / artifact.filename).resolve()
+        assert path.is_relative_to((media_root() / pid).resolve())
+
+        new_row = s.get(AssetRevision, s.get(Asset, aid).current_revision_id)
+        assert new_row.revision == 2
+        assert new_row.media_artifact_id == media_id
+        assert new_row.spec == old_spec_text  # 继承上一 revision 的 spec 原样
+        assert new_row.generation_input is None  # 继承（本阶段恒 NULL）
+        assert new_row.review_status == "unreviewed"
+        assert s.get(Asset, aid).current_revision_id == new_row.id
+        # 旧 revision 行逐字段不可变
+        assert _revision_snapshot(s, aid)[0] == snapshot0[0]
+
+    counts1 = _counts()
+    assert counts1["assets"] == counts0["assets"]
+    assert counts1["revisions"] == counts0["revisions"] + 1
+    assert counts1["commands"] == counts0["commands"] + 1
+    assert counts1["occurrences"] == 0 and counts1["bindings"] == 0
+    with Session() as s:
+        assert s.scalar(select(func.count(StudioJob.id))) == 0  # 零生成
+    assert len(_media_files()) == len(files0) + 1  # 恰好新增 1 个落盘文件
+
+
+def test_t42_media_upload_corrupt_422_no_residue(db, client):
+    """损坏文件（随机字节 .mp4 / 空文件）→ 422，且零新 revision、零媒体行、
+    零残留文件（含临时文件），原版本保留。"""
+    token = _register(client, "a41_walt")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+    counts0 = _counts()
+    files0 = _media_files()
+    media0 = _media_row_count()
+    with Session() as s:
+        snapshot0 = _revision_snapshot(s, aid)
+        current0 = s.get(Asset, aid).current_revision_id
+
+    r = _upload_media(
+        client, pid, aid, data=os.urandom(4096), filename="broken.mp4",
+        token=token, content_type="video/mp4",
+    )
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "validation_failed"
+    v = err["details"]["violations"][0]
+    assert v["field"] == "file" and v["rule"] == "invalid"
+
+    # 空文件 → 同样 422（MEDIA-01 尺寸校验），零副作用
+    r = _upload_media(client, pid, aid, data=b"", filename="empty.wav", token=token)
+    assert r.status_code == 422, r.text
+
+    assert _counts() == counts0
+    assert _media_row_count() == media0
+    assert _media_files() == files0  # 无残留（含临时文件）
+    with Session() as s:
+        assert _revision_snapshot(s, aid) == snapshot0  # 原版本保留
+        assert s.get(Asset, aid).current_revision_id == current0
+
+
+def test_t43_media_upload_preserves_prior_versions(db, client):
+    """已有 2 个版本时上传 → revision=3、versions[] 含全部 3 版；旧行不可变。"""
+    token = _register(client, "a42_xena")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+    r = _revise_spec(
+        client, pid, aid, spec={"appearance": "v2"}, expected_revision=1, token=token
+    )
+    assert r.status_code == 200, r.text
+    with Session() as s:
+        snapshot0 = _revision_snapshot(s, aid)
+    counts0 = _counts()
+
+    r = _upload_media(client, pid, aid, data=_wav_bytes(), token=token, expected_revision=2)
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert [v["revision"] for v in body["versions"]] == [1, 2, 3]
+    assert body["versions"][0]["spec"] == {"appearance": "a"}
+    assert body["versions"][1]["spec"] == {"appearance": "v2"}
+    assert body["current_revision"]["spec"] == {"appearance": "v2"}  # 继承 rev2
+    assert all(v["media_artifact_id"] is None for v in body["versions"][:2])
+    assert body["object_ref"]["revision"] == 3
+
+    with Session() as s:
+        snapshot1 = _revision_snapshot(s, aid)
+    assert snapshot1[:2] == snapshot0  # 旧行逐字段不变（并存版本保留）
+    assert snapshot1[2][1] == 3
+    assert snapshot1[2][3] == body["current_revision"]["media_artifact_id"]
+    assert snapshot1[2][5] == "unreviewed"
+    assert _counts()["revisions"] == counts0["revisions"] + 1
+
+
+def test_t44_media_upload_replay_200_and_reused_422(db, client):
+    """幂等：同 command_id 同资产 → 200 原样重放（零新行、零新文件，且幂等
+    先于 CAS：expected_revision 已过期仍重放）；异内容 → 422 rule=reused。"""
+    token = _register(client, "a43_yuri")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+    other = _mk_character(client, token, pid, name="另一人")
+    cmd = _cmd()
+    data = _wav_bytes()
+
+    r1 = _upload_media(
+        client, pid, aid, data=data, command_id=cmd, expected_revision=1, token=token
+    )
+    assert r1.status_code == 201, r1.text
+    first = r1.json()
+    counts0 = _counts()
+    files0 = _media_files()
+
+    # 重放：expected_revision 仍为首次值（已过期）也不得被判 409
+    r2 = _upload_media(
+        client, pid, aid, data=data, command_id=cmd, expected_revision=1, token=token
+    )
+    assert r2.status_code == 200, (r2.status_code, r2.text)
+    assert r2.json() == first  # 原样返回首次 result_payload
+    assert _counts() == counts0  # 零新行
+    assert _media_files() == files0  # 重放不留孤儿媒体文件
+
+    # 同 command_id 打到另一资产 → 422 validation_failed(field=command_id, rule=reused)
+    r3 = _upload_media(client, pid, other, data=data, command_id=cmd, token=token)
+    assert r3.status_code == 422, r3.text
+    err = r3.json()["error"]
+    assert err["code"] == "validation_failed"
+    v = err["details"]["violations"][0]
+    assert v["field"] == "command_id" and v["rule"] == "reused"
+    assert _counts() == counts0
+    assert _media_files() == files0
+
+
+def test_t45_media_upload_cas_conflict_409(db, client):
+    """expected_revision 不符 → 409 revision_conflict，expected/actual=真实值，
+    且零新行、零残留媒体文件（媒体已落盘也须撤销）。"""
+    token = _register(client, "a44_zoe")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+    counts0 = _counts()
+    files0 = _media_files()
+
+    for bad in (2, 99):
+        r = _upload_media(
+            client, pid, aid, data=_wav_bytes(), expected_revision=bad, token=token
+        )
+        assert r.status_code == 409, (bad, r.text)
+        err = r.json()["error"]
+        assert err["code"] == "revision_conflict"
+        assert err["details"]["object"] == {"kind": "asset", "id": aid}
+        assert err["details"]["expected"] == bad
+        assert err["details"]["actual"] == 1  # 真实当前 revision
+    assert _counts() == counts0
+    assert _media_files() == files0
+
+    # 成功推进到 revision=2 后，旧 expected 的 actual 应为 2
+    ok = _upload_media(client, pid, aid, data=_wav_bytes(), expected_revision=1, token=token)
+    assert ok.status_code == 201, ok.text
+    counts1 = _counts()
+    files1 = _media_files()
+    r = _upload_media(client, pid, aid, data=_wav_bytes(), expected_revision=1, token=token)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["details"]["actual"] == 2
+    assert _counts() == counts1
+    assert _media_files() == files1
+
+
+def test_t46_media_upload_request_shape_422(db, client):
+    """expected_revision 非正整数 → 422 field=expected_revision/rule=invalid；
+    非整数字符串、缺 command_id、缺 file → 请求体形态 422；均零副作用。"""
+    token = _register(client, "a45_abe")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+    counts0 = _counts()
+    files0 = _media_files()
+    url = f"/api/studio/projects/{pid}/assets/{aid}/media"
+
+    for bad in (0, -1):
+        r = _upload_media(client, pid, aid, data=_wav_bytes(), expected_revision=bad, token=token)
+        assert r.status_code == 422, (bad, r.text)
+        err = r.json()["error"]
+        assert err["code"] == "validation_failed"
+        v = err["details"]["violations"][0]
+        assert v["field"] == "expected_revision" and v["rule"] == "invalid"
+
+    # 非整数字符串 → 路由层（Pydantic）请求体形态 422
+    r = client.post(
+        url,
+        files={"file": ("clip.wav", _wav_bytes(), "audio/wav")},
+        data={"command_id": _cmd(), "expected_revision": "abc"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 422, r.text
+
+    # 缺 command_id → 422
+    r = client.post(
+        url,
+        files={"file": ("clip.wav", _wav_bytes(), "audio/wav")},
+        data={},
+        headers=_auth(token),
+    )
+    assert r.status_code == 422, r.text
+
+    # 缺 file → 422
+    r = client.post(url, data={"command_id": _cmd()}, headers=_auth(token))
+    assert r.status_code == 422, r.text
+
+    assert _counts() == counts0
+    assert _media_files() == files0
+
+
+def test_t47_media_upload_ghost_and_cross_project_404(db, client):
+    """幽灵资产 / 跨项目资产 → 同形状 404 not_found(asset)；幽灵项目 /
+    非属主项目 → 404 not_found(project)；均零副作用。"""
+    token = _register(client, "a46_amy")
+    pid = _mk_project(client, token)
+    pid_b = _mk_project(client, token, "B")
+    aid_b = _mk_character(client, token, pid_b)  # 同属主但属项目 B
+    files0 = _media_files()
+    data = _wav_bytes()
+
+    counts_a = _counts()
+    for ghost in ("01" * 13, aid_b):
+        r = _upload_media(client, pid, ghost, data=data, token=token)
+        assert r.status_code == 404, (ghost, r.text)
+        err = r.json()["error"]
+        assert err["code"] == "not_found"
+        assert err["details"] == {"kind": "asset", "id": ghost}
+    assert _counts() == counts_a
+
+    other = _register(client, "a46_bella")
+    pid_c = _mk_project(client, other, "C")
+    counts_b = _counts()
+    for ghost_pid in ("02" * 13, pid_c):
+        r = _upload_media(client, ghost_pid, "03" * 13, data=data, token=token)
+        assert r.status_code == 404, (ghost_pid, r.text)
+        err = r.json()["error"]
+        assert err["code"] == "not_found"
+        assert err["details"] == {"kind": "project", "id": ghost_pid}
+    assert _counts() == counts_b
+    assert _media_files() == files0
+
+
+def test_t48_media_upload_no_implicit_adoption_and_cross_project_isolation(db, client):
+    """不隐式采用（occurrences/bindings 恒 0、零 StudioJob）；既有 MediaArtifact
+    行不可变；跨项目隔离：A 的上传不触碰 B 的资产/媒体，B 的 aid 打到 A → 404
+    且零副作用（媒体落盘只进本资产所属项目目录）。"""
+    token = _register(client, "a47_bruno")
+    pid_a = _mk_project(client, token, "A")
+    pid_b = _mk_project(client, token, "B")
+    aid_a = _mk_character(client, token, pid_a)
+    aid_b = _mk_character(client, token, pid_b)
+
+    # 既有媒体行（项目 A）：上传不得改动它
+    with Session() as s:
+        seeded = store_media(
+            s, project_id=pid_a, filename="seed.wav",
+            data=_wav_bytes(0.05), media_kind="audio", source="upload",
+        )
+        s.commit()
+        seeded_snapshot = (
+            seeded.id, seeded.project_id, seeded.media_kind, seeded.filename,
+            seeded.size_bytes, seeded.sha256, seeded.duration_ms, seeded.width,
+            seeded.height, seeded.source, seeded.source_job_id, seeded.created_at,
+        )
+
+    def _project_b_state():
+        with Session() as s:
+            media = s.scalars(
+                select(MediaArtifact).where(MediaArtifact.project_id == pid_b)
+            ).all()
+            asset = s.get(Asset, aid_b)
+            return (
+                sorted((m.id, m.filename, m.size_bytes, m.sha256) for m in media),
+                _revision_snapshot(s, aid_b),
+                (asset.current_revision_id, asset.updated_at),
+            )
+
+    b0 = _project_b_state()
+    counts0 = _counts()
+    files0 = _media_files()
+
+    r = _upload_media(client, pid_a, aid_a, data=_wav_bytes(), token=token, expected_revision=1)
+    assert r.status_code == 201, r.text
+    media_id = r.json()["current_revision"]["media_artifact_id"]
+
+    with Session() as s:
+        new_art = s.get(MediaArtifact, media_id)
+        assert new_art.project_id == pid_a
+        assert new_art.filename.startswith(f"{pid_a}/")
+        assert artifact_path(new_art).is_relative_to((media_root() / pid_a).resolve())
+        seeded_again = s.get(MediaArtifact, seeded_snapshot[0])
+        assert (
+            seeded_again.id, seeded_again.project_id, seeded_again.media_kind,
+            seeded_again.filename, seeded_again.size_bytes, seeded_again.sha256,
+            seeded_again.duration_ms, seeded_again.width, seeded_again.height,
+            seeded_again.source, seeded_again.source_job_id, seeded_again.created_at,
+        ) == seeded_snapshot  # 既有媒体行逐字段不变
+
+    assert _project_b_state() == b0  # B 项目零副作用
+    counts1 = _counts()
+    assert counts1["occurrences"] == 0 and counts1["bindings"] == 0  # 不隐式采用
+    assert counts1["assets"] == counts0["assets"]
+    with Session() as s:
+        assert s.scalar(select(func.count(StudioJob.id))) == 0  # 零生成
+
+    # 跨项目：B 的 aid + A 的 pid → 404，媒体行/文件均零副作用
+    files_before = _media_files()
+    counts_before = _counts()
+    r2 = _upload_media(client, pid_a, aid_b, data=_wav_bytes(), token=token)
+    assert r2.status_code == 404, r2.text
+    assert r2.json()["error"]["details"] == {"kind": "asset", "id": aid_b}
+    assert _counts() == counts_before
+    assert _media_files() == files_before
+    assert _project_b_state() == b0
+
+
+def test_t49_media_upload_image_and_unknown_extension_422(db, client):
+    """图片扩展名边界：MEDIA-01 的 ALLOWED_EXTENSIONS 不含 png/jpg/jpeg/webp，
+    故图片上传按 unsupported_type 原样 422 透传（不放宽 MEDIA-01 常量）；
+    未知扩展名同理。均零副作用。"""
+    token = _register(client, "a48_cara")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+    counts0 = _counts()
+    files0 = _media_files()
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+
+    for name, blob in (
+        ("cover.png", png),
+        ("cover.jpg", png),
+        ("cover.jpeg", png),
+        ("cover.webp", png),
+        ("notes.txt", b"hello"),
+    ):
+        r = _upload_media(client, pid, aid, data=blob, filename=name, token=token)
+        assert r.status_code == 422, (name, r.text)
+        err = r.json()["error"]
+        assert err["code"] == "validation_failed"
+        v = err["details"]["violations"][0]
+        assert (v["field"], v["rule"]) == ("filename", "unsupported_type"), (name, err)
+
+    assert _counts() == counts0
+    assert _media_files() == files0
+
+
+def test_t50_media_upload_integrity_failure_rejected_cleaned(db, client, monkeypatch):
+    """落盘后 verify_integrity 复核为假 → 视为损坏：422 拒绝、撤销媒体行、
+    删除已落盘文件（不留半写版本，原版本保留）。"""
+    from backend.studio.assets import service as assets_service
+
+    token = _register(client, "a49_dino")
+    pid = _mk_project(client, token)
+    aid = _mk_character(client, token, pid)
+    counts0 = _counts()
+    files0 = _media_files()
+    media0 = _media_row_count()
+    with Session() as s:
+        snapshot0 = _revision_snapshot(s, aid)
+
+    monkeypatch.setattr(assets_service, "verify_integrity", lambda _artifact: False)
+    r = _upload_media(client, pid, aid, data=_wav_bytes(), token=token, expected_revision=1)
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["code"] == "validation_failed"
+    v = err["details"]["violations"][0]
+    assert v["field"] == "file" and v["rule"] == "invalid"
+
+    assert _counts() == counts0
+    assert _media_row_count() == media0
+    assert _media_files() == files0  # 已落盘文件被清理，无残留
+    with Session() as s:
+        assert _revision_snapshot(s, aid) == snapshot0

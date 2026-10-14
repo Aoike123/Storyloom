@@ -10,6 +10,10 @@ media_artifact_id/generation_input，review_status 回到 unreviewed，
 自动成为当前）。**不做**改名（AS3）、媒体/生成（AS5/AS6）、审核
 （AS7）、切换当前版本（AS8）、采用（AS9）。
 
+ASSET-02-a 追加 AS5 POST /assets/{aid}/media：上传**真实文件**并登记为
+待审核新版本（复用 MEDIA-01 的 store_media/verify_integrity）；仍不生成
+（AS6）、不审核（AS7）、不切换当前版本（AS8）、不采用（AS9）。
+
 实现约束（冻结）：
 - 所有写命令走 command_id 幂等（附录 00 §3，studio_command_records）；
 - 属主校验：未登录 401（路由层 require_user）；项目不存在/非属主一律
@@ -29,21 +33,46 @@ DTO 形状（主模型针对本卡冻结，与 AS1 之后的详情读一致）�
 """
 import json
 import time
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from ...core.db import make_ulid
+from ...infrastructure.media.probe import MediaProbeError
 from ..contracts.errors import StudioAPIError
 from ..contracts.models import CommandRecord
+from ..media.store import media_root, store_media, verify_integrity
 from ..projects.models import StudioProject
 from .models import Asset, AssetRevision
 
-__all__ = ["create_asset", "set_costume_required", "revise_spec"]
+__all__ = [
+    "create_asset",
+    "set_costume_required",
+    "revise_spec",
+    "attach_media",
+]
 
 TYPES = ("character", "costume", "scene")
 _BODY_TYPES = ("natural", "clothed")
 _NAME_MAX = 120  # 附录 05 §1：name text(120)
+
+# ASSET-02-a 冻结映射：上传扩展名 → MEDIA-01 media_kind。
+# 注意：MEDIA-01 的 ALLOWED_EXTENSIONS 只有 ("mp4","webm","mov","m4a","wav","mp3")，
+# 四个图片扩展名虽在本映射内，仍会被 store_media 按 unsupported_type 422 拒绝
+# （不越权放宽 MEDIA-01 常量，按契约边界原样透传）。
+_MEDIA_KIND_BY_EXT = {
+    "mp4": "video",
+    "webm": "video",
+    "mov": "video",
+    "m4a": "audio",
+    "wav": "audio",
+    "mp3": "audio",
+    "png": "image",
+    "jpg": "image",
+    "jpeg": "image",
+    "webp": "image",
+}
 
 
 def _to_dto(asset: Asset, rev: AssetRevision) -> dict:
@@ -725,5 +754,243 @@ def revise_spec(
             payload = json.loads(record.result_payload) if record.result_payload else {}
             return dict(payload, _replay=True)
         raise StudioAPIError.internal()
+
+    return response
+
+
+def _discard_media_file(rel: str | None) -> None:
+    """回滚媒体登记行后清理刚落盘的文件（幂等重放/CAS 失败/任何异常路径）。
+
+    rel 是 store_media 生成的 ``{project_id}/{artifact_id}.{ext}`` 相对名，
+    不含任何调用方输入，拼接无穿越风险；清理失败不覆盖原错误。
+    """
+    if not rel:
+        return
+    try:
+        (media_root() / rel).unlink()
+    except OSError:
+        pass
+
+
+def attach_media(
+    session, user, pid, aid, filename, data, expected_revision, command_id
+) -> dict:
+    """AS5 上传并登记媒体版本（ASSET-02-a，附录 05 §2 / 附录 08 §4）。
+
+    语义：上传**真实文件**并产生一条待审核的 ``AssetRevision``
+    （revision=current+1）：``media_artifact_id`` 指向 MEDIA-01 新登记的
+    ``MediaArtifact``（``source="upload"``），``spec``/``generation_input``
+    继承上一 revision，``review_status="unreviewed"``，自动成为当前版本
+    （更新 ``assets.current_revision_id``/``updated_at``）。**不隐式采用**：
+    不写 ``studio_asset_occurrences``/``studio_asset_bindings``、不动任何
+    stage/状态列、不启动生成（零 ``StudioJob``）；旧 revision 行不可变
+    （并存版本保留）；既有 ``MediaArtifact`` 行不可变。
+
+    校验顺序（冻结，按序短路）：
+    1. 项目不存在/非属主 → 404 not_found(kind=project)（不泄漏存在性）；
+    2. 资产不存在/跨项目 → 404 not_found(kind=asset)（两情形同形状）；
+    3. 请求体校验 → 422 validation_failed：``command_id`` 缺失由路由层
+       Pydantic 拦截；``expected_revision`` 提供时必须为正整数（bool 排除），
+       否则 field=expected_revision, rule=invalid；
+    4. 上传字节由路由层 ``await file.read()`` 读入后传入（service 保持纯同步）；
+    5. 媒体登记与校验：``store_media``（扩展名/大小/kind/source/真实探测、
+       原子落盘、失败删文件不留行）→ ``verify_integrity`` 复核；为假视为
+       损坏，422 拒绝并清理（不留半写版本）。``store_media`` 抛出的
+       ``StudioAPIError`` 原样透传；探测失败（MediaProbeError）映射为
+       field=file, rule=invalid 的 422；
+    6. 幂等（读查询，先于 CAS 与版本写）：(owner, command_id) 命中
+       ``CommandRecord`` 且 ``result_payload.object_ref.kind/id`` 等于本资产
+       且该 payload 是媒体命令结果 → 重放：回滚刚才的媒体登记、删文件，
+       返回首次 result_payload（附 ``_replay=True``，路由层以 200 覆盖 201），
+       零新行零新文件；异内容 → 422 validation_failed(field=command_id,
+       rule=reused)；
+    7. CAS（仅当请求提供 ``expected_revision``）：≠ 当前 revision → 409
+       ``revision_conflict``（object={kind:asset,id}，expected/actual=真实值）；
+    8. 写（单事务，step 5 的媒体行 + 新 AssetRevision + UPDATE Asset +
+       CommandRecord 同一 commit）；``IntegrityError``（UQ(owner_id,
+       command_id) 竞态）→ 回滚、删本命令落盘文件、重读赢家按重放语义返回。
+
+    成功体 = 与 AS4/详情读一致的 8 键 DTO（``_to_dto_all_versions``）：新
+    revision 的媒体为新媒体、``review_status="unreviewed"``，``versions[]``
+    含全部并存版本。
+    """
+    # 1) 项目（属主校验，404 不泄漏存在性）
+    project = session.scalar(select(StudioProject).where(StudioProject.id == pid))
+    if project is None or project.owner_id != user.id:
+        raise StudioAPIError.not_found("project", pid)
+
+    # 2) 资产（不存在/跨项目同形状 404，不泄漏存在性）
+    asset = session.scalar(select(Asset).where(Asset.id == aid))
+    if asset is None or asset.project_id != pid:
+        raise StudioAPIError.not_found("asset", aid)
+    prev_rev = session.get(AssetRevision, asset.current_revision_id)
+    if prev_rev is None:  # 理论上不可达（current_revision_id NOT NULL）
+        raise StudioAPIError.internal()
+    current = prev_rev.revision
+    # 写阶段在 commit 后仍需继承上一 revision 的 spec/generation：先取原值，
+    # 避免依赖 commit 过期后的隐式刷新
+    prev_spec = prev_rev.spec
+    prev_generation_input = prev_rev.generation_input
+
+    # 3) 请求体字段校验（command_id 缺失/形态错由路由层 Pydantic 拦截）
+    violations: list[dict[str, str]] = []
+    if expected_revision is not None and (
+        isinstance(expected_revision, bool)
+        or not isinstance(expected_revision, int)
+        or expected_revision < 1
+    ):
+        violations.append(
+            {
+                "field": "expected_revision",
+                "rule": "invalid",
+                "message": "expected_revision 必须是正整数。",
+            }
+        )
+    if violations:
+        raise StudioAPIError.validation_failed(violations)
+
+    # 4) 扩展名 → media_kind（冻结映射）；未知/超白名单扩展名（含图片四类）
+    #    交由 store_media 按 unsupported_type 422 拒绝——store_media 先校验
+    #    扩展名再校验 kind，故此处的兜底值不会被登记
+    ext = (
+        Path(filename).suffix.lstrip(".").lower()
+        if isinstance(filename, str)
+        else ""
+    )
+    media_kind = _MEDIA_KIND_BY_EXT.get(ext, "image")
+
+    old_revs = list(
+        session.scalars(
+            select(AssetRevision)
+            .where(AssetRevision.asset_id == aid)
+            .order_by(AssetRevision.revision)
+        ).all()
+    )
+    session.commit()  # 结束读事务；媒体落盘 + 写阶段另起事务
+
+    now = time.time()
+    new_revision_no = current + 1
+    revision_id = make_ulid()
+    media_rel: str | None = None
+    try:
+        # 5) 媒体登记与校验（复用已验收的 MEDIA-01 落盘/校验接口）
+        artifact = store_media(
+            session,
+            project_id=pid,
+            filename=filename,
+            data=data,
+            media_kind=media_kind,
+            source="upload",
+        )
+        media_rel = artifact.filename
+        if not verify_integrity(artifact):
+            raise StudioAPIError.validation_failed(
+                [
+                    {
+                        "field": "file",
+                        "rule": "invalid",
+                        "message": "上传媒体落盘后完整性校验失败，已拒绝。",
+                    }
+                ]
+            )
+
+        # 6) 幂等（读查询，先于 CAS 与版本写）
+        record = session.scalar(
+            select(CommandRecord).where(
+                CommandRecord.owner_id == user.id,
+                CommandRecord.command_id == command_id,
+            )
+        )
+        if record is not None:
+            payload = json.loads(record.result_payload) if record.result_payload else {}
+            stored_ref = payload.get("object_ref") or {}
+            stored_media = (payload.get("current_revision") or {}).get(
+                "media_artifact_id"
+            )
+            if (
+                stored_ref.get("kind") == "asset"
+                and stored_ref.get("id") == aid
+                and stored_media is not None
+            ):
+                # 重放：撤销本次媒体登记与文件，返回首次 result_payload
+                session.rollback()
+                _discard_media_file(media_rel)
+                return dict(payload, _replay=True)
+            raise StudioAPIError.validation_failed(
+                [
+                    {
+                        "field": "command_id",
+                        "rule": "reused",
+                        "message": "command_id 已被其他命令使用，请生成新的。",
+                    }
+                ]
+            )
+
+        # 7) CAS（仅当请求显式提供 expected_revision）
+        if expected_revision is not None and expected_revision != current:
+            raise StudioAPIError.revision_conflict(
+                "asset", aid, expected_revision, current
+            )
+
+        # 8) 单事务写：新 AssetRevision + UPDATE Asset + INSERT CommandRecord
+        #    （媒体行由 step 5 在本事务内 flush）
+        new_rev = AssetRevision(
+            id=revision_id,
+            asset_id=aid,
+            revision=new_revision_no,
+            spec=prev_spec,  # 继承上一 revision 的 spec（原样 JSON 文本）
+            media_artifact_id=artifact.id,  # 指向本命令登记的新媒体
+            generation_input=prev_generation_input,  # 继承
+            review_status="unreviewed",  # 待审核（R07）
+            created_at=now,
+        )
+        response = _to_dto_all_versions(asset, new_rev, old_revs)
+        session.add(new_rev)
+        asset.current_revision_id = revision_id
+        asset.updated_at = now
+        session.add(
+            CommandRecord(
+                id=make_ulid(),
+                owner_id=user.id,
+                project_id=pid,
+                command_id=command_id,
+                result_payload=json.dumps(response, ensure_ascii=False),
+                created_at=now,
+            )
+        )
+        session.commit()
+    except MediaProbeError as exc:
+        # 损坏/不可识别媒体：store_media 已删文件不留行，此处映射冻结 422
+        session.rollback()
+        _discard_media_file(media_rel)
+        raise StudioAPIError.validation_failed(
+            [
+                {
+                    "field": "file",
+                    "rule": "invalid",
+                    "message": "上传文件不是可识别的媒体文件或已损坏，已拒绝。",
+                }
+            ]
+        ) from exc
+    except IntegrityError:
+        # UQ(owner_id, command_id) 竞态：并发赢家已提交 → 撤销本次媒体落盘，
+        # 返回赢家首次结果（重放语义）；其他完整性冲突 → 冻结 internal_error
+        session.rollback()
+        _discard_media_file(media_rel)
+        record = session.scalar(
+            select(CommandRecord).where(
+                CommandRecord.owner_id == user.id,
+                CommandRecord.command_id == command_id,
+            )
+        )
+        if record is not None:
+            payload = json.loads(record.result_payload) if record.result_payload else {}
+            return dict(payload, _replay=True)
+        raise StudioAPIError.internal()
+    except BaseException:
+        # 其余任何失败（含 StudioAPIError 透传）：回滚媒体行、清文件、原样抛出
+        session.rollback()
+        _discard_media_file(media_rel)
+        raise
 
     return response

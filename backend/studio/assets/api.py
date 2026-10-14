@@ -4,10 +4,12 @@ ASSET-01 逐子卡填充路由：
 - AS1（ASSET-01-a）POST /projects/{pid}/assets；
 - AS10（ASSET-01-b）POST /projects/{pid}/assets/{aid}/costume-required；
 - AS4（ASSET-01-d）POST /projects/{pid}/assets/{aid}/spec。
+ASSET-02-a（AS5）POST /projects/{pid}/assets/{aid}/media：multipart/form-data
+（文件字段 file + 表单 command_id/expected_revision），上传并登记媒体版本。
 路由层只做请求体形态校验与重放状态码切换；业务逻辑在 assets/service.py。
 鉴权：core.auth.require_user（严格 Bearer，无匿名回退）。
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, StrictBool
 
@@ -141,4 +143,41 @@ def revise_spec(
             character_id=body.character_id,
         )
     result.pop("_replay", None)  # 成功与重放同为 200，仅弹内部标记
+    return result
+
+
+@router.post("/projects/{pid}/assets/{aid}/media", status_code=201)
+async def attach_media(
+    pid: str,
+    aid: str,
+    file: UploadFile = File(...),
+    command_id: str = Form(...),
+    expected_revision: int | None = Form(None),
+    user: User = Depends(require_user),
+):
+    """AS5 上传并登记媒体版本（ASSET-02-a，附录 05 §2）。
+
+    请求体为 multipart/form-data：文件字段 ``file``（必填）、表单字段
+    ``command_id``（必填，幂等键；缺失由请求体形态校验拦截）、可选表单字段
+    ``expected_revision``（提供时走 CAS，逻辑校验在 service 层）。上传字节在
+    路由层 ``await file.read()`` 读入后传给**同步** service，保持 service 纯同步。
+
+    成功 201（与 AS4/详情读一致的 8 键 DTO）；同 command_id 重放 200
+    （``JSONResponse(200)`` 覆盖 201，原样返回首次 result_payload）。
+    """
+    data = await file.read()
+    with Session() as s:
+        result = service.attach_media(
+            s,
+            user,
+            pid,
+            aid,
+            file.filename,
+            data,
+            expected_revision,
+            command_id,
+        )
+    if result.pop("_replay", False):
+        # 重放命中：200 原样返回首次 result_payload（覆盖 201）
+        return JSONResponse(status_code=200, content=result)
     return result
