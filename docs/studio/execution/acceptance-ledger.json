@@ -44,7 +44,7 @@
   "main_at_document_restructure": "c19639d",
   "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1 已随文档精简删除）；不得触碰非本用户占用端口；新 Studio 预览独占 backend=3011 / frontend=3021。2026-10-13 实测 3011/3021 空闲后由主模型临时占用验证并释放。",
   "current_checkout": "/mnt/Code/agent-orchestration/workflow/Storyloom",
-  "current_head_at_metadata_update": "bf216ea",
+  "current_head_at_metadata_update": "151aaee",
   "root01_tested_base": "bcb3eb4",
   "executor_context_limit_2026_10_13": "pation/qwen38-27b-w3a4 contextWindow=65536（本地端点 http://127.0.0.1:18982/v1 只服务该变体）。2026-10-13 批次 C 五次派发实测：累计 tool 结果 117820~154679 字节时全部以 400 \"Input plus output exceeds 65536 tokens for this model\" 失败且零产出；432 字节的探测会话正常。派发须把单卡阅读+产出控制在约 50KB 以内，或恢复更大上下文的模型变体。",
   "batch_c3_closing_regression_2026_10_15": "批次 C3 收尾全量回归（MEDIA-01/CHAT-01/EDIT-01/SCRIPT-02 四卡提交后，HEAD 1a93aa2）：.venv/bin/python -m pytest tests/studio/ -q → **574 passed, exit 0**（551s）。开工基线 460 passed → 净增 114 例（MEDIA-01 31 + CHAT-01 47 + EDIT-01 21 + SCRIPT-02 52，含既有 SCRIPT-01 用例并入同文件后的计数）。并发纪律：本批四卡执行器曾各自并发跑 pytest，共用进程单例测试库（conftest 的 STUDIO_DATA_DIR）导致一次偶发失败（CHAT-01 test_t47 '_IncludedRouter' object has no attribute 'path'），独占重跑与本次收尾全量回归均全绿——确认非实现缺陷，已在批次 C3 派发单确立「验收测试一律串行回收后执行」纪律。",
@@ -3184,11 +3184,49 @@
     "R02",
     "R06"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "allowlist_scope": "web/features/studio/shell/components/ObjectInspector.tsx、web/features/studio/shell/studio-state.ts、web/features/studio/shell/object-view.ts、web/tests/studio/object-view.test.cjs（主模型补入，验收需测试证据）",
-   "attempts": [],
-   "acceptance": null,
+   "attempts": [
+    {
+     "n": 1,
+     "by": "executor(kimi-coding/kimi-for-coding-highspeed)",
+     "date": "2026-10-15",
+     "result": "submitted"
+    }
+   ],
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-15",
+    "contract_version": "2.9",
+    "tested_baseline": "151aaee（本卡提交，基于 848417e）",
+    "scope": "unified_selection_and_object_attributes",
+    "checks": [
+     "主模型独立复验（不复用执行器报告）：node --test tests/studio/object-view.test.cjs → **18 passed**；node --test 'web/tests/studio/*.test.cjs' → **459 passed / 0 fail**（基线 441 + 18，零回归）；web/node_modules/.bin/tsc --noEmit -p tsconfig.json → exit 0；白名单外零改动（提交恰 3 文件：object-view.ts、components/ObjectInspector.tsx、object-view.test.cjs）。",
+     "**主模型裁定的类型冲突已按裁定解决**：`web/features/studio/shell/studio-state.ts` **零 diff**（git status 无该文件），VIEW-01 冻结的 `ObjectRef{revision:number}` 与 `normalizeSelectionRef` 语义未被放宽，`state.test.cjs` 的 **28 例全部零回归**（在 459 全量中）。新增的宽松类型 `SelectionRef{revision:number|null}` 与 `normalizeSelection` 落在 `object-view.ts`，供场（附录 04 §1：就地改名无版本，revision 为 null）与剪辑实例等对象使用。",
+     "**高亮/属性/出处指同一 revision**（卡面验收）：`deriveObjectView(ref, ...)` 返回的 `object_ref.revision` 严格等于入参 revision；属性与出处描述同一 revision（测试用 revision:3 断言）。",
+     "**不把 group 标题当归属**（卡面验收）：`attribution` 只来自对象自身的父级字段；构造「只有 group_title 而无真实父级 id」的来源 → `attribution === null`（**不编造归属**）；构造有真实父级 id 的来源 → attribution 指向该 id 且**不等于** group 标题。",
+     "**资源与实例选择不混淆**（卡面验收）：`nodeToSelection` 与 `instanceToSelection` 对同类输入产出可区分的 kind（资源 vs 剪辑实例），且两者结果均通过 `normalizeSelection` 合法性。",
+     "**空白与失效选择清空**：`normalizeSelection` 对空 kind / 空 id / revision 为 0、-1、1.5、\"1\" → `null`；`revision: null` **保留**（正是本卡需要的宽松语义）。",
+     "ObjectInspector.tsx：完全受控（`view` 经 props，组件不取数、不发网络、不读写 localStorage）；`view === null` 显示空态且**不造样例字段**；保留 `<style jsx>`；无 `fetch(`、无 `\"/api/`、不 import `app/`、不引用旧产品（ProjectHome/TaskActivity/reader）。",
+     "测试沿用项目 vm+transpile 模式；**deepEqual 前 JSON 归一化**（vm realm 与主 realm 原型不同——该坑在 VIEW-01 已踩过并记录）。"
+    ],
+    "contract_question_ruling": [
+     "**ObjectRef 与 SelectionRef 并存的裁定（主模型，重要）**：VIEW-01 的 `ObjectRef{revision:number}` + `normalizeSelectionRef`（revision 非正整数即整体归 null）已被 28 例冻结；而本卡必须能选择**场**（附录 04 §1：就地改名、无版本，revision 为 null）与**剪辑实例**（`object_ref.revision` 为 null）。若沿用冻结类型，选择场会被静默丢弃。两条路：(a) 放宽 `ObjectRef`/`normalizeSelectionRef`——会破坏 VIEW-01 的已验收契约与 28 例；(b) 新增独立宽松类型。裁定取 (b)：`SelectionRef` 与 `normalizeSelection` 落 `object-view.ts`，`studio-state.ts` **不动**，从而「VIEW-03 可用」与「VIEW-01 零回归」同时成立。不升契约版本（未改任何已冻结形状）。",
+     "**归属（attribution）与出处（provenance）分离**：卡面要求「字段/归属/来源/版本/状态」四类信息且「不把 group 标题当归属」。裁定 attribution=对象的**结构父级**（如镜头→场、实例→剪辑草稿），provenance=对象的**产生依据**（如镜头→其 script_adoption→片段）。二者语义不同、不可互相顶替；数据缺失时各自为 null 而不互相填充。",
+     "**空态不造样例**：`view===null` 时空态而非「默认对象」，与 SOURCE-12「无卡片/标题/状态插入正文」、EDIT-01「空态就是空态」同一取向（新契约一律不伪造事实）。"
+    ],
+    "evidence": [
+     "web/features/studio/shell/object-view.ts",
+     "web/features/studio/shell/components/ObjectInspector.tsx",
+     "web/tests/studio/object-view.test.cjs"
+    ],
+    "limitations": [
+     "浏览器实测（真实节点高亮与属性面板交互）归 GATE-02 关键浏览器连续操作门；本卡以 vm 纯逻辑测试 + 组件字符串断言为准（与 SOURCE-12/13、VIEW-01/02 同一验收深度）。",
+     "ObjectInspector 尚未接入 StudioApp/画布（接线属 UI 批次/VIEW-04 之后的集成卡）；本卡组件独立可用且受控。",
+     "属性字段清单（fields[]）由调用方传入的来源数据决定；各域尚未提供统一的「对象详情」读接口，故本卡不做跨域取数（归各域读接口与 UI-02）。"
+    ]
+   },
    "implementation_notes": [
     {
      "date": "2026-10-15",
