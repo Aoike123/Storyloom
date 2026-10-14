@@ -63,3 +63,30 @@ SCRIPT-02 追加进本波次的依据：其独有的 `backend/studio/reviews/imp
 | 12 | SHOT-01（父卡收口） |
 
 > 波次为依赖推演的**最早可行**顺序，非承诺排期；主模型按并行度与文件冲突逐轮重排。GATE-01～06 在各自依赖齐备后触发，不参与上述叶卡波次。
+
+## 执行结果（2026-10-15）
+
+| 卡 | 结果 | 提交 | 独立复验 |
+| --- | --- | --- | --- |
+| VIEW-01 | **已验收**（主模型亲自实现+接线） | `730b23a` / 入账 `282e4e4` | `node --test 'web/tests/studio/*.test.cjs'` → 413 passed（基线 385，+28）；`tsc --noEmit` exit 0 |
+| MEDIA-01 | **已验收** | `a99d76d` + 追加 `1f31d4a` / 入账 `c6eebad`、`f5b3d33` | `pytest tests/studio/test_media.py` → 31 passed |
+| CHAT-01 | **已验收** | `816da57` / 入账 `356e9de` | `pytest tests/studio/test_conversations.py` → 47 passed |
+| EDIT-01 | **已验收** | `ac2d159` / 入账 `9893da0` | `pytest tests/studio/test_edits.py` → 21 passed |
+| SCRIPT-02 | **已验收** | `1a93aa2` / 入账 `1d61c63` | `pytest tests/studio/test_scripts.py` → 52 passed |
+| **批次收尾** | — | — | `pytest tests/studio/` → **574 passed, exit 0**（开工基线 460，净增 114） |
+
+执行器模型改选（kimi-for-coding-highspeed，262144 上下文）后**首轮全部产出成功**，批次 C 的 64k 零产出失败未再复现。
+
+### 过程记录
+
+1. **并发 pytest 争用共享测试库**（实测一次）：四卡执行器各自跑 pytest 时共用进程单例测试库（`conftest.py` 的 `STUDIO_DATA_DIR`），CHAT-01 的 `test_t47` 出现一次偶发失败（`'_IncludedRouter' object has no attribute 'path'`）。处置：确认单独运行、与相邻用例组合、以及收尾独占全量回归均全绿 → **非实现缺陷**；纪律固化为「验收测试一律串行回收后执行」。
+2. **执行器遗留白名单外文件**：SCRIPT-02 执行器在工作树留下调试脚本 `.dbg_sc6.py`（54 行，未被 gitignore）。主模型在提交前删除，未入库。后续派发单已强调白名单外零改动。
+3. **执行器在入账后继续追加**：MEDIA-01 执行器于 `a99d76d` 入账后又补 5 键冻结断言并清理未用导入；主模型重跑 31 passed 后以 `1f31d4a` 追加入账（未覆盖原证据，保留两次提交追溯）。
+4. **执行器提问裁定**（已逐条记入账本 `contract_question_ruling`）：CHAT-01 路由 3/4 采用项目优先校验序、取或建命中已存在行不写 CommandRecord；MEDIA-01 白名单标题「6 个文件」为计数笔误（实际 5 条，以枚举为准）、flush 失败不 `session.rollback()`。均**不升契约版本**（2.9）。
+
+### 下一波次（C4）
+
+| 卡 | 状态 |
+| --- | --- |
+| RETIRE-01 | 阻塞于**主模型**先按实施 HEAD 出逐文件退役清单（ROOT-05 盘点不能代替） |
+| 依赖已解锁的下一批 | ASSET-02-a、JOB-01、MEDIA-02-a、SHOT-01-a、VIEW-02（见上表波次 2） |
