@@ -44,7 +44,7 @@
   "main_at_document_restructure": "c19639d",
   "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1 已随文档精简删除）；不得触碰非本用户占用端口；新 Studio 预览独占 backend=3011 / frontend=3021。2026-10-13 实测 3011/3021 空闲后由主模型临时占用验证并释放。",
   "current_checkout": "/mnt/Code/agent-orchestration/workflow/Storyloom",
-  "current_head_at_metadata_update": "816da57",
+  "current_head_at_metadata_update": "ac2d159",
   "root01_tested_base": "bcb3eb4",
   "executor_context_limit_2026_10_13": "pation/qwen38-27b-w3a4 contextWindow=65536（本地端点 http://127.0.0.1:18982/v1 只服务该变体）。2026-10-13 批次 C 五次派发实测：累计 tool 结果 117820~154679 字节时全部以 400 \"Input plus output exceeds 65536 tokens for this model\" 失败且零产出；432 字节的探测会话正常。派发须把单卡阅读+产出控制在约 50KB 以内，或恢复更大上下文的模型变体。"
  },
@@ -5403,11 +5403,48 @@
     "R09",
     "R11"
    ],
-   "status": "planned",
+   "status": "accepted",
    "dispatchable": false,
    "allowlist_scope": "backend/studio/edits/service.py、backend/studio/edits/api.py、tests/studio/test_edits.py",
-   "attempts": [],
-   "acceptance": null
+   "attempts": [
+    {
+     "n": 1,
+     "by": "executor(kimi-coding/kimi-for-coding-highspeed)",
+     "date": "2026-10-15",
+     "result": "submitted——模型改选后首轮提交（262144 上下文）"
+    }
+   ],
+   "acceptance": {
+    "accepted_by": "root",
+    "date": "2026-10-15",
+    "contract_version": "2.9",
+    "tested_baseline": "ac2d159（本卡提交，基于 356e9de）",
+    "scope": "edit_draft_read_write + manifest_validation",
+    "checks": [
+     "主模型独立复验（不复用执行器报告）：.venv/bin/python -m pytest tests/studio/test_edits.py → **21 passed**（21 个测试函数）；白名单外零改动（本卡提交恰 3 文件：edits/api.py、edits/service.py、test_edits.py；router.py 未改，edits.api 经「存在即挂载」自动接线）；service 层逐行审查。",
+     "GET /edit 冻结行为：项目 404 不泄漏；**无草稿行时空态就是空态**——edit_id/edit_revision/cas_revision/manifest/manifest_digest 全 null、instances: []、confirmed: null（不造样例实例、不造假时长）；有草稿时 instances 取当前行（max edit_revision）的 studio_edit_instances；confirmed 取该 edit_id 的 max(edit_revision) 确认行（本卡无确认写入，测试断言为 null）。",
+     "POST /edit/draft 校验序：项目 404 → edit_id 非 null 时草稿须存在且属本项目（否则 404 同形状）→ manifest 校验（violations 一次全报）→ 幂等 → CAS。新建 edit_id=make_ulid()、edit_revision=1、cas_revision=1；二次保存版本链只追加（旧行保留、edit_revision=2）。",
+     "manifest 校验逐条：非 object / schema != 'storyloom.editmanifest/v1' → field=manifest.schema rule=invalid；canvas.width/height/fps 非正整数 → field=manifest.canvas.<k> rule=invalid；instances 非数组 → field=manifest.instances rule=invalid；逐项 field 带下标精确路径（instances[0].id 等）：id/media_id 非空字符串 required、track_id==0 invalid、timeline_start_ms/source_in_ms 非负整数 invalid、source_out_ms>source_in_ms invalid、0.25≤speed≤4.0 invalid、media_id 须存在且属本项目 not_found。",
+     "manifest_digest 服务端计算（冻结公式逐字核对：json.dumps(sort_keys=True, separators=(',',':'), ensure_ascii=False) + sha256）：客户端传入假值被忽略，断言等于独立重算值。",
+     "CAS 与幂等：新建时 expected_revision 非 null → 422 field=expected_revision rule=invalid；已有草稿 expected_revision != 当前 cas_revision → 409 revision_conflict 带真实 expected/actual；同 command_id 同 payload → 200 原体、零新行（旧草稿行数不减）；异内容 → 422 field=command_id rule=reused。",
+     "硬性禁止逐条（负向断言）：studio_confirmed_edits 与发布表行数为 0；不改 MediaArtifact；不删旧草稿行；时间单位一律整数毫秒（无第二套单位）。instances 行与 manifest 一一对应。"
+    ],
+    "contract_question_ruling": [
+     "InstanceDto.object_ref.id 取 instance_id（= manifest 内逻辑实例 id，跨草稿版本稳定），而非 EditInstance 行主键：派发规格未指明该 id 取哪个。行主键是每个草稿版本重建的内部代理（UQ draft_id+instance_id、新版本新行），对外引用若取行主键则同一逻辑实例跨版本会换 id——取 instance_id 才能让 object_ref 稳定可引用。冻结字段形状不变，不升契约版本。",
+     "POST /edit/draft 首次保存返回 201（重放 200）：派发规格正文写「→ 200 DraftDto」，但本项目全域名命令先例为「首次 201、重放 200 覆盖」（00 §3 与 F1/F11/P1 一致），且 EDIT-01 父卡族与 EDIT-03..10 均以新建语义描述。执行器按 201/200 实现并在测试固定；属**与域先例对齐**的解释，不升契约版本（若产品要求一律 200，需主模型统一裁定并同步全部域，不在本卡范围）。",
+     "manifest 非 object 时直接短路为单条 manifest.schema invalid（不再尝试收集 canvas/instances 违规）：非 object 无法按键路径取子字段，短路是唯一可执行语义；其余情况一律收集全部 violations 一次报，与冻结文字不冲突。",
+     "SaveDraftIn.manifest 声明为 Any（而非 dict）：避免 Pydantic 请求体形态校验把非 object manifest 提前拦成 FastAPI 默认 422，从而保证冻结 422 violation 形状（field=manifest.schema rule=invalid）可达。"
+    ],
+    "evidence": [
+     "backend/studio/edits/service.py",
+     "backend/studio/edits/api.py",
+     "tests/studio/test_edits.py"
+    ],
+    "limitations": [
+     "本卡不做确认（ConfirmedEdit，EDIT-08）与导出（EDIT-09）；confirmed 恒为 null 已由测试固定，确认链交付后需回补非 null 断言。",
+     "manifest 实例的真实媒体播放/预览归 EDIT-07（同 manifest 真实媒体预览）；本卡只做草稿读写与校验。"
+    ]
+   }
   },
   {
    "id": "EDIT-02-a",
