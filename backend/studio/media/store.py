@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 
 from ...core.db import DATA_DIR, make_ulid
-from ...infrastructure.media.probe import MediaProbeError, probe_media
+from ...infrastructure.media.probe import probe_media
 from ..contracts.errors import StudioAPIError
 from .models import MediaArtifact
 
@@ -123,7 +123,9 @@ def store_media(
 
         duration_ms = width = height = None
         if media_kind in _PROBED_KINDS:
-            probe = probe_media(dest)  # 探测失败 → 由外层清理文件，不落行
+            # probe_media 对非媒体/损坏/不可读一律抛 MediaProbeError；
+            # 探测失败由外层清理已写文件，绝不落行（不产生伪就绪记录）。
+            probe = probe_media(dest)
             duration_ms = probe["duration_ms"]
             width = probe["width"]
             height = probe["height"]

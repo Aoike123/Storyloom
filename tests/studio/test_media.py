@@ -308,6 +308,20 @@ def test_probe_media_garbage_raises(tmp_path):
         probe_media(bad)
 
 
+def test_probe_media_returns_exactly_five_keys(tmp_path):
+    """冻结返回体：恰好 5 键，且 duration/width/height 为真实解析值。"""
+    data = _generate_video(tmp_path)
+    video = tmp_path / "src.mp4"
+    info = probe_media(video)
+    assert set(info) == {"duration_ms", "width", "height", "has_video", "has_audio"}
+    assert len(info) == 5
+    assert info["has_video"] is True
+    assert info["has_audio"] is False
+    assert (info["width"], info["height"]) == (64, 64)
+    assert info["duration_ms"] is not None and info["duration_ms"] > 0
+    assert len(data) > 0
+
+
 # ── 真实媒体落盘 ────────────────────────────────────────────────────────
 def test_store_media_real_video(db, tmp_path):
     pid = _seed_project()
