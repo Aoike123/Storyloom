@@ -44,7 +44,7 @@
   "main_at_document_restructure": "c19639d",
   "legacy_ports_note": "旧栈标准端口 web=3000 / api=8000（scripts/start.ps1 已随文档精简删除）；不得触碰非本用户占用端口；新 Studio 预览独占 backend=3011 / frontend=3021。2026-10-13 实测 3011/3021 空闲后由主模型临时占用验证并释放。",
   "current_checkout": "/mnt/Code/agent-orchestration/workflow/Storyloom",
-  "current_head_at_metadata_update": "ac2d159",
+  "current_head_at_metadata_update": "1f31d4a",
   "root01_tested_base": "bcb3eb4",
   "executor_context_limit_2026_10_13": "pation/qwen38-27b-w3a4 contextWindow=65536（本地端点 http://127.0.0.1:18982/v1 只服务该变体）。2026-10-13 批次 C 五次派发实测：累计 tool 结果 117820~154679 字节时全部以 400 \"Input plus output exceeds 65536 tokens for this model\" 失败且零产出；432 字节的探测会话正常。派发须把单卡阅读+产出控制在约 50KB 以内，或恢复更大上下文的模型变体。"
  },
@@ -4706,13 +4706,14 @@
     "tested_baseline": "a99d76d（本卡提交，基于 65d4247）",
     "scope": "media_probe + private_media_store + integrity",
     "checks": [
-     "主模型独立复验（不复用执行器报告）：.venv/bin/python -m pytest tests/studio/test_media.py → 30 passed（19 个测试函数，含参数化）；`ps` 确认无并发 pytest、全程独占测试库后执行；白名单外零改动（git diff --cached 恰 5 文件：infrastructure/__init__.py、infrastructure/media/{__init__,probe}.py、studio/media/store.py、test_media.py）；代码逐行审查。",
+     "主模型独立复验（不复用执行器报告）：.venv/bin/python -m pytest tests/studio/test_media.py → **31 passed**（20 个测试函数，含参数化；追加提交 1f31d4a 增 5 键冻结断言，原 30）；`ps` 确认无并发 pytest、全程独占测试库后执行；白名单外零改动（git diff --cached 恰 5 文件：infrastructure/__init__.py、infrastructure/media/{__init__,probe}.py、studio/media/store.py、test_media.py）；代码逐行审查。",
      "冻结常量与分离性：ALLOWED_EXTENSIONS 六项、MAX_MEDIA_BYTES=512MiB 精确；media_root()==DATA_DIR/'media'、public_root()==DATA_DIR/'public'，断言存储路径不在 public_root 之下，模块对 public 根零写入/零创建。",
      "safe_filename：纯文件名通过；空/NUL/绝对路径（含 POSIX 与 Windows 盘符）/含 '/' 或 '\\\\' 或 '..' 一律 422 validation_failed(field=filename,rule=invalid)。store_media 路径穿越用例断言**零落盘零落行**。",
      "校验与错误形状：未知扩展名（unsupported_type）、无扩展名、空数据（size/empty）、超限（size/too_large，monkeypatch 调小上限，不写真大文件）、非法 media_kind、非法 source —— 各 422 且零落盘零落行。",
      "原子落盘与探测：真实小视频经 ffmpeg 生成后 store_media 落盘，verify_integrity 为真、filename 为 '{pid}/<26位ulid>.mp4' 相对名、sha256/大小与字节一致、duration_ms 非 None；image kind 不探测（三维度 None）；篡改文件后 verify_integrity 为假；损坏文件 probe_media 抛 MediaProbeError 且无 MediaArtifact 行、无残留文件；monkeypatch os.replace 抛错 → 无行无文件（写失败无伪就绪记录）。",
      "artifact_path 对人为越界 filename 抛 ValueError；probe_media 缺文件与垃圾字节均抛 MediaProbeError。",
-     "硬性禁止逐条：不写/不建 DATA_DIR/public；不 import 任何旧后端媒体模块（video_files/video_storage 等源码无引用）。"
+     "硬性禁止逐条：不写/不建 DATA_DIR/public；不 import 任何旧后端媒体模块（video_files/video_storage 等源码无引用）。",
+     "追加复验（1f31d4a）：执行器在本卡入账后补 test_probe_media_returns_exactly_five_keys（断言 probe_media 返回恰 5 键且 width/height/duration_ms 为真实解析值）并清理 store.py 未使用的 MediaProbeError 导入；主模型独立重跑 31 passed。本卡实际实现覆盖 a99d76d + 1f31d4a 两次提交。"
     ],
     "contract_question_ruling": [
      "实现澄清（非契约变更）：静态 imageio_ffmpeg 不附 ffprobe，故按派发规格以 `ffmpeg -i` 的 stderr 为唯一元数据源（Duration 正则 + Video 流行解析分辨率，先剔除 0x.. 编码十六进制避免误匹配）；解析不出任何音视频流即 MediaProbeError。派发规格已冻结该做法，不升契约版本。",
