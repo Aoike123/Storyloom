@@ -17,14 +17,16 @@
 | MEDIA-01（私有媒体落盘与完整性） | `backend/infrastructure/media/probe.py`、`backend/studio/media/store.py`、`tests/studio/test_media.py`（+ `backend/infrastructure/**/__init__.py`） | 与 CHAT/EDIT 零重叠；**无 HTTP 路由**，不碰 `router.py` |
 | CHAT-01（会话和消息 API） | `backend/studio/conversations/{service,api}.py`、`tests/studio/test_conversations.py` | 零重叠 |
 | EDIT-01（项目剪辑草稿读写） | `backend/studio/edits/{service,api}.py`、`tests/studio/test_edits.py` | 零重叠 |
+| SCRIPT-02（SC6 采用剧本 revision 及影响） | `backend/studio/scripts/{service,api}.py`、`backend/studio/reviews/impact.py`、`tests/studio/test_scripts.py` | 零重叠 |
 
-三卡文件集两两不重叠（MEDIA-01 建 `backend/studio/media/store.py` 新文件，不触及 CHAT/EDIT 需要的 `models.py`，故与二者无交集）。
+四卡文件集两两不重叠（MEDIA-01 建 `backend/studio/media/store.py` 新文件，不触及 CHAT/EDIT 需要的 `models.py`，故与二者无交集）。
 
-**只读**：`backend/studio/router.py`（「存在即挂载」清单已含 `conversations.api`/`edits.api`，两卡无需接线；`media.api` 不在本卡范围）、`tests/studio/conftest.py`、各域 `models.py`、`backend/studio/contracts/**`。
+SCRIPT-02 追加进本波次的依据：其独有的 `backend/studio/reviews/impact.py` 不与前三卡相交，且 `scripts.api` 早已在「存在即挂载」清单内。**代价与约束**：并发 pytest 会争用同一进程单例测试库（drop/create 同名表），故本轮**验收测试一律串行回收后执行**，不并行跑 pytest。
+
+**只读**：`backend/studio/router.py`（「存在即挂载」清单已含 `conversations.api`/`edits.api`/`scripts.api`，三卡均无需接线；`media.api` 不在 MEDIA-01 范围）、`tests/studio/conftest.py`、各域 `models.py`、`backend/studio/contracts/**`。
 
 **本波次不派卡说明**：
-- SCRIPT-02 白名单含 `backend/studio/reviews/impact.py`，与后续 SHOT/REL 链共享；单独一轮派发以独占该文件。
-- VIEW-01 为纯前端接线（`studio-state.ts` 草案已在 `e06939f` 入账，缺 `StudioApp.tsx` 接线与 `state.test.cjs`），不阻塞后端链，排入 C4。
+- VIEW-01 已由**主模型亲自实现并验收**（提交 `730b23a`，账本入账 `282e4e4`）：采纳 `e06939f` 冻结容器草案，接线 `StudioApp.tsx`（`useReducer` + `projectId` prop → `setProject`），补写 `state.test.cjs` 28 例。独立复验：`node --test 'web/tests/studio/*.test.cjs'` → **413 passed / 0 fail**（基线 385）；`tsc --noEmit -p web/tsconfig.json` → exit 0。
 
 ## 通用冻结约定（三卡共同）
 
@@ -46,8 +48,8 @@
 
 | 波次 | 卡 |
 | --- | --- |
-| C3（本轮） | MEDIA-01、CHAT-01、EDIT-01 |
-| C4 | SCRIPT-02、VIEW-01、RETIRE-01（待主模型出逐文件退役清单） |
+| C3（本轮） | MEDIA-01、CHAT-01、EDIT-01、SCRIPT-02（VIEW-01 已由主模型验收 `730b23a`） |
+| C4 | RETIRE-01（待主模型按实施 HEAD 出逐文件退役清单） |
 | 2 | ASSET-02-a、JOB-01、MEDIA-02-a、SHOT-01-a、VIEW-02 |
 | 3 | ASSET-02-b、JOB-02、MEDIA-02-b、SHOT-01-b、VIEW-03 |
 | 4 | ASSET-02、JOB-03、MEDIA-02、SCRIPT-03-a、SHOT-01-c、VIEW-04 |
